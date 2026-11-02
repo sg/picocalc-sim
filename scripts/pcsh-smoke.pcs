@@ -1,0 +1,18 @@
+# Boots pcsh, lists the card, runs Lua, interrupts it with Brk, and saves the panel.
+#   build/pcsim --headless --card sd.img --script scripts/pcsh-smoke.pcs ../pcsh/build-pico2/pcsh.uf2
+wait 2500
+type sdcard\n
+wait 1500
+type ls /pcsh\n
+wait 1500
+screenshot smoke-1-card.png
+type lua\n
+wait 1500
+type print(sys.totalMemory(), sys.freeMemory(), sys.battery(), sys.getClock())\n
+wait 1500
+type while true do end\n
+wait 1000
+key brk
+wait 1500
+screenshot smoke-2-lua.png
+quit

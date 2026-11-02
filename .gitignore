@@ -1,0 +1,4 @@
+build*/
+*.img
+*.png
+*.flash
