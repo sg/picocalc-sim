@@ -1,0 +1,33 @@
+# Builds the Linux binaries on every branch push and pull request, then boots the latest
+# pcsh, picocalc_lua and picocalc-z80 releases on the Pico 2, Pico 2 W and Pimoroni Plus 2 W.
+name: Build
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: docker
+    container:
+      # the Pico SDK builder from picocalc-z80's ci/builder; pcsim uses only its compiler and
+      # cmake, and ci/build-linux.sh adds the SDL headers it lacks
+      image: picocalc-builder:2.3.1
+    steps:
+      - name: Check out
+        run: |
+          git init --quiet src
+          git -C src fetch --quiet --depth 1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_SHA"
+          git -C src checkout --quiet FETCH_HEAD
+          git -C src log -1 --oneline
+
+      - name: Build
+        run: src/ci/build-linux.sh src build
+
+      - name: Boot the latest firmware releases
+        run: |
+          src/ci/fetch-firmware.sh "$GITHUB_API_URL" "${GITHUB_REPOSITORY%%/*}" fw
+          src/ci/boot-test.sh build/pcsim fw/*.uf2

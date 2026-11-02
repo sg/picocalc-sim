@@ -1,0 +1,91 @@
+# Builds the Linux x86-64 binaries for a tag and stages them as a draft release to review and
+# publish by hand. Runs when a tag such as v1.2.0 is pushed, or on demand for an existing tag.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the draft as a pre-release"
+        type: boolean
+        default: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  PRERELEASE: ${{ github.event.inputs.prerelease }}
+  TOKEN: ${{ github.token }}
+
+jobs:
+  release:
+    runs-on: docker
+    container:
+      # the Pico SDK builder from picocalc-z80's ci/builder; pcsim uses only its compiler and
+      # cmake, and ci/build-linux.sh adds the SDL headers it lacks
+      image: picocalc-builder:2.3.1
+    steps:
+      - name: Check out the tag
+        run: |
+          git clone --quiet --branch "$TAG" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" src
+          git -C src log -1 --oneline
+
+      - name: Build
+        run: src/ci/build-linux.sh src build
+
+      - name: Boot the latest firmware releases
+        run: |
+          src/ci/fetch-firmware.sh "$GITHUB_API_URL" "${GITHUB_REPOSITORY%%/*}" fw
+          src/ci/boot-test.sh build/pcsim fw/*.uf2
+
+      - name: Pack the binaries
+        run: |
+          name="pcsim-$TAG-linux-x86_64"
+          mkdir -p "pkg/$name" dist
+          strip -o "pkg/$name/pcsim" build/pcsim
+          strip -o "pkg/$name/pcsim-mkcard" build/tools/mkcard/pcsim-mkcard
+          cp src/README.md "pkg/$name/"
+          tar -C pkg -czf "dist/$name.tar.gz" "$name"
+
+      - name: Stage a draft release
+        run: |
+          api="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY"
+          auth="Authorization: token $TOKEN"
+
+          if curl -sf -o /dev/null -H "$auth" "$api/releases/tags/$TAG"; then
+            echo "A release for $TAG already exists; delete it or choose a new tag"
+            exit 1
+          fi
+
+          (cd dist && sha256sum *.tar.gz > SHA256SUMS.txt)
+
+          # the previous tag bounds the change list; the first release lists everything
+          prev=$(git -C src describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          {
+            echo "Linux x86-64 build; needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39)."
+            echo
+            echo "Changes since ${prev:-the first commit}:"
+            echo
+            git -C src log --format='- %s' "${prev:+$prev..}$TAG"
+          } > notes.md
+
+          body=$(python3 -c '
+          import json, sys
+          print(json.dumps({"tag_name": sys.argv[1], "name": sys.argv[1],
+                            "body": open(sys.argv[2]).read(), "draft": True,
+                            "prerelease": sys.argv[3] == "true"}))' "$TAG" notes.md "$PRERELEASE")
+          id=$(curl -sS --fail-with-body -H "$auth" -H "Content-Type: application/json" \
+                 -d "$body" "$api/releases" \
+               | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
+
+          for f in dist/*; do
+            curl -sS --fail-with-body -o /dev/null -H "$auth" -F "attachment=@$f" \
+              "$api/releases/$id/assets?name=$(basename "$f")"
+            echo "uploaded $(basename "$f")"
+          done
+          echo "Draft release $TAG is waiting at $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases"

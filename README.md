@@ -1,9 +1,10 @@
 # picocalc_sim
 
-A PicoCalc emulator for Linux and macOS (Windows to follow) that runs firmware as it ships: the
-same UF2 file you would drop on the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps`
-folder. It emulates the RP2350 instruction by instruction, with the PicoCalc's LCD, keyboard
-controller and SD card attached to its pins, so nothing has to be rebuilt for the simulator.
+A PicoCalc emulator for Linux that runs firmware as it ships: the same UF2 file you would drop on
+the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps` folder. macOS should build but is
+untested; Windows is not ported yet. It emulates the RP2350 instruction by instruction, with the
+PicoCalc's LCD, keyboard controller and SD card attached to its pins, so nothing has to be rebuilt
+for the simulator.
 
 Boards: **Raspberry Pi Pico 2**, **Pico 2 W** and **Pimoroni Pico Plus 2 / 2 W** (16 MB flash,
 8 MB PSRAM). The W boards boot and run, but their CYW43439 radio is not emulated yet, so firmware
@@ -25,6 +26,15 @@ builds a headless-only binary. FatFs, used by the card-image tool, comes from a 
 
 The build produces `build/pcsim`, the emulator, and `build/tools/mkcard/pcsim-mkcard`, which makes
 SD card images.
+
+### Continuous integration and releases
+
+`.forgejo/workflows/build.yml` builds every pushed branch in the shared `picocalc-builder` image
+and boots the latest pcsh, picocalc_lua and picocalc-z80 releases on each board
+(`ci/boot-test.sh`). Pushing a `v*` tag runs `release.yml`, which stages a draft release with a
+`pcsim-TAG-linux-x86_64.tar.gz`. `ci/build-linux.sh` installs the X11, Wayland and audio headers
+SDL needs, so the binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13,
+Fedora 39) and can be built on a headless machine and copied to a desktop.
 
 ## Running firmware
 
