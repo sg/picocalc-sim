@@ -1,5 +1,6 @@
-# Builds the Linux x86-64 binaries for a tag and stages them as a draft release to review and
-# publish by hand. Runs when a tag such as v1.2.0 is pushed, or on demand for an existing tag.
+# Builds the Linux and Windows x86-64 binaries for a tag and stages them as a draft release to
+# review and publish by hand. Runs when a tag such as v1.2.0 is pushed, or on demand for an
+# existing tag.
 name: Release
 
 on:
@@ -46,6 +47,15 @@ jobs:
       - name: Serve FTP over the emulated WiFi
         run: src/ci/wifi-test.sh build/pcsim build/tools/mkcard/pcsim-mkcard fw/picocalc-ftpserver-*.uf2
 
+      - name: Build for Windows
+        run: src/ci/build-windows.sh src build-win
+
+      - name: Boot and serve FTP on Windows (under Wine)
+        run: |
+          src/ci/wine-wrap.sh build-win
+          src/ci/boot-test.sh build-win/pcsim-wine fw/*.uf2
+          src/ci/wifi-test.sh build-win/pcsim-wine build-win/pcsim-mkcard-wine fw/picocalc-ftpserver-*.uf2
+
       - name: Pack the binaries
         run: |
           name="pcsim-$TAG-linux-x86_64"
@@ -54,6 +64,13 @@ jobs:
           strip -o "pkg/$name/pcsim-mkcard" build/tools/mkcard/pcsim-mkcard
           cp src/README.md "pkg/$name/"
           tar -C pkg -czf "dist/$name.tar.gz" "$name"
+
+          name="pcsim-$TAG-windows-x86_64"
+          mkdir -p "pkg/$name"
+          x86_64-w64-mingw32-strip -o "pkg/$name/pcsim.exe" build-win/pcsim.exe
+          x86_64-w64-mingw32-strip -o "pkg/$name/pcsim-mkcard.exe" build-win/tools/mkcard/pcsim-mkcard.exe
+          cp src/README.md "pkg/$name/"
+          (cd pkg && python3 -m zipfile -c "../dist/$name.zip" "$name")
 
       - name: Stage a draft release
         run: |
@@ -65,12 +82,13 @@ jobs:
             exit 1
           fi
 
-          (cd dist && sha256sum *.tar.gz > SHA256SUMS.txt)
+          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS.txt)
 
           # the previous tag bounds the change list; the first release lists everything
           prev=$(git -C src describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
           {
-            echo "Linux x86-64 build; needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39)."
+            echo "- Linux x86-64: needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39)."
+            echo "- Windows x86-64: for Windows 10 and 11; run pcsim.exe from a Command Prompt or PowerShell."
             echo
             echo "Changes since ${prev:-the first commit}:"
             echo

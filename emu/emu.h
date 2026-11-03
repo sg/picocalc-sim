@@ -4,6 +4,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// MinGW checks formats against whichever printf the build selected, here its C99 one.
+#ifndef PCSIM_PRINTF_FORMAT
+#ifdef __MINGW_PRINTF_FORMAT
+#define PCSIM_PRINTF_FORMAT __MINGW_PRINTF_FORMAT
+#else
+#define PCSIM_PRINTF_FORMAT printf
+#endif
+#endif
+
 #if defined(__GNUC__)
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
@@ -102,4 +111,4 @@ const char *cpu_state_name(const cpu_t *c);
 void cpu_dump(const cpu_t *c);
 void cpu_return_from_hle(cpu_t *c);
 
-void emu_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void emu_log(const char *fmt, ...) __attribute__((format(PCSIM_PRINTF_FORMAT, 1, 2)));

@@ -17,6 +17,15 @@ set(PCSIM_SDL_SHA256 "24b574f71c87a763f50704bbb630cbe38298d544a1f890f099a4696b1d
 find_package(Threads REQUIRED)
 include(cmake/Dependencies.cmake)
 
+if(WIN32)
+    # Windows 10 for WSAPoll and high-resolution timers, MinGW's own printf for C99 formats,
+    # 64-bit file offsets for card images over 2 GB, and POSIX's localtime_r
+    add_compile_definitions(_WIN32_WINNT=0x0A00 __USE_MINGW_ANSI_STDIO=1 _FILE_OFFSET_BITS=64
+                            _POSIX_THREAD_SAFE_FUNCTIONS=200112L)
+    # each .exe then stands alone, without MinGW's runtime DLLs beside it
+    add_link_options(-static)
+endif()
+
 set(LWIP_SRC ${LWIP_DIR}/src/core)
 add_library(pcsim_lwip STATIC
     ${LWIP_SRC}/def.c
@@ -75,6 +84,9 @@ add_executable(pcsim
 target_include_directories(pcsim PRIVATE emu sim/include)
 target_compile_options(pcsim PRIVATE -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(pcsim PRIVATE pcsim_lwip Threads::Threads m)
+if(WIN32)
+    target_link_libraries(pcsim PRIVATE ws2_32 iphlpapi winmm)
+endif()
 if(PCSIM_HAVE_SDL)
     target_compile_definitions(pcsim PRIVATE PCSIM_HAVE_SDL=1)
     target_link_libraries(pcsim PRIVATE ${PCSIM_SDL_TARGET})

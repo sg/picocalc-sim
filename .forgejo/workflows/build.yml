@@ -1,6 +1,7 @@
-# Builds the Linux binaries on every branch push and pull request, boots the latest pcsh,
-# picocalc_lua, picocalc-z80 and ftpserver releases on the Pico 2, Pico 2 W and Pimoroni Plus 2 W,
-# and transfers files to and from ftpserver over the emulated WiFi.
+# Builds the Linux and Windows binaries on every branch push and pull request, boots the latest
+# pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on the Pico 2, Pico 2 W and Pimoroni
+# Plus 2 W, and transfers files to and from ftpserver over the emulated WiFi. The Windows build is
+# tested under Wine.
 name: Build
 
 on:
@@ -35,3 +36,30 @@ jobs:
 
       - name: Serve FTP over the emulated WiFi
         run: src/ci/wifi-test.sh build/pcsim build/tools/mkcard/pcsim-mkcard fw/picocalc-ftpserver-*.uf2
+
+  windows:
+    runs-on: docker
+    container:
+      # the same builder; ci/build-windows.sh adds MinGW-w64 and ci/wine-wrap.sh adds Wine
+      image: picocalc-builder:2.3.1
+    steps:
+      - name: Check out
+        run: |
+          git init --quiet src
+          git -C src fetch --quiet --depth 1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_SHA"
+          git -C src checkout --quiet FETCH_HEAD
+          git -C src log -1 --oneline
+
+      - name: Build
+        run: src/ci/build-windows.sh src build-win
+
+      - name: Set up Wine
+        run: src/ci/wine-wrap.sh build-win
+
+      - name: Boot the latest firmware releases
+        run: |
+          src/ci/fetch-firmware.sh "$GITHUB_API_URL" "${GITHUB_REPOSITORY%%/*}" fw
+          src/ci/boot-test.sh build-win/pcsim-wine fw/*.uf2
+
+      - name: Serve FTP over the emulated WiFi
+        run: src/ci/wifi-test.sh build-win/pcsim-wine build-win/pcsim-mkcard-wine fw/picocalc-ftpserver-*.uf2

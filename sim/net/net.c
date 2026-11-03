@@ -1,18 +1,16 @@
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
+#include "net_internal.h"
+
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#ifdef _WIN32
+#include <iphlpapi.h>
+#include <icmpapi.h>
+#else
+#include <netinet/tcp.h>
+#endif
 
-#include "net_internal.h"
 #include "pcsim/net.h"
 #include "pcsim/sim.h"
 
@@ -39,17 +37,24 @@ uint64_t net_now_ms(void)
     return pcsim_uptime_us() / 1000;
 }
 
-bool net_set_nonblock(int fd)
+void net_set_nodelay(sock_t s)
 {
-    int fl = fcntl(fd, F_GETFL, 0);
-    return fl >= 0 && fcntl(fd, F_SETFL, fl | O_NONBLOCK) == 0;
+    sock_setopt(s, IPPROTO_TCP, TCP_NODELAY, 1);
 }
 
-void net_set_nodelay(int fd)
+#ifdef _WIN32
+const char *sock_strerror(int err)
 {
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    static char msg[256];
+    if (!FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, (DWORD)err, 0, msg,
+                        sizeof(msg), NULL))
+        snprintf(msg, sizeof(msg), "error %d", err);
+    size_t n = strlen(msg);
+    while (n && (msg[n - 1] == '\n' || msg[n - 1] == '\r' || msg[n - 1] == '.'))
+        msg[--n] = 0;
+    return msg;
 }
+#endif
 
 uint32_t net_host_addr(uint32_t ip)
 {
@@ -390,7 +395,7 @@ static void dns_poll(void)
 typedef struct udp_flow {
     struct udp_flow *next;
     uint16_t gport;
-    int fd;
+    sock_t fd;
     uint64_t last;
 } udp_flow_t;
 
@@ -401,12 +406,12 @@ static udp_flow_t *udp_flow(uint16_t gport)
     for (udp_flow_t *f = udp_flows; f; f = f->next)
         if (f->gport == gport)
             return f;
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0)
+    sock_t fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == SOCK_NONE)
         return NULL;
     struct sockaddr_in sa = {.sin_family = AF_INET};
-    if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0 || !net_set_nonblock(fd)) {
-        close(fd);
+    if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0 || !sock_set_nonblock(fd)) {
+        sock_close(fd);
         return NULL;
     }
     udp_flow_t *f = calloc(1, sizeof(*f));
@@ -422,7 +427,7 @@ static void udp_close_all(void)
     while (udp_flows) {
         udp_flow_t *f = udp_flows;
         udp_flows = f->next;
-        close(f->fd);
+        sock_close(f->fd);
         free(f);
     }
 }
@@ -454,7 +459,7 @@ static void udp_input(const uint8_t *ip, const uint8_t *u, size_t len)
     f->last = net_now_ms();
     struct sockaddr_in sa = {.sin_family = AF_INET, .sin_port = htons(dport),
                              .sin_addr.s_addr = htonl(net_host_addr(dst))};
-    sendto(f->fd, data, n, 0, (struct sockaddr *)&sa, sizeof(sa));
+    sock_sendto(f->fd, data, n, &sa);
 }
 
 static void udp_service(udp_flow_t *f)
@@ -462,8 +467,10 @@ static void udp_service(udp_flow_t *f)
     uint8_t buf[2048];
     for (;;) {
         struct sockaddr_in sa;
-        socklen_t sl = sizeof(sa);
-        ssize_t n = recvfrom(f->fd, buf, sizeof(buf), 0, (struct sockaddr *)&sa, &sl);
+        ssize_t n = sock_recvfrom(f->fd, buf, sizeof(buf), &sa);
+        // Windows reports an ICMP port unreachable for an earlier datagram as a failed receive.
+        if (n < 0 && sock_errno() == SOCK_CONNRESET)
+            continue;
         if (n < 0)
             return;
         f->last = net_now_ms();
@@ -473,17 +480,7 @@ static void udp_service(udp_flow_t *f)
 }
 
 // ---------------------------------------------------------------------------------------------
-// Ping, through an unprivileged ICMP socket where the host allows one
-
-typedef struct {
-    uint32_t dst;
-    uint16_t seq, id;
-    uint64_t when;
-} ping_t;
-
-static int ping_fd = -1;
-static bool ping_failed;
-static ping_t pings[32];
+// Ping
 
 static void icmp_reply(uint32_t src, const uint8_t *icmp, size_t len)
 {
@@ -503,18 +500,95 @@ static void icmp_reply(uint32_t src, const uint8_t *icmp, size_t len)
     net_send_ip(pkt, 20 + len);
 }
 
-static void icmp_input(const uint8_t *ip, const uint8_t *icmp, size_t len)
+#ifdef _WIN32
+// Windows has no unprivileged ICMP sockets, but its ICMP helper sends echoes for any user and
+// signals an event when each one is answered or times out.
+
+typedef struct {
+    HANDLE event;
+    bool busy, stale;
+    uint32_t dst;
+    size_t len;
+    uint8_t req[1500];
+    uint8_t reply[sizeof(ICMP_ECHO_REPLY) + 1500 + 8];
+} ping_t;
+
+static HANDLE icmp_handle = INVALID_HANDLE_VALUE;
+static bool ping_failed;
+static ping_t pings[32];
+
+static void ping_send(uint32_t dst, const uint8_t *icmp, size_t len)
 {
-    if (len < 8 || icmp[0] != 8)
-        return;
-    uint32_t dst = net_rd32(ip + 16);
-    if (dst == NET_GW || dst == NET_DNS) {
-        icmp_reply(dst, icmp, len);
-        return;
+    if (icmp_handle == INVALID_HANDLE_VALUE && !ping_failed) {
+        icmp_handle = IcmpCreateFile();
+        if (icmp_handle == INVALID_HANDLE_VALUE) {
+            ping_failed = true;
+            pcsim_log("net: Windows would not open its ICMP helper, so pings beyond 10.0.2.2 go unanswered");
+        }
     }
+    if (icmp_handle == INVALID_HANDLE_VALUE || len > sizeof(pings[0].req))
+        return;
+    ping_t *p = NULL;
+    for (int i = 0; i < 32 && !p; i++)
+        if (!pings[i].busy)
+            p = &pings[i];
+    if (!p)
+        return;
+    if (!p->event && !(p->event = CreateEventA(NULL, TRUE, FALSE, NULL)))
+        return;
+    ResetEvent(p->event);
+    p->dst = dst;
+    p->len = len;
+    p->stale = false;
+    memcpy(p->req, icmp, len);
+    DWORD rc = IcmpSendEcho2(icmp_handle, p->event, NULL, NULL, htonl(dst), p->req + 8, (WORD)(len - 8), NULL,
+                             p->reply, sizeof(p->reply), PING_TIMEOUT_MS);
+    p->busy = rc == 0 && GetLastError() == ERROR_IO_PENDING;
+}
+
+static void ping_poll(const pollfd_t *fds)
+{
+    (void)fds;
+    for (int i = 0; i < 32; i++) {
+        ping_t *p = &pings[i];
+        if (!p->busy || WaitForSingleObject(p->event, 0) != WAIT_OBJECT_0)
+            continue;
+        p->busy = false;
+        const ICMP_ECHO_REPLY *r = (const ICMP_ECHO_REPLY *)p->reply;
+        if (!p->stale && IcmpParseReplies(p->reply, sizeof(p->reply)) > 0 && r->Status == IP_SUCCESS)
+            icmp_reply(p->dst, p->req, p->len);
+    }
+}
+
+static int ping_pollfd(pollfd_t *fd)
+{
+    (void)fd;
+    return 0;
+}
+
+static void ping_reset(void)
+{
+    for (int i = 0; i < 32; i++)
+        pings[i].stale = true;
+}
+#else
+// Through an unprivileged ICMP socket where the host allows one.
+
+typedef struct {
+    uint32_t dst;
+    uint16_t seq, id;
+    uint64_t when;
+} ping_t;
+
+static int ping_fd = -1;
+static bool ping_failed;
+static ping_t pings[32];
+
+static void ping_send(uint32_t dst, const uint8_t *icmp, size_t len)
+{
     if (ping_fd < 0 && !ping_failed) {
         ping_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
-        if (ping_fd < 0 || !net_set_nonblock(ping_fd)) {
+        if (ping_fd < 0 || !sock_set_nonblock(ping_fd)) {
             ping_failed = true;
             if (ping_fd >= 0)
                 close(ping_fd);
@@ -523,7 +597,7 @@ static void icmp_input(const uint8_t *ip, const uint8_t *icmp, size_t len)
                       "unanswered (on Linux see net.ipv4.ping_group_range)");
         }
     }
-    if (ping_fd < 0)
+    if (ping_fd < 0 || len > 1500)
         return;
     int slot = 0;
     for (int i = 0; i < 32; i++)
@@ -535,7 +609,7 @@ static void icmp_input(const uint8_t *ip, const uint8_t *icmp, size_t len)
     net_wr16(buf + 2, 0);
     net_wr16(buf + 2, net_csum(buf, len, 0));
     struct sockaddr_in sa = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(dst)};
-    sendto(ping_fd, buf, len, 0, (struct sockaddr *)&sa, sizeof(sa));
+    sock_sendto(ping_fd, buf, len, &sa);
 }
 
 static void ping_service(void)
@@ -543,8 +617,7 @@ static void ping_service(void)
     uint8_t buf[2048];
     for (;;) {
         struct sockaddr_in sa;
-        socklen_t sl = sizeof(sa);
-        ssize_t n = recvfrom(ping_fd, buf, sizeof(buf), 0, (struct sockaddr *)&sa, &sl);
+        ssize_t n = sock_recvfrom(ping_fd, buf, sizeof(buf), &sa);
         if (n < 0)
             return;
         uint8_t *icmp = buf;
@@ -563,23 +636,47 @@ static void ping_service(void)
             if (pings[i].when && pings[i].dst == src && pings[i].seq == seq) {
                 net_wr16(icmp + 4, pings[i].id);
                 pings[i].when = 0;
-                uint8_t pkt[1500];
-                if (len > sizeof(pkt) - 20)
-                    break;
-                memset(pkt, 0, 20);
-                pkt[0] = 0x45;
-                net_wr16(pkt + 2, (uint32_t)(20 + len));
-                pkt[8] = 64;
-                pkt[9] = 1;
-                net_wr32(pkt + 12, src);
-                net_wr32(pkt + 16, net_guest_ip);
-                memcpy(pkt + 20, icmp, len);
-                net_fix_checksums(pkt, 20 + len);
-                net_send_ip(pkt, 20 + len);
+                icmp_reply(src, icmp, len);
                 break;
             }
         }
     }
+}
+
+// Adds the ping socket to the poll set, returning how many entries it used.
+static int ping_pollfd(pollfd_t *fd)
+{
+    if (ping_fd < 0)
+        return 0;
+    uint64_t now = net_now_ms();
+    for (int i = 0; i < 32; i++)
+        if (pings[i].when && now - pings[i].when > PING_TIMEOUT_MS)
+            pings[i].when = 0;
+    *fd = (pollfd_t){.fd = ping_fd, .events = POLLIN};
+    return 1;
+}
+
+static void ping_poll(const pollfd_t *fd)
+{
+    if (fd && (fd->revents & POLLIN))
+        ping_service();
+}
+
+static void ping_reset(void)
+{
+    memset(pings, 0, sizeof(pings));
+}
+#endif
+
+static void icmp_input(const uint8_t *ip, const uint8_t *icmp, size_t len)
+{
+    if (len < 8 || icmp[0] != 8)
+        return;
+    uint32_t dst = net_rd32(ip + 16);
+    if (dst == NET_GW || dst == NET_DNS)
+        icmp_reply(dst, icmp, len);
+    else
+        ping_send(dst, icmp, len);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -637,7 +734,7 @@ void pcsim_net_link(bool up)
         tcpnat_reset();
         udp_close_all();
         dns_gen++;
-        memset(pings, 0, sizeof(pings));
+        ping_reset();
     }
 }
 
@@ -653,7 +750,7 @@ void pcsim_net_poll(void)
         udp_flow_t *f = *pf;
         if (now - f->last > UDP_IDLE_MS) {
             *pf = f->next;
-            close(f->fd);
+            sock_close(f->fd);
             free(f);
             continue;
         }
@@ -663,29 +760,27 @@ void pcsim_net_poll(void)
         }
         pf = &f->next;
     }
-    int ping_slot = -1;
-    if (ping_fd >= 0) {
-        ping_slot = n;
-        fds[n++] = (pollfd_t){.fd = ping_fd, .events = POLLIN};
-        for (int i = 0; i < 32; i++)
-            if (pings[i].when && now - pings[i].when > PING_TIMEOUT_MS)
-                pings[i].when = 0;
-    }
+    int ping_slot = n;
+    n += ping_pollfd(&fds[n]);
+    bool have_ping_fd = n > ping_slot;
     int tcp_base = n;
     n += tcpnat_pollfds(fds + n, (int)(sizeof(fds) / sizeof(fds[0])) - n);
-    if (n && poll(fds, (nfds_t)n, 0) > 0) {
+    if (n && sock_poll(fds, (size_t)n, 0) > 0) {
         for (int i = 0; i < nudp; i++)
             if (fds[i].revents & POLLIN)
                 udp_service(fl[i]);
-        if (ping_slot >= 0 && (fds[ping_slot].revents & POLLIN))
-            ping_service();
         tcpnat_service(fds + tcp_base, n - tcp_base);
     }
+    ping_poll(have_ping_fd ? &fds[ping_slot] : NULL);
     tcpnat_timers();
 }
 
 bool pcsim_net_init(void)
 {
+    if (!sock_startup()) {
+        pcsim_log("net: cannot start the host's socket library");
+        return false;
+    }
     tcpnat_init();
     bool ok = true;
     for (int i = 0; i < pcsim_opts.forward_count; i++)

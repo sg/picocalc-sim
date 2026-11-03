@@ -4,6 +4,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// MinGW checks formats against whichever printf the build selected, here its C99 one.
+#ifndef PCSIM_PRINTF_FORMAT
+#ifdef __MINGW_PRINTF_FORMAT
+#define PCSIM_PRINTF_FORMAT __MINGW_PRINTF_FORMAT
+#else
+#define PCSIM_PRINTF_FORMAT printf
+#endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -34,12 +43,15 @@ typedef struct pcsim_options {
 
 extern pcsim_options_t pcsim_opts;
 
-void pcsim_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void pcsim_log(const char *fmt, ...) __attribute__((format(PCSIM_PRINTF_FORMAT, 1, 2)));
 
 uint64_t pcsim_mono_ns(void);
 // Time since power-on on the emulated chip, which device models use for their own timing.
 uint64_t pcsim_uptime_us(void);
 void pcsim_sleep_ns(uint64_t ns);
+// Builds the path of FILE in pcsim's data directory: $XDG_DATA_HOME/pcsim (~/.local/share/pcsim)
+// or %LOCALAPPDATA%\pcsim on Windows.
+void pcsim_data_path(char *path, size_t cap, const char *file, bool create_dir);
 
 typedef enum {
     PCSIM_RUNNING,

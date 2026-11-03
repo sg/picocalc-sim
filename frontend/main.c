@@ -66,11 +66,7 @@ int pcsim_frontend_headless_run(void)
 static const char *default_card(void)
 {
     static char path[4096];
-    const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
-    if (xdg && *xdg)
-        snprintf(path, sizeof(path), "%s/pcsim/sd.img", xdg);
-    else
-        snprintf(path, sizeof(path), "%s/.local/share/pcsim/sd.img", home ? home : ".");
+    pcsim_data_path(path, sizeof(path), "sd.img", false);
     struct stat st;
     return stat(path, &st) == 0 ? path : NULL;
 }

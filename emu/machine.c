@@ -5,9 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "chip.h"
 #include "pcsim/devices.h"
@@ -412,22 +410,9 @@ bool pcsim_machine_start(void)
     g_fast_bus = pcsim_opts.fast;
     if (!pcsim_opts.flash_path) {
         static char path[4096];
-        const char *home = getenv("HOME");
-        const char *xdg = getenv("XDG_DATA_HOME");
-        char dir[3600];
-        if (xdg && *xdg)
-            snprintf(dir, sizeof(dir), "%s/pcsim", xdg);
-        else
-            snprintf(dir, sizeof(dir), "%s/.local/share/pcsim", home ? home : ".");
-        char parent[3600];
-        snprintf(parent, sizeof(parent), "%s", dir);
-        char *slash = strrchr(parent, '/');
-        if (slash) {
-            *slash = 0;
-            mkdir(parent, 0755);
-        }
-        mkdir(dir, 0755);
-        snprintf(path, sizeof(path), "%s/%s.flash", dir, b->name);
+        char file[64];
+        snprintf(file, sizeof(file), "%s.flash", b->name);
+        pcsim_data_path(path, sizeof(path), file, true);
         pcsim_opts.flash_path = path;
     } else if (!strcmp(pcsim_opts.flash_path, "none")) {
         pcsim_opts.flash_path = NULL;

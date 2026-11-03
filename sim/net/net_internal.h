@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sock.h"
+
 // Shared by the NAT's protocol handlers. Addresses are host-order uint32_t throughout.
 
 #define NET_GW 0x0a000202u
@@ -27,8 +29,7 @@ void net_fix_checksums(uint8_t *pkt, size_t len);
 uint32_t net_host_addr(uint32_t ip);
 // How the firmware should see a host address: loopback becomes the gateway.
 uint32_t net_guest_addr(uint32_t ip);
-bool net_set_nonblock(int fd);
-void net_set_nodelay(int fd);
+void net_set_nodelay(sock_t s);
 
 static inline uint16_t net_rd16(const uint8_t *p)
 {

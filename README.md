@@ -1,10 +1,10 @@
 # picocalc_sim
 
-A PicoCalc emulator for Linux that runs firmware as it ships: the same UF2 file you would drop on
-the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps` folder. macOS should build but is
-untested; Windows is not ported yet. It emulates the RP2350 instruction by instruction, with the
-PicoCalc's LCD, keyboard controller and SD card attached to its pins, so nothing has to be rebuilt
-for the simulator.
+A PicoCalc emulator for Linux and Windows that runs firmware as it ships: the same UF2 file you
+would drop on the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps` folder. macOS should
+build but is untested. It emulates the RP2350 instruction by instruction, with the PicoCalc's LCD,
+keyboard controller and SD card attached to its pins, so nothing has to be rebuilt for the
+simulator.
 
 Boards: **Raspberry Pi Pico 2**, **Pico 2 W** and **Pimoroni Pico Plus 2 / 2 W** (16 MB flash,
 8 MB PSRAM). On the W boards the CYW43439 radio is emulated too: firmware scans, joins a virtual
@@ -28,15 +28,31 @@ emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is fetc
 The build produces `build/pcsim`, the emulator, and `build/tools/mkcard/pcsim-mkcard`, which makes
 SD card images.
 
+### Windows
+
+The Windows build is cross-compiled from Linux with MinGW-w64 (`apt install mingw-w64` on Debian
+and Ubuntu):
+
+```sh
+cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
+cmake --build build-win -j
+```
+
+That gives `build-win/pcsim.exe` and `build-win/tools/mkcard/pcsim-mkcard.exe`. Each is a single
+file that needs only DLLs Windows ships with, so it can be copied to any 64-bit Windows 10 or 11
+machine. MSYS2's MinGW-w64 should build it natively on Windows the same way, but that is untested.
+
 ### Continuous integration and releases
 
 `.forgejo/workflows/build.yml` builds every pushed branch in the shared `picocalc-builder` image
 and boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on each board
 (`ci/boot-test.sh`), then transfers files to and from ftpserver over the emulated WiFi
-(`ci/wifi-test.sh`). Pushing a `v*` tag runs `release.yml`, which stages a draft release with a
-`pcsim-TAG-linux-x86_64.tar.gz`. `ci/build-linux.sh` installs the X11, Wayland and audio headers
-SDL needs, so the binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13,
-Fedora 39) and can be built on a headless machine and copied to a desktop.
+(`ci/wifi-test.sh`). A second job cross-compiles the Windows build (`ci/build-windows.sh`) and runs
+the same tests on it under Wine (`ci/wine-wrap.sh`). Pushing a `v*` tag runs `release.yml`, which
+stages a draft release with `pcsim-TAG-linux-x86_64.tar.gz` and `pcsim-TAG-windows-x86_64.zip`.
+`ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux binaries
+depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be built on a
+headless machine and copied to a desktop.
 
 ## Running firmware
 
@@ -55,6 +71,15 @@ Each board's flash persists in `~/.local/share/pcsim/BOARD.flash` (`--flash FILE
 
 ```sh
 build/tools/mkcard/pcsim-mkcard ~/.local/share/pcsim/sd.img ../pcsh/sd_files
+```
+
+On Windows that folder is `%LOCALAPPDATA%\pcsim`. Both programs are console programs, so run them
+from a Command Prompt or PowerShell (or drop a UF2 onto `pcsim.exe`):
+
+```bat
+mkdir %LOCALAPPDATA%\pcsim
+pcsim-mkcard.exe %LOCALAPPDATA%\pcsim\sd.img sd_files
+pcsim.exe pcsh-pico2w-v0.1.2.uf2
 ```
 
 `pcsim-mkcard IMAGE [-s MB] [-l LABEL] [DIR...]` formats an MBR/FAT32 card (512 MB by default)
@@ -96,12 +121,13 @@ network given without a password is open.
 TCP and UDP from the firmware go out through ordinary sockets on the host, as from behind a home
 router. Pings to 10.0.2.2 and 10.0.2.3 are always answered; pings beyond need unprivileged ICMP
 sockets, which macOS allows and Linux allows when `net.ipv4.ping_group_range` covers your group
-(the default on Ubuntu, Debian and Fedora desktops).
+(the default on Ubuntu, Debian and Fedora desktops). Windows sends them through its ICMP helper,
+which any user may use.
 
 Nothing outside can reach the firmware unless a port is forwarded. `--forward 2121:21` makes
 127.0.0.1:2121 reach the firmware's port 21; `--forward *:2121:21` or `--forward ADDR:2121:21`
-opens it to other machines too. Forwarding port 21 also handles FTP's passive mode, so ftpserver
-works from an ordinary client:
+opens it to other machines too (Windows Defender Firewall asks first). Forwarding port 21 also
+handles FTP's passive mode, so ftpserver works from an ordinary client:
 
 ```sh
 build/pcsim --forward 2121:21 ../ftpserver/build-pico2w/picocalc-ftpserver.uf2
@@ -237,6 +263,9 @@ Not emulated yet, or not faithfully:
 - **The PicoCalc mainboard's PSRAM**, which picocalc_lua reaches through PIO, is not attached.
 - **USB** enumerates nothing: the controller's registers exist but no host is connected.
 - **RP2040 boards** (Pico, Pico W) and RISC-V images are not supported.
+- **Windows** builds pass the CI tests under Wine but have not been tried on a Windows PC yet.
+  `pcsim-mkcard.exe` reads host file names in the system code page, so files whose names are not
+  plain ASCII may not copy.
 - Secure state only: TrustZone, the MPU and the redundancy coprocessor accept their
   configuration but don't enforce it. OTP reads as unprogrammed apart from the chip ID.
 - Assumptions about the keyboard controller I could not check against hardware are marked in
@@ -248,5 +277,4 @@ Not emulated yet, or not faithfully:
 2. A faster CPU core (predecoded blocks) so dual-core firmware reaches real time.
 3. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards (Pico W with the same
    radio model).
-4. Windows (MinGW) and macOS builds, and optionally bridged networking so the firmware gets an
-   address on the LAN.
+4. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.

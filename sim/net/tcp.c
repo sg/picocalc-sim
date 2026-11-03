@@ -1,13 +1,9 @@
-#include <arpa/inet.h>
-#include <errno.h>
-#include <netinet/in.h>
-#include <poll.h>
+#include "net_internal.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include "lwip/init.h"
 #include "lwip/ip4.h"
@@ -16,7 +12,6 @@
 #include "lwip/tcp.h"
 #include "lwip/timeouts.h"
 
-#include "net_internal.h"
 #include "pcsim/sim.h"
 
 // The firmware's TCP connections end at lwIP, running here as the far end of each one, and are
@@ -43,7 +38,7 @@ enum { C_CONNECTING, C_OPEN, C_CLOSED };
 
 typedef struct fwd {
     struct fwd *next;
-    int fd;
+    sock_t fd;
     uint32_t bind_ip;
     uint16_t hport, gport;
     bool dynamic, ftp;
@@ -53,7 +48,7 @@ typedef struct fwd {
 typedef struct conn {
     struct conn *next;
     int state;
-    int fd;
+    sock_t fd;
     struct tcp_pcb *pcb, *lpcb;
     bool outbound, connected, pcb_dead;
     uint32_t dip, bind_ip;
@@ -386,9 +381,9 @@ static void conn_close(conn_t *c, bool reset)
         tcp_close(c->lpcb);
         c->lpcb = NULL;
     }
-    if (c->fd >= 0)
-        close(c->fd);
-    c->fd = -1;
+    if (c->fd != SOCK_NONE)
+        sock_close(c->fd);
+    c->fd = SOCK_NONE;
     c->state = C_CLOSED;
     c->t_closed = net_now_ms();
 }
@@ -398,7 +393,7 @@ static conn_t *conn_new(void)
     conn_t *c = calloc(1, sizeof(*c));
     if (!c)
         return NULL;
-    c->fd = -1;
+    c->fd = SOCK_NONE;
     c->t0 = net_now_ms();
     c->next = conns;
     conns = c;
@@ -411,22 +406,22 @@ static void start_outbound(uint8_t *pkt, size_t len, uint32_t dst, uint16_t spor
         refuse_syn(pkt, len);
         return;
     }
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0 || !net_set_nonblock(fd)) {
-        if (fd >= 0)
-            close(fd);
+    sock_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == SOCK_NONE || !sock_set_nonblock(fd)) {
+        if (fd != SOCK_NONE)
+            sock_close(fd);
         refuse_syn(pkt, len);
         return;
     }
     struct sockaddr_in sa = {.sin_family = AF_INET, .sin_port = htons(dport), .sin_addr.s_addr = htonl(net_host_addr(dst))};
-    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0 && errno != EINPROGRESS) {
-        close(fd);
+    if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0 && !sock_in_progress(sock_errno())) {
+        sock_close(fd);
         refuse_syn(pkt, len);
         return;
     }
     conn_t *c = conn_new();
     if (!c) {
-        close(fd);
+        sock_close(fd);
         return;
     }
     c->outbound = true;
@@ -541,9 +536,9 @@ void tcpnat_input(uint8_t *pkt, size_t len)
 static void flush_g2h(conn_t *c)
 {
     while (c->g2h_len) {
-        ssize_t n = send(c->fd, c->g2h, c->g2h_len, MSG_NOSIGNAL);
+        ssize_t n = sock_send(c->fd, c->g2h, c->g2h_len);
         if (n <= 0) {
-            if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+            if (n < 0 && !sock_again(sock_errno()))
                 conn_close(c, true);
             return;
         }
@@ -588,7 +583,7 @@ static void read_host(conn_t *c)
         room = room > 1024 ? room - 1024 : 0;
     if (!room)
         return;
-    ssize_t n = recv(c->fd, buf, room, 0);
+    ssize_t n = sock_recv(c->fd, buf, room);
     if (n > 0) {
         if (c->ftp) {
             ftp_filter(c, false, buf, (size_t)n);
@@ -598,7 +593,7 @@ static void read_host(conn_t *c)
         }
     } else if (n == 0) {
         c->host_eof = true;
-    } else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+    } else if (!sock_again(sock_errno())) {
         conn_close(c, true);
     }
 }
@@ -626,18 +621,20 @@ static void conn_step(conn_t *c)
 
 static fwd_t *open_forward(uint32_t bind_ip, uint16_t hport, uint16_t gport, bool quiet)
 {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0)
+    sock_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == SOCK_NONE)
         return NULL;
-    int one = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#ifndef _WIN32
+    // On Windows this would let another program take over a port already being listened on.
+    sock_setopt(fd, SOL_SOCKET, SO_REUSEADDR, 1);
+#endif
     struct sockaddr_in sa = {.sin_family = AF_INET, .sin_port = htons(hport), .sin_addr.s_addr = htonl(bind_ip)};
     socklen_t sl = sizeof(sa);
-    if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0 || listen(fd, 8) != 0 || !net_set_nonblock(fd) ||
+    if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0 || listen(fd, 8) != 0 || !sock_set_nonblock(fd) ||
         getsockname(fd, (struct sockaddr *)&sa, &sl) != 0) {
         if (!quiet)
-            pcsim_log("net: cannot listen on port %u: %s", hport, strerror(errno));
-        close(fd);
+            pcsim_log("net: cannot listen on port %u: %s", hport, sock_strerror(sock_errno()));
+        sock_close(fd);
         return NULL;
     }
     fwd_t *f = calloc(1, sizeof(*f));
@@ -685,7 +682,8 @@ bool tcpnat_forward(const char *spec)
     if (!f)
         return false;
     char addr[INET_ADDRSTRLEN];
-    struct in_addr a = {htonl(bind_ip)};
+    struct in_addr a;
+    a.s_addr = htonl(bind_ip);
     inet_ntop(AF_INET, &a, addr, sizeof(addr));
     pcsim_log("net: %s:%d forwards to the firmware's TCP port %d%s", addr, hp, gp,
               f->ftp ? " (FTP passive mode handled)" : "");
@@ -694,11 +692,11 @@ bool tcpnat_forward(const char *spec)
 
 static void forward_accept(fwd_t *f)
 {
-    int fd = accept(f->fd, NULL, NULL);
-    if (fd < 0)
+    sock_t fd = accept(f->fd, NULL, NULL);
+    if (fd == SOCK_NONE)
         return;
-    if (!net_link_up || !net_set_nonblock(fd)) {
-        close(fd);
+    if (!net_link_up || !sock_set_nonblock(fd)) {
+        sock_close(fd);
         return;
     }
     conn_t *c = conn_new();
@@ -710,7 +708,7 @@ static void forward_accept(fwd_t *f)
             c->state = C_CLOSED;
             c->lport = 0;
         }
-        close(fd);
+        sock_close(fd);
         return;
     }
     net_set_nodelay(fd);
@@ -743,7 +741,7 @@ int tcpnat_pollfds(pollfd_t *fds, int max)
         short ev = 0;
         if (c->state == C_CONNECTING)
             ev = POLLOUT;
-        else if (c->state == C_OPEN && c->fd >= 0) {
+        else if (c->state == C_OPEN && c->fd != SOCK_NONE) {
             if (!c->host_eof && c->h2g_len < sizeof(c->h2g) / 2)
                 ev |= POLLIN;
             if (c->g2h_len)
@@ -769,12 +767,10 @@ void tcpnat_service(const pollfd_t *fds, int n)
         }
         conn_t *c = poll_conn[i];
         if (c->state == C_CONNECTING) {
-            int err = 0;
-            socklen_t sl = sizeof(err);
-            getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &err, &sl);
+            int err = sock_pending_error(c->fd);
             if (err) {
                 if (pcsim_opts.trace)
-                    pcsim_log("net: connect to port %u refused: %s", c->dport, strerror(err));
+                    pcsim_log("net: connect to port %u refused: %s", c->dport, sock_strerror(err));
                 refuse_syn(c->syn, c->syn_len);
                 conn_close(c, true);
             } else {
@@ -811,7 +807,7 @@ void tcpnat_timers(void)
         fwd_t *f = *pf;
         if (f->dynamic && now >= f->expires) {
             *pf = f->next;
-            close(f->fd);
+            sock_close(f->fd);
             free(f);
             continue;
         }

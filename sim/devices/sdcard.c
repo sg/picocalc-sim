@@ -5,7 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
+
+#include "pcsim/port.h"
 
 #include "pcsim/bus.h"
 #include "pcsim/devices.h"
@@ -103,7 +104,7 @@ static bool read_block(sdcard_t *sd, uint32_t block, uint8_t *buf)
 {
     if (block >= sd->blocks)
         return false;
-    ssize_t n = pread(sd->fd, buf, BLOCK, (off_t)block * BLOCK);
+    ssize_t n = pread(sd->fd, buf, BLOCK, (int64_t)block * BLOCK);
     if (n < 0)
         return false;
     if (n < BLOCK)
@@ -256,7 +257,7 @@ static void write_data_byte(sdcard_t *sd, uint8_t mosi)
     if (sd->wpos < BLOCK + 2)
         return;
     bool ok = sd->next_block < sd->blocks &&
-              pwrite(sd->fd, sd->wbuf, BLOCK, (off_t)sd->next_block * BLOCK) == BLOCK;
+              pwrite(sd->fd, sd->wbuf, BLOCK, (int64_t)sd->next_block * BLOCK) == BLOCK;
     sd->next_block++;
     out_reset(sd);
     // Data response token: 010 accepted, 110 write error.
@@ -351,7 +352,7 @@ sdcard_t *sdcard_create(pcsim_spi_pins_t pins, int detect_pin)
 
 bool sdcard_insert(sdcard_t *sd, const char *image_path)
 {
-    int fd = open(image_path, O_RDWR);
+    int fd = open(image_path, O_RDWR | O_BINARY);
     if (fd < 0) {
         pcsim_log("cannot open card image %s: %s", image_path, strerror(errno));
         return false;

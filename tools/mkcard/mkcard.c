@@ -3,6 +3,7 @@
 
 #define _FILE_OFFSET_BITS 64
 #include <errno.h>
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -160,7 +161,10 @@ int main(int argc, char **argv)
     unsigned size_mb = 512;
     const char *label = "PICOCALC";
     int opt;
-    while ((opt = getopt(argc, argv, "s:l:h")) != -1) {
+    // getopt_long lets options follow IMAGE, as the usage shows, even where getopt stops at the
+    // first operand (MinGW, BSD).
+    static const struct option no_long_opts[] = {{0}};
+    while ((opt = getopt_long(argc, argv, "s:l:h", no_long_opts, NULL)) != -1) {
         switch (opt) {
         case 's':
             size_mb = (unsigned)strtoul(optarg, NULL, 10);
@@ -217,6 +221,10 @@ int main(int argc, char **argv)
             rc = 1;
 
     f_unmount("");
+#ifdef _WIN32
+    // Windows will not rename onto an existing file.
+    remove(path);
+#endif
     if (fclose(img) != 0 || rename(tmp, path) != 0) {
         fprintf(stderr, "mkcard: cannot finish %s: %s\n", path, strerror(errno));
         return 1;
