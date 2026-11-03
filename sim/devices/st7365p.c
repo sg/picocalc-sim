@@ -358,15 +358,18 @@ uint32_t st7365p_generation(st7365p_t *lcd)
     return g;
 }
 
-// The drivers wrap their scroll offset over the whole 480-row memory (minus fixed areas), not
-// over VSA; that only works if the controller does the same, so this model does. With nonzero
-// fixed areas the real chip's mapping is unverified.
+// VSCRDEF splits the 480 lines the controller scans into top fixed, scrolling and bottom fixed
+// bands, and the panel shows the first 320 of those lines, so a bottom band that starts inside
+// them holds still on screen while the lines above it scroll. VSCSAD names the row shown at the
+// top of the scrolling band. The datasheet asks for TFA + VSA + BFA = 480 and leaves other
+// settings undefined; for those the scrolling band still ends at TFA + VSA here, but wraps over
+// all 480 - TFA - BFA unfixed rows, which is unverified on hardware.
 static unsigned panel_line_to_row(const st7365p_t *lcd, unsigned line)
 {
     unsigned tfa = lcd->tfa, bfa = lcd->bfa;
     if (tfa + bfa >= MEM_H)
         return line;
-    if (line < tfa || line >= PCSIM_LCD_HEIGHT - (bfa < PCSIM_LCD_HEIGHT ? bfa : 0))
+    if (line < tfa || line >= (unsigned)tfa + lcd->vsa)
         return line;
     unsigned span = MEM_H - tfa - bfa;
     unsigned vsp = lcd->vsp >= tfa ? lcd->vsp - tfa : 0;
