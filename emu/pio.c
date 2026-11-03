@@ -539,8 +539,10 @@ static void set_pin_quiet(chip_t *m, pio_t *p, unsigned pin, bool v)
 {
     uint64_t bit = 1ull << pin;
     p->out_val = v ? (p->out_val | bit) : (p->out_val & ~bit);
-    if ((p->pin_owned & bit) && pin < NUM_GPIO_MAX)
+    if ((p->pin_owned & bit) && pin < NUM_GPIO_MAX) {
         m->gpio[pin].level = v;
+        m->gpio_in_valid = false;
+    }
 }
 
 static bool run_spi_out(chip_t *m, pio_t *p, int smi)

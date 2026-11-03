@@ -31,6 +31,9 @@ static double speed = 1.0;
 
 static pthread_mutex_t uf2_lock = PTHREAD_MUTEX_INITIALIZER;
 static char pending_uf2[4096];
+// PCSIM_STOP_AT_MS ends the run at an exact emulated time, so that with --trace two builds can be
+// compared by the state digest they print.
+static uint64_t stop_at_ps;
 
 void pcsim_machine_lock(void)
 {
@@ -285,10 +288,14 @@ static void run_slice(void)
 {
     chip_t *m = &chip;
     uint64_t end = m->now + SLICE_PS;
+    if (stop_at_ps && end > stop_at_ps)
+        end = stop_at_ps;
     while (m->now < end && !atomic_load(&stop_flag)) {
         uint64_t target = m->now + CHUNK_PS;
         if (m->events && m->events->when < target)
             target = m->events->when > m->now ? m->events->when : m->now + 1;
+        if (stop_at_ps && target > end)
+            target = end;
         run_chunk(target);
         fire_events();
         if (cores_idle()) {
@@ -338,6 +345,11 @@ static void *machine_main(void *arg)
             continue;
         }
         run_slice();
+        if (stop_at_ps && chip.now >= stop_at_ps) {
+            atomic_store(&stop_flag, true);
+            pcsim_request_quit(0);
+            break;
+        }
         pthread_mutex_unlock(&lock);
 
         uint64_t host = pcsim_mono_ns();
@@ -386,6 +398,9 @@ static const board_info_t *pick_board(const uf2_file_t *f)
 
 bool pcsim_machine_start(void)
 {
+    const char *stop_ms = getenv("PCSIM_STOP_AT_MS");
+    if (stop_ms && *stop_ms)
+        stop_at_ps = (uint64_t)(atof(stop_ms) * PS_PER_MS);
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
@@ -451,6 +466,35 @@ bool pcsim_machine_start(void)
     return true;
 }
 
+static uint64_t fnv1a(uint64_t h, const void *data, size_t len)
+{
+    const uint8_t *p = data;
+    for (size_t i = 0; i < len; i++)
+        h = (h ^ p[i]) * 0x100000001b3ull;
+    return h;
+}
+
+// Everything a change to the CPU core could disturb: registers, time and instruction counts on
+// both cores, and the whole of SRAM.
+static uint64_t state_digest(void)
+{
+    uint64_t h = 0xcbf29ce484222325ull;
+    h = fnv1a(h, &chip.now, sizeof(chip.now));
+    for (int i = 0; i < 2; i++) {
+        const cpu_t *c = &chip.core[i];
+        h = fnv1a(h, c->r, sizeof(c->r));
+        h = fnv1a(h, &c->apsr, sizeof(c->apsr));
+        h = fnv1a(h, &c->ipsr, sizeof(c->ipsr));
+        h = fnv1a(h, &c->itstate, sizeof(c->itstate));
+        h = fnv1a(h, &c->state, sizeof(c->state));
+        h = fnv1a(h, &c->t, sizeof(c->t));
+        h = fnv1a(h, &c->insns, sizeof(c->insns));
+        h = fnv1a(h, c->s, sizeof(c->s));
+        h = fnv1a(h, &c->fpscr, sizeof(c->fpscr));
+    }
+    return fnv1a(h, chip.sram, sizeof(chip.sram));
+}
+
 void pcsim_machine_stop(void)
 {
     atomic_store(&stop_flag, true);
@@ -462,6 +506,7 @@ void pcsim_machine_stop(void)
             pcsim_log("core %d: %llu instructions", i, (unsigned long long)chip.core[i].insns);
             cpu_dump(&chip.core[i]);
         }
+        pcsim_log("state digest %016llx", (unsigned long long)state_digest());
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 4; j++) {
                 pio_sm_t *sm = &chip.pio[i].sm[j];

@@ -30,6 +30,7 @@ void gpio_reset(chip_t *m)
     m->gpio_irq_pins = 0;
     for (int i = 0; i < NUM_GPIO_MAX; i++)
         m->gpio[i].level = m->gpio[i].ext_driven ? m->gpio[i].ext_level : false;
+    m->gpio_in_valid = false;
 }
 
 int gpio_func(chip_t *m, unsigned pin)
@@ -158,6 +159,7 @@ void gpio_refresh_mask(chip_t *m, uint64_t mask)
         if (lvl == g->level)
             continue;
         g->level = lvl;
+        m->gpio_in_valid = false;
         changed_pins |= 1ull << pin;
         m->gpio_edge[pin >> 3] |= (lvl ? 8u : 4u) << (4 * (pin & 7));
         devices_gpio_changed(m, pin, lvl);
@@ -196,12 +198,16 @@ bool gpio_in(chip_t *m, unsigned pin)
 
 uint64_t gpio_in_all(chip_t *m)
 {
+    if (m->gpio_in_valid)
+        return m->gpio_in_cache;
     uint64_t v = 0;
     for (unsigned pin = 0; pin < m->board->num_gpio; pin++)
         if (gpio_in(m, pin))
             v |= 1ull << pin;
     // The QSPI pins idle high: chip select deasserted and data lines pulled up.
     v |= 0xfull << 60 | 1ull << 59;
+    m->gpio_in_cache = v;
+    m->gpio_in_valid = true;
     return v;
 }
 
@@ -249,6 +255,7 @@ void iobank_write(chip_t *m, uint32_t off, uint32_t v)
         unsigned pin = off >> 3;
         if (pin < NUM_GPIO_MAX && (off & 4)) {
             m->gpio[pin].ctrl = v & 0x3003f01fu;
+            m->gpio_in_valid = false;
             for (int i = 0; i < 3; i++) {
                 if ((int)(v & 0x1f) == FUNC_PIO0 + i)
                     m->pio[i].pin_owned |= 1ull << pin;
@@ -334,6 +341,7 @@ void pads_write(chip_t *m, bool qspi, uint32_t off, uint32_t v)
     unsigned i = (off - 4) >> 2;
     if (i < NUM_GPIO_MAX + 2) {
         m->pads[i] = v & 0x1ff;
+        m->gpio_in_valid = false;
         if (i < NUM_GPIO_MAX)
             gpio_refresh(m);
     }

@@ -42,6 +42,17 @@ That gives `build-win/pcsim.exe` and `build-win/tools/mkcard/pcsim-mkcard.exe`. 
 file that needs only DLLs Windows ships with, so it can be copied to any 64-bit Windows 10 or 11
 machine. MSYS2's MinGW-w64 should build it natively on Windows the same way, but that is untested.
 
+### Checking a change to the emulator
+
+`PCSIM_STOP_AT_MS=MS` stops a run at exactly that much emulated time, and with `--trace` the exit
+report ends with a digest of both cores' registers, cycle time and instruction counts and all of
+SRAM. Unthrottled headless runs are deterministic, so a change that should not alter behaviour
+(such as a faster CPU path) must leave every digest as it was:
+
+```sh
+PCSIM_STOP_AT_MS=3000 build/pcsim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
+```
+
 ### Continuous integration and releases
 
 `.forgejo/workflows/build.yml` builds every pushed branch in the shared `picocalc-builder` image
@@ -210,7 +221,10 @@ quit 0
   extension, the single-precision FPU, IT blocks, exclusive monitors shared between cores, and
   the full exception model (NVIC, priorities, BASEPRI, fault escalation, lazy FP stacking done
   eagerly). Each instruction is charged an approximate cycle count, and flash fetches go through
-  a model of the 16 KB XIP cache, so code runs at about the speed it does on the chip.
+  a model of the 16 KB XIP cache, so code runs at about the speed it does on the chip. Runs of
+  straight-line code are decoded once into blocks of small handlers (`emu/block.inc`) and reused
+  while the code they came from is unchanged; they behave exactly as stepping one instruction at
+  a time, which `PCSIM_NO_BLOCKS=1` still does.
 - **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP) is
   modelled by what each canned operation computes rather than its internal datapath: operands are
   captured as doubles and the final read returns the IEEE result.
@@ -258,8 +272,8 @@ Not emulated yet, or not faithfully:
   is absent. Script `wait`s are host time, so a much slower host (or a sanitizer build)
   can type ahead of the firmware.
 - **Audio.** PWM and PIO audio run, but nothing is played yet.
-- **Speed.** One busy core runs at full speed; firmware that keeps both cores busy (picocalc_lua,
-  picocalc-z80) runs at about 55-60% of real time on a 2.9 GHz i7.
+- **Speed.** One busy core runs at almost twice real time; firmware that keeps both cores busy
+  (picocalc_lua, picocalc-z80) runs at about 70-75% of real time on a 2.9 GHz i7.
 - **The PicoCalc mainboard's PSRAM**, which picocalc_lua reaches through PIO, is not attached.
 - **USB** enumerates nothing: the controller's registers exist but no host is connected.
 - **RP2040 boards** (Pico, Pico W) and RISC-V images are not supported.
@@ -274,7 +288,7 @@ Not emulated yet, or not faithfully:
 ## Roadmap
 
 1. Audio from the PWM and PIO audio drivers, through SDL.
-2. A faster CPU core (predecoded blocks) so dual-core firmware reaches real time.
+2. More CPU speed so dual-core firmware reaches real time.
 3. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards (Pico W with the same
    radio model).
 4. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.

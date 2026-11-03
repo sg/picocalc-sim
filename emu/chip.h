@@ -218,6 +218,9 @@ typedef struct {
     uint32_t alarm[4], armed, intr, inte, intf, pause, dbgpause, locked, source;
     emu_event_t ev[4];
     int idx;
+    // The tick timer_us last found (q ticks of q_period after q_base, starting q_dt in), which
+    // most reads land in again.
+    uint64_t q_base, q_period, q_dt, q;
 } timer_t_;
 
 typedef struct {
@@ -291,6 +294,11 @@ struct chip {
     uint32_t busctrl[12];
     uint32_t accessctrl[64];
     uint32_t ticks[18];
+    // tick_ps's last answer for each tick generator, keyed on what it was computed from.
+    struct {
+        uint32_t cycles, ref_hz;
+        uint64_t ps;
+    } tick_memo[6];
     uint32_t powman[64];
     uint64_t aon_base_ms, aon_base_t;
     uint32_t otp_regs[0x60];
@@ -315,6 +323,10 @@ struct chip {
     uint32_t gpio_inte[2][6], gpio_intf[2][6];
     uint32_t gpio_edge[6];
     uint64_t gpio_irq_pins;
+    // gpio_in_all's answer, recomputed after anything that changes a pin's level, input
+    // override or pad.
+    uint64_t gpio_in_cache;
+    bool gpio_in_valid;
     uint32_t qspi_ctrl[6];
     gpio_watch_t *watch[NUM_GPIO_MAX];
 
@@ -334,9 +346,15 @@ struct chip {
     qmi_t qmi;
 
     uint32_t xip_ctrl, xip_ctr_hit, xip_ctr_acc;
+    // Changes whenever ROM or flash contents, or where they are mapped, may have changed, so
+    // predecoded blocks from them need no byte-by-byte check.
+    uint32_t code_gen;
     uint32_t xip_stream_addr, xip_stream_ctr;
     uint32_t xip_tag[2048][2];
     uint8_t xip_lru[2048];
+    // The tag in each set's most recently used way, kept by xip_access so a repeat hit costs one
+    // load.
+    uint32_t xip_mru[1024];
 
     uint32_t adc_cs, adc_result, adc_fcs, adc_div, adc_inte, adc_intf;
     uint32_t usb_regs[64];
@@ -386,6 +404,21 @@ uint16_t bus_fetch16_slow(cpu_t *c, uint32_t addr);
 uint32_t sys_read(chip_t *m, uint32_t addr, int size, bool *ok);
 void sys_write(chip_t *m, uint32_t addr, uint32_t v, int size, bool *ok);
 uint32_t xip_access(chip_t *m, uint32_t addr);
+
+// xip_access for the commonest case inline: a hit on the line used last in its set leaves the
+// cache state as it was apart from the counters.
+static inline uint32_t xip_cost(chip_t *m, uint32_t addr)
+{
+    if (likely((addr >> 24) < 0x14 && (m->xip_ctrl & 1))) {
+        uint32_t line = (addr & 0x01ffffffu) >> 3, set = line & 1023;
+        if (m->xip_mru[set] == ((line >> 10) | 0x80000000u)) {
+            m->xip_ctr_acc++;
+            m->xip_ctr_hit++;
+            return 0;
+        }
+    }
+    return xip_access(m, addr);
+}
 uint8_t *xip_translate(chip_t *m, uint32_t addr);
 
 bool coproc_mcr(cpu_t *c, unsigned cp, unsigned opc1, unsigned crn, unsigned crm, unsigned opc2, uint32_t v);

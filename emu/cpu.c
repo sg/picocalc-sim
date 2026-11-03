@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "chip.h"
@@ -55,7 +56,7 @@ static inline uint16_t fetch16(cpu_t *c, uint32_t a)
     if (likely(p)) {
         // Consecutive fetches from one 8-byte cache line cannot miss.
         if (unlikely((a >> 28) == 1) && (a & ~7u) != c->fetch_line) {
-            c->cyc += xip_access(m, a);
+            c->cyc += xip_cost(m, a);
             c->fetch_line = a & ~7u;
         }
         return rd16le(p + (a & 0xffff));
@@ -67,6 +68,7 @@ static void fault_unaligned(cpu_t *c)
 {
     if (!c->fault) {
         c->fault = true;
+        c->check_exc = true;
         c->fault_usage = true;
         c->cfsr |= UFSR_UNALIGNED;
     }
@@ -79,7 +81,7 @@ static inline uint32_t ld32(cpu_t *c, uint32_t a)
     uint8_t *p = m->rpage[a >> 16];
     if (likely(p && !(a & 3))) {
         if (unlikely((a >> 28) == 1))
-            c->cyc += xip_access(m, a);
+            c->cyc += xip_cost(m, a);
         return rd32le(p + (a & 0xffff));
     }
     if (a & 3) {
@@ -96,7 +98,7 @@ static inline uint32_t ld16(cpu_t *c, uint32_t a)
     uint8_t *p = m->rpage[a >> 16];
     if (likely(p && !(a & 1))) {
         if (unlikely((a >> 28) == 1))
-            c->cyc += xip_access(m, a);
+            c->cyc += xip_cost(m, a);
         return rd16le(p + (a & 0xffff));
     }
     if (a & 1) {
@@ -113,7 +115,7 @@ static inline uint32_t ld8(cpu_t *c, uint32_t a)
     uint8_t *p = m->rpage[a >> 16];
     if (likely(p)) {
         if (unlikely((a >> 28) == 1))
-            c->cyc += xip_access(m, a);
+            c->cyc += xip_cost(m, a);
         return p[a & 0xffff];
     }
     return bus_read(c, a, 1);
@@ -1414,9 +1416,12 @@ static void step(cpu_t *c)
         it_advance(c);
 }
 
+#include "block.inc"
+
 void cpu_run(cpu_t *c, uint64_t until)
 {
     chip_t *m = c->m;
+    bool use_blocks = c->v8 && blocks_on();
     if (c->state == CPU_WFI || c->state == CPU_WFE)
         sleep_check(c);
     while (c->t < until) {
@@ -1427,6 +1432,13 @@ void cpu_run(cpu_t *c, uint64_t until)
         }
         if (unlikely(c->state != CPU_RUN))
             return;
+        if (likely(use_blocks && !c->itstate)) {
+            const block_t *b = block_find(m, c->r[15]);
+            if (likely(b)) {
+                block_run(c, b, until);
+                continue;
+            }
+        }
         c->cyc = 0;
         step(c);
         c->insns++;

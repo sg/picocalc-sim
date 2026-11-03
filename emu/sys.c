@@ -84,6 +84,8 @@ void chip_update_clocks(chip_t *m)
         sys = ROSC_HZ;
     m->sys_hz = sys;
     m->sys_ps = (uint32_t)((PS_PER_S + sys / 2) / sys);
+    // A core running a predecoded block keeps the old period until it looks again.
+    m->core[0].check_exc = m->core[1].check_exc = true;
 
     uint32_t peri_ctrl = m->clk[CLK_PERI].ctrl;
     uint64_t peri = 0;
@@ -146,6 +148,7 @@ static void reset_peripherals(chip_t *m, uint32_t newly)
     if (newly & (1u << 6)) {
         for (int i = 0; i < NUM_GPIO_MAX; i++)
             m->gpio[i].ctrl = FUNC_NULL;
+        m->gpio_in_valid = false;
         for (int i = 0; i < 3; i++)
             m->pio[i].pin_owned = 0;
         memset(m->gpio_inte, 0, sizeof(m->gpio_inte));

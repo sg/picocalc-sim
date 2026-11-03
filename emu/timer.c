@@ -10,7 +10,12 @@ static uint64_t tick_ps(chip_t *m, unsigned gen)
     uint32_t ctrl = m->ticks[gen * 3], cycles = m->ticks[gen * 3 + 1] & 0x1ff;
     if (!(ctrl & 1) || !cycles || !m->ref_hz)
         return 0;
-    return (uint64_t)cycles * PS_PER_S / m->ref_hz;
+    if (m->tick_memo[gen].cycles != cycles || m->tick_memo[gen].ref_hz != m->ref_hz) {
+        m->tick_memo[gen].cycles = cycles;
+        m->tick_memo[gen].ref_hz = m->ref_hz;
+        m->tick_memo[gen].ps = (uint64_t)cycles * PS_PER_S / m->ref_hz;
+    }
+    return m->tick_memo[gen].ps;
 }
 
 static uint64_t timer_period(chip_t *m, timer_t_ *t)
@@ -25,7 +30,15 @@ uint64_t timer_us(chip_t *m, timer_t_ *t)
     uint64_t p = timer_period(m, t);
     if (!p || (t->pause & 1))
         return t->base_us;
-    return t->base_us + (m->now - t->base_t) / p;
+    uint64_t dt = m->now - t->base_t;
+    // Firmware polls the timer many times per tick, and a 64-bit divide is slow.
+    if (p != t->q_period || t->base_t != t->q_base || dt < t->q_dt || dt - t->q_dt >= p) {
+        t->q = dt / p;
+        t->q_dt = t->q * p;
+        t->q_period = p;
+        t->q_base = t->base_t;
+    }
+    return t->base_us + t->q;
 }
 
 static void timer_irqs(chip_t *m, timer_t_ *t)

@@ -356,6 +356,7 @@ void flash_erase(chip_t *m, uint32_t off, uint32_t len)
         len = m->flash_size - off;
     memset(m->flash + off, 0xff, len);
     mark_dirty(m, off, len);
+    m->code_gen++;
 }
 
 void flash_program(chip_t *m, uint32_t off, const uint8_t *src, uint32_t len)
@@ -367,4 +368,5 @@ void flash_program(chip_t *m, uint32_t off, const uint8_t *src, uint32_t len)
     for (uint32_t i = 0; i < len; i++)
         m->flash[off + i] &= src[i];
     mark_dirty(m, off, len);
+    m->code_gen++;
 }

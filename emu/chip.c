@@ -169,6 +169,9 @@ void chip_rebuild_pages(chip_t *m)
                 m->wpage[(addr >> 16)] = ptr;
         }
     }
+    // A core part-way through a predecoded block must look at memory again before going on.
+    m->core[0].check_exc = m->core[1].check_exc = true;
+    m->code_gen++;
 }
 
 uint32_t xip_access(chip_t *m, uint32_t addr)
@@ -185,6 +188,7 @@ uint32_t xip_access(chip_t *m, uint32_t addr)
     uint32_t set = line & 1023;
     uint32_t tag = (line >> 10) | 0x80000000u;
     m->xip_ctr_acc++;
+    m->xip_mru[set] = tag;
     if (m->xip_tag[set][0] == tag) {
         m->xip_lru[set] = 1;
         m->xip_ctr_hit++;
@@ -204,7 +208,10 @@ uint32_t xip_access(chip_t *m, uint32_t addr)
 void xip_flush(chip_t *m)
 {
     memset(m->xip_tag, 0, sizeof(m->xip_tag));
+    memset(m->xip_mru, 0, sizeof(m->xip_mru));
     m->core[0].fetch_line = m->core[1].fetch_line = 1;
+    // Predecoded blocks assume the fetch line only changes as they fetch.
+    m->core[0].check_exc = m->core[1].check_exc = true;
 }
 
 static uint32_t extract(uint32_t word, uint32_t addr, int size)
@@ -393,7 +400,7 @@ static uint32_t mem_read(chip_t *m, cpu_t *c, uint32_t addr, int size, bool *ok)
         uint8_t *p = xip_translate(m, addr);
         if (p) {
             if (c)
-                c->cyc += xip_access(m, addr);
+                c->cyc += xip_cost(m, addr);
             return size == 4 ? rd32le(p) : size == 2 ? rd16le(p) : *p;
         }
         if (((addr >> 24) & 1) && !m->psram)
@@ -561,6 +568,7 @@ uint32_t bus_read(cpu_t *c, uint32_t addr, int size)
         if (m->trace)
             emu_log("core %d bus error reading %08x (pc %08x)", c->id, addr, c->r[15]);
         c->fault = true;
+        c->check_exc = true;
         c->cfsr |= (1u << 9) | (1u << 15);
         c->bfar = addr;
     }
@@ -577,6 +585,7 @@ void bus_write(cpu_t *c, uint32_t addr, uint32_t v, int size)
         if (m->trace)
             emu_log("core %d bus error writing %08x (pc %08x)", c->id, addr, c->r[15]);
         c->fault = true;
+        c->check_exc = true;
         c->cfsr |= (1u << 9) | (1u << 15);
         c->bfar = addr;
     }
@@ -652,6 +661,7 @@ static void fill_noise(uint8_t *p, size_t n, uint32_t seed)
 
 void chip_reset(chip_t *m, bool watchdog)
 {
+    m->code_gen++;
     while (m->events)
         ev_cancel(m, m->events);
     m->irq_lines = 0;
@@ -719,6 +729,7 @@ void chip_reset(chip_t *m, bool watchdog)
 
 void chip_power_on(chip_t *m)
 {
+    m->code_gen++;
     fill_noise(m->sram, SRAM_SIZE, (uint32_t)(m->now >> 7) ^ 0x2350c0deu);
     if (m->psram)
         fill_noise(m->psram, m->psram_size, 0x5eed1234u);
