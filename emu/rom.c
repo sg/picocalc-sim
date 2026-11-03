@@ -142,6 +142,8 @@ static void mw8(chip_t *m, uint32_t a, uint8_t v)
 static void charge(cpu_t *c, uint64_t ps)
 {
     c->t += ps;
+    // A predecoded block keeps the time in a register until told to look again.
+    c->check_exc = true;
 }
 
 // ---------------------------------------------------------------------------------------------

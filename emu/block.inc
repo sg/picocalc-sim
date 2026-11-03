@@ -20,6 +20,10 @@ typedef void (*dop_fn)(cpu_t *c, const dop_t *d);
 #define LF_LEN 7
 #define FETCH_HW1 8
 #define FETCH_HW2 16
+// Spare lf bits that some handlers use for flags they decoded.
+#define LF_A 32
+#define LF_B 64
+#define LF_C 128
 
 struct dop {
     dop_fn fn;
@@ -29,13 +33,17 @@ struct dop {
     uint32_t imm;
 };
 
-typedef struct {
+typedef struct block block_t;
+struct block {
     uint32_t tag; // start address | 1, so an empty entry never matches
     uint32_t gen; // the chip's code_gen when built from ROM or flash, else 0
     uint16_t n, bytes;
+    // The blocks control went on to from here, fall-through first, checked like any other.
+    uint32_t link_pc[2];
+    block_t *link[2];
     dop_t ops[BLK_MAX];
     uint8_t code[BLK_MAX * 4];
-} block_t;
+};
 
 // Two ways per set, shared by both cores, which run on one thread.
 static block_t blocks[BLK_SETS][2];
@@ -60,11 +68,6 @@ static void h_ldst_dual_excl(cpu_t *c, const dop_t *d)
     ldst_dual_excl(c, d->pc, d->hw1, d->hw2);
 }
 
-static void h_ldm_stm(cpu_t *c, const dop_t *d)
-{
-    ldm_stm(c, d->pc, d->hw1, d->hw2);
-}
-
 static void h_dp_shifted_reg(cpu_t *c, const dop_t *d)
 {
     dp_shifted_reg(c, d->pc, d->hw1, d->hw2);
@@ -78,11 +81,6 @@ static void h_branch_misc(cpu_t *c, const dop_t *d)
 static void h_dp_plain_imm(cpu_t *c, const dop_t *d)
 {
     dp_plain_imm(c, d->pc, d->hw1, d->hw2);
-}
-
-static void h_dp_modified_imm(cpu_t *c, const dop_t *d)
-{
-    dp_modified_imm(c, d->pc, d->hw1, d->hw2);
 }
 
 static void h_ldst_single(cpu_t *c, const dop_t *d)
@@ -306,6 +304,170 @@ static void h_push(cpu_t *c, const dop_t *d)
         r[13] = sp;
 }
 
+static void h_pop(cpu_t *c, const dop_t *d)
+{
+    uint32_t *r = c->r;
+    uint32_t list = d->imm & 0xff;
+    uint32_t a = r[13];
+    uint32_t vals[8];
+    for (int i = 0; i < 8; i++)
+        if (list & (1u << i)) {
+            vals[i] = ld32(c, a);
+            a += 4;
+        }
+    uint32_t newpc = 0;
+    if (d->imm & 0x100) {
+        newpc = ld32(c, a);
+        a += 4;
+    }
+    if (c->fault)
+        return;
+    for (int i = 0; i < 8; i++)
+        if (list & (1u << i))
+            r[i] = vals[i];
+    r[13] = a;
+    if (d->imm & 0x100) {
+        c->cyc += 2;
+        branch_interworking(c, newpc, d->pc);
+    }
+}
+
+static void h_bx(cpu_t *c, const dop_t *d)
+{
+    uint32_t v = c->r[d->rm];
+    c->cyc++;
+    branch_interworking(c, v, d->pc);
+}
+
+static void h_blx(cpu_t *c, const dop_t *d)
+{
+    uint32_t v = c->r[d->rm];
+    c->cyc++;
+    c->r[14] = (d->pc + 2) | 1;
+    branch_interworking(c, v, d->pc);
+}
+
+static void h_bl(cpu_t *c, const dop_t *d)
+{
+    c->r[14] = (d->pc + 4) | 1;
+    c->cyc += 2;
+    c->r[15] = d->imm;
+}
+
+// Modified-immediate data processing: LF_A sets the flags; LF_B marks a rotated constant, whose
+// carry out is its top bit rather than the carry flag.
+static void h_dp_imm(cpu_t *c, const dop_t *d)
+{
+    uint32_t carry = (d->lf & LF_B) ? d->imm >> 31 : ((c->apsr & F_C) ? 1 : 0);
+    dp_op(c, d->rm, d->rd, d->rn, (d->lf & LF_A) != 0, c->r[d->rn], d->imm, carry, d->pc);
+}
+
+// LDM/STM with the list (already masked for a store) in imm and its length in rm; LF_A loads,
+// LF_B writes back, LF_C decrements before.
+static void h_ldm_stm(cpu_t *c, const dop_t *d)
+{
+    uint32_t *r = c->r;
+    unsigned rn = d->rn, n = d->rm;
+    uint32_t list = d->imm;
+    bool load = d->lf & LF_A, wb = d->lf & LF_B, db = d->lf & LF_C;
+    uint32_t base = r[rn];
+    uint32_t a = db ? base - 4 * n : base;
+    uint32_t end = db ? base - 4 * n : base + 4 * n;
+    if (load) {
+        uint32_t vals[16];
+        for (int i = 0; i < 16; i++)
+            if (list & (1u << i)) {
+                vals[i] = ld32(c, a);
+                a += 4;
+            }
+        if (c->fault)
+            return;
+        for (int i = 0; i < 15; i++)
+            if (list & (1u << i))
+                r[i] = vals[i];
+        if (wb && !(list & (1u << rn)))
+            r[rn] = end;
+        if (list & 0x8000) {
+            c->cyc += 2;
+            branch_interworking(c, vals[15], d->pc);
+        }
+    } else {
+        for (int i = 0; i < 15; i++)
+            if (list & (1u << i)) {
+                st32(c, a, r[i]);
+                a += 4;
+            }
+        if (wb && !c->fault)
+            r[rn] = end;
+    }
+}
+
+// The 32-bit loads write their register only once the access has not faulted.
+static void h_ldr_w(cpu_t *c, const dop_t *d)
+{
+    uint32_t v = ld32u(c, c->r[d->rn] + d->imm);
+    if (!c->fault)
+        c->r[d->rd] = v;
+}
+
+static void h_ldrb_w(cpu_t *c, const dop_t *d)
+{
+    uint32_t v = ld8(c, c->r[d->rn] + d->imm);
+    if (!c->fault)
+        c->r[d->rd] = v;
+}
+
+static void h_ldrh_w(cpu_t *c, const dop_t *d)
+{
+    uint32_t v = ld16u(c, c->r[d->rn] + d->imm);
+    if (!c->fault)
+        c->r[d->rd] = v;
+}
+
+// LDR/STR with an 8-bit offset, signed in imm: LF_A indexes before the access, LF_B writes back.
+static void h_ldr_w8(cpu_t *c, const dop_t *d)
+{
+    uint32_t *r = c->r;
+    uint32_t off = r[d->rn] + d->imm;
+    uint32_t v = ld32u(c, (d->lf & LF_A) ? off : r[d->rn]);
+    if (c->fault)
+        return;
+    if (d->lf & LF_B)
+        r[d->rn] = off;
+    r[d->rd] = v;
+}
+
+static void h_str_w8(cpu_t *c, const dop_t *d)
+{
+    uint32_t *r = c->r;
+    uint32_t off = r[d->rn] + d->imm;
+    st32u(c, (d->lf & LF_A) ? off : r[d->rn], r[d->rd]);
+    if ((d->lf & LF_B) && !c->fault)
+        r[d->rn] = off;
+}
+
+// LDRD/STRD with rt2 in rm and the signed offset in imm: LF_A indexes before the access, LF_B
+// writes back, LF_C loads.
+static void h_ldrd_strd(cpu_t *c, const dop_t *d)
+{
+    uint32_t *r = c->r;
+    uint32_t base = r[d->rn];
+    uint32_t offaddr = base + d->imm;
+    uint32_t a = (d->lf & LF_A) ? offaddr : base;
+    if (d->lf & LF_C) {
+        uint32_t v1 = ld32(c, a), v2 = ld32(c, a + 4);
+        if (c->fault)
+            return;
+        r[d->rd] = v1;
+        r[d->rm] = v2;
+    } else {
+        st32(c, a, r[d->rd]);
+        st32(c, a + 4, r[d->rm]);
+    }
+    if ((d->lf & LF_B) && !c->fault)
+        r[d->rn] = offaddr;
+}
+
 static void h_bcond(cpu_t *c, const dop_t *d)
 {
     if (cond_pass(c, d->rd)) {
@@ -373,13 +535,16 @@ static bool decode16(dop_t *d, uint32_t pc, uint16_t op)
         } else {
             unsigned rm = (op >> 3) & 0xf, rdn = (op & 7) | ((op >> 4) & 8);
             unsigned kind = (op >> 8) & 3;
-            d->rd = rdn, d->rm = rm;
-            if (kind == 3 || rdn == 15)
+            d->rd = d->rn = rdn, d->rm = rm;
+            if (kind == 3) {
+                if (rm != 15)
+                    d->fn = (op & 0x80) ? h_blx : h_bx;
                 return true;
-            if (rm != 15 && kind == 0)
-                d->fn = h_add_hi;
-            else if (rm != 15 && kind == 2)
-                d->fn = h_mov_hi;
+            }
+            if (rdn == 15)
+                return true;
+            if (rm != 15)
+                d->fn = kind == 0 ? h_add_hi : kind == 1 ? h_cmp_reg : h_mov_hi;
             return false;
         }
     case 0x09:
@@ -458,6 +623,8 @@ static bool decode16(dop_t *d, uint32_t pc, uint16_t op)
             return false;
         case 0xc:
         case 0xd:
+            d->imm = op & 0x1ff;
+            d->fn = h_pop;
             return (op & 0x100) != 0;
         default:
             return true;
@@ -487,28 +654,113 @@ static bool decode16(dop_t *d, uint32_t pc, uint16_t op)
     }
 }
 
-// The same split as exec32, so each group's function is called directly.
-static bool decode32(dop_t *d, uint16_t hw1, uint16_t hw2)
+static void decode_ldm_stm(dop_t *d, uint16_t hw1, uint16_t hw2)
+{
+    bool load = hw1 & 0x10;
+    uint32_t list = load ? hw2 : hw2 & 0x5fffu;
+    d->rn = hw1 & 0xf;
+    d->imm = list;
+    d->rm = (uint8_t)__builtin_popcount(list);
+    d->lf |= (load ? LF_A : 0) | ((hw1 & 0x20) ? LF_B : 0) | ((hw1 & 0x180) == 0x100 ? LF_C : 0);
+    d->fn = h_ldm_stm;
+}
+
+// The doubleword forms of ldst_dual_excl, which come after its exclusive, TT, SG and table
+// branch encodings.
+static bool decode_ldrd_strd(dop_t *d, uint16_t hw1, uint16_t hw2)
+{
+    if ((hw1 & 0xffe0) == 0xe840 || (hw1 & 0xffe0) == 0xe8c0 || (hw1 == 0xe97f && hw2 == 0xe97f) ||
+        (hw1 & 0xf) == 15)
+        return false;
+    unsigned op = (hw1 >> 4) & 0x1f;
+    uint32_t imm = (hw2 & 0xffu) << 2;
+    d->rn = hw1 & 0xf, d->rd = (hw2 >> 12) & 0xf, d->rm = (hw2 >> 8) & 0xf;
+    d->imm = (op & 0x08) ? imm : 0u - imm;
+    d->lf |= ((op & 0x10) ? LF_A : 0) | ((op & 0x02) ? LF_B : 0) | ((op & 0x01) ? LF_C : 0);
+    d->fn = h_ldrd_strd;
+    return true;
+}
+
+// Loads and stores with an immediate offset from a base other than the PC, into a register other
+// than the PC; anything else stays with ldst_single.
+static bool decode_ldst_single(dop_t *d, uint16_t hw1, uint16_t hw2)
+{
+    bool sign = hw1 & 0x100, load = hw1 & 0x10;
+    unsigned size = (hw1 >> 5) & 3, rn = hw1 & 0xf, rt = (hw2 >> 12) & 0xf;
+    if (size == 3 || rn == 15 || rt == 15 || sign)
+        return false;
+    d->rn = rn, d->rd = rt;
+    if (hw1 & 0x80) {
+        d->imm = hw2 & 0xfff;
+        static const dop_fn loads[3] = {h_ldrb_w, h_ldrh_w, h_ldr_w}, stores[3] = {h_strb_imm, h_strh_imm, h_str_imm};
+        d->fn = load ? loads[size] : stores[size];
+        return true;
+    }
+    if ((hw2 & 0x800) && size == 2) {
+        uint32_t imm = hw2 & 0xff;
+        d->imm = (hw2 & 0x200) ? imm : 0u - imm;
+        d->lf |= ((hw2 & 0x400) ? LF_A : 0) | ((hw2 & 0x100) ? LF_B : 0);
+        d->fn = load ? h_ldr_w8 : h_str_w8;
+        return true;
+    }
+    return false;
+}
+
+// The same split as exec32, so each group's function is called directly, with the commonest
+// forms decoded here instead.
+static bool decode32(dop_t *d, uint32_t pc, uint16_t hw1, uint16_t hw2)
 {
     d->fn = h_exec32;
     switch ((hw1 >> 11) & 3) {
     case 1:
-        if ((hw1 & 0x0600) == 0x0000)
-            d->fn = (hw1 & 0x40) ? h_ldst_dual_excl : h_ldm_stm;
-        else if ((hw1 & 0x0600) == 0x0200)
+        if ((hw1 & 0x0600) == 0x0000) {
+            if (!(hw1 & 0x40))
+                decode_ldm_stm(d, hw1, hw2);
+            else if (!decode_ldrd_strd(d, hw1, hw2))
+                d->fn = h_ldst_dual_excl;
+        } else if ((hw1 & 0x0600) == 0x0200) {
             d->fn = h_dp_shifted_reg;
+        }
         return false;
     case 2:
         if (hw2 & 0x8000) {
+            unsigned op1 = (hw2 >> 12) & 7;
+            uint32_t s = (hw1 >> 10) & 1, j1 = (hw2 >> 13) & 1, j2 = (hw2 >> 11) & 1;
             d->fn = h_branch_misc;
+            if (op1 & 1) {
+                uint32_t i1 = !(j1 ^ s), i2 = !(j2 ^ s);
+                uint32_t imm = (s << 24) | (i1 << 23) | (i2 << 22) | ((uint32_t)(hw1 & 0x3ff) << 12) |
+                               ((uint32_t)(hw2 & 0x7ff) << 1);
+                if (s)
+                    imm |= 0xfe000000u;
+                d->imm = pc + 4 + imm;
+                d->fn = (op1 & 4) ? h_bl : h_branch;
+            } else if (!(op1 & 4) && ((hw1 >> 7) & 7) != 7) {
+                uint32_t imm = (s << 20) | (j2 << 19) | (j1 << 18) | ((uint32_t)(hw1 & 0x3f) << 12) |
+                               ((uint32_t)(hw2 & 0x7ff) << 1);
+                if (s)
+                    imm |= 0xfff00000u;
+                d->rd = (hw1 >> 6) & 0xf;
+                d->imm = pc + 4 + imm;
+                d->fn = h_bcond;
+            }
             return true;
         }
-        d->fn = (hw1 & 0x0200) ? h_dp_plain_imm : h_dp_modified_imm;
+        if (hw1 & 0x0200) {
+            d->fn = h_dp_plain_imm;
+        } else {
+            uint32_t imm12 = ((uint32_t)(hw1 & 0x400) << 1) | ((hw2 >> 4) & 0x700) | (hw2 & 0xff), co;
+            d->rm = (hw1 >> 5) & 0xf, d->rn = hw1 & 0xf, d->rd = (hw2 >> 8) & 0xf;
+            d->imm = thumb_expand_imm_c(imm12, 0, &co);
+            d->lf |= ((hw1 & 0x10) ? LF_A : 0) | ((imm12 >> 10) ? LF_B : 0);
+            d->fn = h_dp_imm;
+        }
         return false;
     case 3:
-        if ((hw1 & 0x0e00) == 0x0800)
-            d->fn = h_ldst_single;
-        else if ((hw1 & 0x0f00) == 0x0a00)
+        if ((hw1 & 0x0e00) == 0x0800) {
+            if (!decode_ldst_single(d, hw1, hw2))
+                d->fn = h_ldst_single;
+        } else if ((hw1 & 0x0f00) == 0x0a00)
             d->fn = h_dp_register;
         else if ((hw1 & 0x0f80) == 0x0b00)
             d->fn = h_multiply;
@@ -547,7 +799,7 @@ static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
                 line = (a + 2) & ~7u;
             }
         }
-        bool last = wide ? decode32(d, hw1, d->hw2) : decode16(d, a, hw1);
+        bool last = wide ? decode32(d, a, hw1, d->hw2) : decode16(d, a, hw1);
         a += d->lf & LF_LEN;
         if (last || (a & 0xffff) == 0)
             break;
@@ -559,6 +811,7 @@ static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
     b->tag = pc | 1;
     b->gen = fixed ? m->code_gen | 1 : 0;
     b->n = (uint16_t)n;
+    b->link_pc[0] = b->link_pc[1] = 1;
     b->bytes = (uint16_t)(a - pc);
     memcpy(b->code, src, b->bytes);
     return true;
@@ -583,6 +836,16 @@ static inline bool code_same(const uint8_t *a, const uint8_t *b, unsigned n)
 static inline bool block_valid(chip_t *m, const block_t *b, const uint8_t *page, uint32_t pc)
 {
     return b->gen ? b->gen == (m->code_gen | 1) : code_same(page + (pc & 0xffff), b->code, b->bytes);
+}
+
+static inline bool block_still(chip_t *m, const block_t *b, uint32_t pc)
+{
+    if (b->tag != (pc | 1))
+        return false;
+    if (b->gen)
+        return b->gen == (m->code_gen | 1);
+    const uint8_t *page = m->rpage[pc >> 16];
+    return page && code_same(page + (pc & 0xffff), b->code, b->bytes);
 }
 
 static inline block_t *block_find(chip_t *m, uint32_t pc)
@@ -616,10 +879,11 @@ static inline bool needs_look(const cpu_t *c)
 
 // Runs blocks one after another until control reaches code that cannot be predecoded or the caller
 // must look at the core: time is up, an exception may be due, or the core has stopped.
-static void block_run(cpu_t *c, const block_t *b, uint64_t until)
+static void block_run(cpu_t *c, block_t *b, uint64_t until)
 {
     chip_t *m = c->m;
-    // A clock change sets check_exc, so the period only needs reading again on the way out.
+    // A clock change sets check_exc, and so does the ROM when it advances c->t itself, so the
+    // period and time only need reading again on the way out.
     const uint64_t ps = m->sys_ps;
     uint64_t t = c->t, insns = c->insns;
     const dop_t *d = b->ops, *end = b->ops + b->n;
@@ -651,14 +915,24 @@ static void block_run(cpu_t *c, const block_t *b, uint64_t until)
             t = c->t + (uint64_t)c->cyc * m->sys_ps;
             break;
         }
-        // The ROM's HLE routines can advance c->t themselves.
-        t = c->t + (uint64_t)c->cyc * ps;
-        if (t >= until || c->state != CPU_RUN)
+        t += (uint64_t)c->cyc * ps;
+        if (t >= until)
             break;
         if (++d == end || c->r[15] != next) {
-            // IT only ever ends a block, and is then handled one step at a time by cpu_run.
-            if (c->itstate || !(b = block_find(m, c->r[15])))
+            // The core only stops or starts an IT block at an instruction that ends a block or
+            // branches, and an IT block is then stepped one instruction at a time by cpu_run.
+            if (c->itstate || c->state != CPU_RUN)
                 break;
+            uint32_t npc = c->r[15];
+            unsigned k = npc == next ? 0 : 1;
+            block_t *nb = b->link[k];
+            if (b->link_pc[k] != npc || !block_still(m, nb, npc)) {
+                if (!(nb = block_find(m, npc)))
+                    break;
+                b->link_pc[k] = npc;
+                b->link[k] = nb;
+            }
+            b = nb;
             d = b->ops;
             end = b->ops + b->n;
         }

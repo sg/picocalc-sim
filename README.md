@@ -272,8 +272,8 @@ Not emulated yet, or not faithfully:
   is absent. Script `wait`s are host time, so a much slower host (or a sanitizer build)
   can type ahead of the firmware.
 - **Audio.** PWM and PIO audio run, but nothing is played yet.
-- **Speed.** One busy core runs at almost twice real time; firmware that keeps both cores busy
-  (picocalc_lua, picocalc-z80) runs at about 70-75% of real time on a 2.9 GHz i7.
+- **Speed.** One busy core runs at about twice real time; firmware that keeps both cores busy
+  (picocalc_lua, picocalc-z80) runs at about 80% of real time on a 2.9 GHz i7.
 - **The PicoCalc mainboard's PSRAM**, which picocalc_lua reaches through PIO, is not attached.
 - **USB** enumerates nothing: the controller's registers exist but no host is connected.
 - **RP2040 boards** (Pico, Pico W) and RISC-V images are not supported.

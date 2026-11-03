@@ -1433,7 +1433,7 @@ void cpu_run(cpu_t *c, uint64_t until)
         if (unlikely(c->state != CPU_RUN))
             return;
         if (likely(use_blocks && !c->itstate)) {
-            const block_t *b = block_find(m, c->r[15]);
+            block_t *b = block_find(m, c->r[15]);
             if (likely(b)) {
                 block_run(c, b, until);
                 continue;

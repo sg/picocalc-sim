@@ -562,6 +562,12 @@ uint32_t bus_read(cpu_t *c, uint32_t addr, int size)
 {
     chip_t *m = c->m;
     touch_now(m, c);
+    // The SDK reads the timers constantly (time_us_64, busy_wait), so they skip the general
+    // decode, which would arrive at the same call.
+    if ((addr & 0xffff0000u) == 0x400b0000u) {
+        c->cyc += 2;
+        return extract(timer_read(m, &m->timer[(addr >> 15) & 1], addr & 0xffc, false), addr, size);
+    }
     bool ok = true;
     uint32_t v = mem_read(m, c, addr, size, &ok);
     if (!ok) {

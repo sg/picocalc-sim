@@ -54,12 +54,24 @@ static void update_irqs(chip_t *m, pio_t *p)
             raw |= 1u << (4 + i);
     }
     (void)intr;
-    for (int k = 0; k < 2; k++)
-        chip_irq(m, IRQ_PIO0_0 + 2u * (unsigned)p->idx + (unsigned)k, ((raw & p->inte[k]) | p->intf[k]) != 0);
+    // Every PIO access ends here, and the lines rarely change; setting a line to the level it
+    // already has does nothing, so only changes are passed on, in the same order as before.
+    for (int k = 0; k < 2; k++) {
+        unsigned irq = IRQ_PIO0_0 + 2u * (unsigned)p->idx + (unsigned)k;
+        bool level = ((raw & p->inte[k]) | p->intf[k]) != 0;
+        if (((m->irq_lines >> irq) & 1) != level)
+            chip_irq(m, irq, level);
+    }
     for (int i = 0; i < 4; i++) {
         pio_sm_t *sm = &p->sm[i];
-        chip_dreq(m, DREQ_PIO0_TX0 + 8u * (unsigned)p->idx + (unsigned)i, sm->txn < fifo_depth_tx(sm));
-        chip_dreq(m, DREQ_PIO0_RX0 + 8u * (unsigned)p->idx + (unsigned)i, sm->rxn > 0);
+        unsigned tx = DREQ_PIO0_TX0 + 8u * (unsigned)p->idx + (unsigned)i;
+        unsigned rx = DREQ_PIO0_RX0 + 8u * (unsigned)p->idx + (unsigned)i;
+        bool tx_level = sm->txn < fifo_depth_tx(sm);
+        if (m->dreq[tx] != tx_level)
+            chip_dreq(m, tx, tx_level);
+        bool rx_level = sm->rxn > 0;
+        if (m->dreq[rx] != rx_level)
+            chip_dreq(m, rx, rx_level);
     }
 }
 
