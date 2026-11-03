@@ -31,12 +31,18 @@ uint64_t timer_us(chip_t *m, timer_t_ *t)
     if (!p || (t->pause & 1))
         return t->base_us;
     uint64_t dt = m->now - t->base_t;
-    // Firmware polls the timer many times per tick, and a 64-bit divide is slow.
-    if (p != t->q_period || t->base_t != t->q_base || dt < t->q_dt || dt - t->q_dt >= p) {
+    // Firmware polls the timer many times per tick, and a 64-bit divide is slow, so the quotient
+    // steps forward when only a few ticks have passed.
+    if (p != t->q_period || t->base_t != t->q_base || dt < t->q_dt || dt - t->q_dt >= 4 * p) {
         t->q = dt / p;
         t->q_dt = t->q * p;
         t->q_period = p;
         t->q_base = t->base_t;
+    } else {
+        while (dt - t->q_dt >= p) {
+            t->q++;
+            t->q_dt += p;
+        }
     }
     return t->base_us + t->q;
 }

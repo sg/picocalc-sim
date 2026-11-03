@@ -47,7 +47,8 @@ machine. MSYS2's MinGW-w64 should build it natively on Windows the same way, but
 `PCSIM_STOP_AT_MS=MS` stops a run at exactly that much emulated time, and with `--trace` the exit
 report ends with a digest of both cores' registers, cycle time and instruction counts and all of
 SRAM. Unthrottled headless runs are deterministic, so a change that should not alter behaviour
-(such as a faster CPU path) must leave every digest as it was:
+(such as a faster CPU path) must leave every digest as it was, and the three ways the CPU can run
+(native code, `PCSIM_NO_JIT=1` and `PCSIM_NO_BLOCKS=1`) must give the same one:
 
 ```sh
 PCSIM_STOP_AT_MS=3000 build/pcsim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
@@ -223,8 +224,9 @@ quit 0
   eagerly). Each instruction is charged an approximate cycle count, and flash fetches go through
   a model of the 16 KB XIP cache, so code runs at about the speed it does on the chip. Runs of
   straight-line code are decoded once into blocks of small handlers (`emu/block.inc`) and reused
-  while the code they came from is unchanged; they behave exactly as stepping one instruction at
-  a time, which `PCSIM_NO_BLOCKS=1` still does.
+  while the code they came from is unchanged, and on x86-64 hosts each block is then translated
+  to native code (`emu/jit.inc`). Both behave exactly as stepping one instruction at a time:
+  `PCSIM_NO_JIT=1` keeps to the block handlers and `PCSIM_NO_BLOCKS=1` steps.
 - **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP) is
   modelled by what each canned operation computes rather than its internal datapath: operands are
   captured as doubles and the final read returns the IEEE result.
@@ -272,14 +274,14 @@ Not emulated yet, or not faithfully:
   is absent. Script `wait`s are host time, so a much slower host (or a sanitizer build)
   can type ahead of the firmware.
 - **Audio.** PWM and PIO audio run, but nothing is played yet.
-- **Speed.** One busy core runs at about twice real time; firmware that keeps both cores busy
-  (picocalc_lua, picocalc-z80) runs at about 80% of real time on a 2.9 GHz i7.
+- **Speed.** On a 2.9 GHz i7, firmware that keeps both cores busy (picocalc_lua, picocalc-z80)
+  runs at 1.7 to 2 times real time, and a Lua loop at about 2.3 times. Hosts other than x86-64 use
+  the block handlers, at about 80% of real time for the same firmware.
 - **The PicoCalc mainboard's PSRAM**, which picocalc_lua reaches through PIO, is not attached.
 - **USB** enumerates nothing: the controller's registers exist but no host is connected.
 - **RP2040 boards** (Pico, Pico W) and RISC-V images are not supported.
-- **Windows** builds pass the CI tests under Wine but have not been tried on a Windows PC yet.
-  `pcsim-mkcard.exe` reads host file names in the system code page, so files whose names are not
-  plain ASCII may not copy.
+- **Windows:** `pcsim-mkcard.exe` reads host file names in the system code page, so files whose
+  names are not plain ASCII may not copy.
 - Secure state only: TrustZone, the MPU and the redundancy coprocessor accept their
   configuration but don't enforce it. OTP reads as unprogrammed apart from the chip ID.
 - Assumptions about the keyboard controller I could not check against hardware are marked in
@@ -288,7 +290,6 @@ Not emulated yet, or not faithfully:
 ## Roadmap
 
 1. Audio from the PWM and PIO audio drivers, through SDL.
-2. More CPU speed so dual-core firmware reaches real time.
-3. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards (Pico W with the same
+2. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards (Pico W with the same
    radio model).
-4. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.
+3. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.

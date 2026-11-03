@@ -339,9 +339,9 @@ static void ldst_dual_excl(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
         unsigned op3 = (hw2 >> 4) & 0xf;
         uint32_t a = r[rn];
         if (load && op3 <= 1) {
-            uint32_t off = op3 ? (ld16(c, a + 2 * r[hw2 & 0xf]) << 1) : (ld8(c, a + r[hw2 & 0xf]) << 1);
             if (rn == 15)
-                off = op3 ? (ld16(c, pc + 4 + 2 * r[hw2 & 0xf]) << 1) : (ld8(c, pc + 4 + r[hw2 & 0xf]) << 1);
+                a = pc + 4;
+            uint32_t off = op3 ? (ld16(c, a + 2 * r[hw2 & 0xf]) << 1) : (ld8(c, a + r[hw2 & 0xf]) << 1);
             r[15] = pc + 4 + off;
             c->cyc += 2;
             return;

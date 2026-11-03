@@ -30,6 +30,9 @@ const board_info_t *board_find(const char *name)
 
 void ev_schedule(chip_t *m, emu_event_t *ev, uint64_t when)
 {
+    // Already where taking it out and putting it back would leave it.
+    if (ev->queued && ev->when == when && (!ev->next || ev->next->when > when))
+        return;
     if (ev->queued)
         ev_cancel(m, ev);
     ev->when = when;
@@ -105,6 +108,7 @@ void chip_request(chip_t *m, int what, const char *reason)
     else
         m->req_poweroff = true;
     snprintf(m->req_reason, sizeof(m->req_reason), "%s", reason);
+    atomic_store(&m->req_any, true);
     pthread_mutex_unlock(&m->power_lock);
 }
 
@@ -169,6 +173,8 @@ void chip_rebuild_pages(chip_t *m)
                 m->wpage[(addr >> 16)] = ptr;
         }
     }
+    memcpy(m->rpage_plain, m->rpage, sizeof(m->rpage_plain));
+    memset(m->rpage_plain + 0x1000, 0, 0x1000 * sizeof(m->rpage_plain[0]));
     // A core part-way through a predecoded block must look at memory again before going on.
     m->core[0].check_exc = m->core[1].check_exc = true;
     m->code_gen++;
@@ -558,16 +564,9 @@ static inline void touch_now(chip_t *m, cpu_t *c)
         m->now = c->t;
 }
 
-uint32_t bus_read(cpu_t *c, uint32_t addr, int size)
+static __attribute__((noinline)) uint32_t bus_read_decode(cpu_t *c, uint32_t addr, int size)
 {
     chip_t *m = c->m;
-    touch_now(m, c);
-    // The SDK reads the timers constantly (time_us_64, busy_wait), so they skip the general
-    // decode, which would arrive at the same call.
-    if ((addr & 0xffff0000u) == 0x400b0000u) {
-        c->cyc += 2;
-        return extract(timer_read(m, &m->timer[(addr >> 15) & 1], addr & 0xffc, false), addr, size);
-    }
     bool ok = true;
     uint32_t v = mem_read(m, c, addr, size, &ok);
     if (!ok) {
@@ -579,6 +578,19 @@ uint32_t bus_read(cpu_t *c, uint32_t addr, int size)
         c->bfar = addr;
     }
     return v;
+}
+
+uint32_t bus_read(cpu_t *c, uint32_t addr, int size)
+{
+    chip_t *m = c->m;
+    touch_now(m, c);
+    // The SDK reads the timers constantly (time_us_64, busy_wait), so they skip the general
+    // decode, which would arrive at the same call, and its stack frame.
+    if ((addr & 0xffff0000u) == 0x400b0000u) {
+        c->cyc += 2;
+        return extract(timer_read(m, &m->timer[(addr >> 15) & 1], addr & 0xffc, false), addr, size);
+    }
+    return bus_read_decode(c, addr, size);
 }
 
 void bus_write(cpu_t *c, uint32_t addr, uint32_t v, int size)

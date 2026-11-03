@@ -271,6 +271,8 @@ struct chip {
     uint32_t psram_size;
     uint8_t *rpage[0x10000];
     uint8_t *wpage[0x10000];
+    // rpage without the XIP windows, whose reads also cost a cache lookup.
+    uint8_t *rpage_plain[0x10000];
     bool flash_dirty;
     uint32_t flash_dirty_lo, flash_dirty_hi;
 
@@ -373,6 +375,8 @@ struct chip {
 
     pthread_mutex_t power_lock;
     bool req_reset, req_bootsel, req_poweroff;
+    // Whether any of those is set, for the run loop to check without taking the lock.
+    atomic_bool req_any;
     char req_reason[96];
     bool in_bootsel;
 

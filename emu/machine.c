@@ -189,6 +189,7 @@ static void handle_requests(void)
     char reason[96];
     memcpy(reason, chip.req_reason, sizeof(reason));
     chip.req_reset = chip.req_bootsel = chip.req_poweroff = false;
+    atomic_store(&chip.req_any, false);
     pthread_mutex_unlock(&chip.power_lock);
 
     char path[4096] = "";
@@ -319,10 +320,7 @@ static void run_slice(void)
                     break;
             }
         }
-        pthread_mutex_lock(&m->power_lock);
-        bool req = m->req_reset || m->req_bootsel || m->req_poweroff;
-        pthread_mutex_unlock(&m->power_lock);
-        if (req)
+        if (atomic_load(&m->req_any))
             break;
     }
 }

@@ -44,6 +44,12 @@ void dw_i2c_reset(dw_i2c_t *s, int idx)
     tx_flushed[idx] = false;
 }
 
+// The last period worked out for each controller, as drivers poll the status in a tight loop.
+static struct {
+    uint32_t clocks;
+    uint64_t hz, ps;
+} scl_memo[2];
+
 static uint64_t scl_period(chip_t *m, dw_i2c_t *s)
 {
     if (g_fast_bus || !m->sys_hz)
@@ -56,7 +62,13 @@ static uint64_t scl_period(chip_t *m, dw_i2c_t *s)
         h = s->fs_hcnt;
         l = s->fs_lcnt;
     }
-    return (uint64_t)(h + l + 2 * s->fs_spklen) * PS_PER_S / m->sys_hz;
+    uint32_t clocks = h + l + 2 * s->fs_spklen;
+    if (scl_memo[s->idx].clocks != clocks || scl_memo[s->idx].hz != m->sys_hz) {
+        scl_memo[s->idx].clocks = clocks;
+        scl_memo[s->idx].hz = m->sys_hz;
+        scl_memo[s->idx].ps = (uint64_t)clocks * PS_PER_S / m->sys_hz;
+    }
+    return scl_memo[s->idx].ps;
 }
 
 static void update_irq(chip_t *m, dw_i2c_t *s)
@@ -167,11 +179,12 @@ static void sync(chip_t *m, dw_i2c_t *s)
         s->busy_until = m->now;
     if (any)
         update_irq(m, s);
-    ev_cancel(m, &s->ev);
     if (q->count > 0 && (s->intr_mask || s->dma_cr)) {
         s->ev.fn = i2c_event;
         s->ev.ctx = s;
         ev_schedule(m, &s->ev, s->busy_until + cmd_duration(m, s, q->cmd[q->head]));
+    } else {
+        ev_cancel(m, &s->ev);
     }
 }
 

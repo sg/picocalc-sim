@@ -79,11 +79,12 @@ static void sync(chip_t *m, pl022_t *s)
         s->busy_until = m->now;
     if (any)
         update_irq(m, s);
-    ev_cancel(m, &s->ev);
     if (s->txn > 0 && (s->imsc || s->dmacr)) {
         s->ev.fn = spi_event;
         s->ev.ctx = s;
         ev_schedule(m, &s->ev, s->busy_until + fp);
+    } else {
+        ev_cancel(m, &s->ev);
     }
 }
 

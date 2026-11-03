@@ -58,6 +58,7 @@ add_executable(pcsim
     emu/dma.c
     emu/dw_i2c.c
     emu/gpio.c
+    emu/jitmem.c
     emu/machine.c
     emu/pio.c
     emu/pl011.c

@@ -1417,11 +1417,16 @@ static void step(cpu_t *c)
 }
 
 #include "block.inc"
+#include "jit.inc"
 
 void cpu_run(cpu_t *c, uint64_t until)
 {
     chip_t *m = c->m;
     bool use_blocks = c->v8 && blocks_on();
+    bool use_jit = use_blocks && jit_available();
+    // Set when native code stopped short of the limit for block_run to reach it exactly. A just
+    // taken exception leaves check_exc set, which block_run answers after one instruction.
+    bool careful = false;
     if (c->state == CPU_WFI || c->state == CPU_WFE)
         sleep_check(c);
     while (c->t < until) {
@@ -1435,7 +1440,12 @@ void cpu_run(cpu_t *c, uint64_t until)
         if (likely(use_blocks && !c->itstate)) {
             block_t *b = block_find(m, c->r[15]);
             if (likely(b)) {
-                block_run(c, b, until);
+                if (use_jit && !careful && !c->check_exc) {
+                    careful = jit_run(c, b, until);
+                } else {
+                    block_run(c, b, until);
+                    careful = false;
+                }
                 continue;
             }
         }

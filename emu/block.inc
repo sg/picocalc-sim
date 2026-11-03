@@ -7,7 +7,8 @@
 // flash programming, remapping and resets advance. One from SRAM or PSRAM, which ordinary stores
 // and DMA can change, keeps a copy of its code and is used only while memory still holds those
 // bytes. Blocks run only outside IT blocks, so the 16-bit data-processing forms always set the
-// flags here.
+// flags here. A block may end with an IT instruction and the instructions it covers, but block_run
+// stops at the IT instruction and leaves the rest to cpu_run's stepping; only native code runs them.
 
 #define BLK_MAX 16
 #define BLK_SETS 4096
@@ -36,11 +37,16 @@ struct dop {
 typedef struct block block_t;
 struct block {
     uint32_t tag; // start address | 1, so an empty entry never matches
-    uint32_t gen; // the chip's code_gen when built from ROM or flash, else 0
+    uint32_t gen; // the chip's code_gen when built, which is all a block from ROM or flash checks
     uint16_t n, bytes;
+    bool fixed; // from ROM or flash
+    uint8_t nrun; // how many of the ops block_run may run: up to an IT instruction, if any
     // The blocks control went on to from here, fall-through first, checked like any other.
     uint32_t link_pc[2];
     block_t *link[2];
+    // Native code for the block and the translation cache epoch it belongs to.
+    void *jit;
+    uint32_t jit_epoch;
     dop_t ops[BLK_MAX];
     uint8_t code[BLK_MAX * 4];
 };
@@ -101,6 +107,10 @@ static void h_multiply(cpu_t *c, const dop_t *d)
 static void h_long_multiply(cpu_t *c, const dop_t *d)
 {
     long_multiply(c, d->pc, d->hw1, d->hw2);
+}
+
+static void h_nop(cpu_t *c, const dop_t *d)
+{
 }
 
 static void h_movs_reg(cpu_t *c, const dop_t *d)
@@ -626,6 +636,15 @@ static bool decode16(dop_t *d, uint32_t pc, uint16_t op)
             d->imm = op & 0x1ff;
             d->fn = h_pop;
             return (op & 0x100) != 0;
+        case 0xf: {
+            // NOP, YIELD and the unallocated hints do nothing; WFE, WFI, SEV and IT end the block.
+            unsigned hint = (op >> 4) & 0xf;
+            if (!(op & 0xf) && (hint < 2 || hint > 4)) {
+                d->fn = h_nop;
+                return false;
+            }
+            return true;
+        }
         default:
             return true;
         }
@@ -772,11 +791,62 @@ static bool decode32(dop_t *d, uint32_t pc, uint16_t hw1, uint16_t hw2)
     }
 }
 
+static inline bool is_it(uint16_t hw1)
+{
+    return (hw1 & 0xff00) == 0xbf00 && (hw1 & 0xf);
+}
+
+// Adds the instructions an IT instruction at b->ops[n - 1] covers, returning the new count, or 0
+// if they do not all fit or one would end the block early.
+static unsigned block_add_it(block_t *b, unsigned n, const uint8_t *page, uint32_t *ap, uint32_t *linep, bool xip)
+{
+    unsigned len = 4 - (unsigned)__builtin_ctz(b->ops[n - 1].hw1 & 0xf);
+    uint32_t a = *ap, line = *linep;
+    bool after_wide = false;
+    if (n + len > BLK_MAX)
+        return 0;
+    for (unsigned i = 0; i < len; i++) {
+        if ((a & 0xffff) == 0)
+            return 0;
+        uint16_t hw1 = rd16le(page + (a & 0xffff));
+        bool wide = (hw1 >> 11) >= 0x1d;
+        if ((wide && ((a + 2) & 0xffff) == 0) || is_it(hw1))
+            return 0;
+        dop_t *d = &b->ops[n++];
+        d->pc = a;
+        d->hw1 = hw1;
+        d->hw2 = wide ? rd16le(page + ((a + 2) & 0xffff)) : 0;
+        d->lf = wide ? 4 : 2;
+        // A wide instruction whose condition fails never fetches its second halfword, so the next
+        // one cannot know which line was fetched last.
+        if (xip) {
+            if ((a & ~7u) != line || after_wide)
+                d->lf |= FETCH_HW1;
+            line = a & ~7u;
+            if (wide && ((a + 2) & ~7u) != line) {
+                d->lf |= FETCH_HW2;
+                line = (a + 2) & ~7u;
+            }
+        }
+        after_wide = wide;
+        bool last = wide ? decode32(d, a, hw1, d->hw2) : decode16(d, a, hw1);
+        // The 16-bit forms depend on being in an IT block, which their handlers do not know.
+        if (!wide)
+            d->fn = h_exec16;
+        if (last && i + 1 < len)
+            return 0;
+        a += d->lf & LF_LEN;
+    }
+    *ap = a;
+    *linep = line;
+    return n;
+}
+
 static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
 {
     bool xip = (pc >> 28) == 1;
     uint32_t a = pc, line = 1;
-    unsigned n = 0;
+    unsigned n = 0, nrun = 0;
     while (n < BLK_MAX) {
         uint16_t hw1 = rd16le(page + (a & 0xffff));
         bool wide = (hw1 >> 11) >= 0x1d;
@@ -801,6 +871,20 @@ static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
         }
         bool last = wide ? decode32(d, a, hw1, d->hw2) : decode16(d, a, hw1);
         a += d->lf & LF_LEN;
+        if (!wide && is_it(hw1)) {
+            uint32_t a2 = a, line2 = line;
+            unsigned n2 = block_add_it(b, n, page, &a2, &line2, xip);
+            if (n2) {
+                nrun = n;
+                n = n2;
+                a = a2;
+            } else if (n > 1) {
+                // The next block can start with the IT instruction and have room for them.
+                n--;
+                a -= 2;
+            }
+            break;
+        }
         if (last || (a & 0xffff) == 0)
             break;
     }
@@ -809,8 +893,11 @@ static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
     const uint8_t *src = page + (pc & 0xffff);
     bool fixed = (src >= m->rom && src < m->rom + ROM_SIZE) || (src >= m->flash && src < m->flash + m->flash_size);
     b->tag = pc | 1;
-    b->gen = fixed ? m->code_gen | 1 : 0;
+    b->gen = m->code_gen;
+    b->fixed = fixed;
+    b->jit = NULL;
     b->n = (uint16_t)n;
+    b->nrun = (uint8_t)(nrun ? nrun : n);
     b->link_pc[0] = b->link_pc[1] = 1;
     b->bytes = (uint16_t)(a - pc);
     memcpy(b->code, src, b->bytes);
@@ -835,15 +922,15 @@ static inline bool code_same(const uint8_t *a, const uint8_t *b, unsigned n)
 // Within one code generation an address always maps to the same ROM or flash bytes.
 static inline bool block_valid(chip_t *m, const block_t *b, const uint8_t *page, uint32_t pc)
 {
-    return b->gen ? b->gen == (m->code_gen | 1) : code_same(page + (pc & 0xffff), b->code, b->bytes);
+    return b->fixed ? b->gen == m->code_gen : code_same(page + (pc & 0xffff), b->code, b->bytes);
 }
 
 static inline bool block_still(chip_t *m, const block_t *b, uint32_t pc)
 {
     if (b->tag != (pc | 1))
         return false;
-    if (b->gen)
-        return b->gen == (m->code_gen | 1);
+    if (b->fixed)
+        return b->gen == m->code_gen;
     const uint8_t *page = m->rpage[pc >> 16];
     return page && code_same(page + (pc & 0xffff), b->code, b->bytes);
 }
@@ -886,7 +973,7 @@ static void block_run(cpu_t *c, block_t *b, uint64_t until)
     // period and time only need reading again on the way out.
     const uint64_t ps = m->sys_ps;
     uint64_t t = c->t, insns = c->insns;
-    const dop_t *d = b->ops, *end = b->ops + b->n;
+    const dop_t *d = b->ops, *end = b->ops + b->nrun;
     for (;;) {
         uint32_t pc = d->pc, next = pc + (d->lf & LF_LEN);
         uint32_t cyc = 1;
@@ -934,7 +1021,7 @@ static void block_run(cpu_t *c, block_t *b, uint64_t until)
             }
             b = nb;
             d = b->ops;
-            end = b->ops + b->n;
+            end = b->ops + b->nrun;
         }
     }
     c->t = t;
