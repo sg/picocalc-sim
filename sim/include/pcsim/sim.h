@@ -39,6 +39,9 @@ typedef struct pcsim_options {
     int wifi_ap_count;
     const char *forwards[16];
     int forward_count;
+    const char *wav_path;
+    bool mute;
+    int volume;
 } pcsim_options_t;
 
 extern pcsim_options_t pcsim_opts;

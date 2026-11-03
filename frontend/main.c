@@ -34,6 +34,9 @@ static void usage(const char *argv0)
            "      --battery PCT      battery level the keyboard controller reports (default 85)\n"
            "      --charging         report the battery as charging\n"
            "      --screenshot-dir D where F11 saves screenshots (default .)\n"
+           "      --volume PCT       loudness of the sound in the window (default 50)\n"
+           "      --mute             no sound in the window\n"
+           "      --wav FILE         record the sound to FILE (48 kHz stereo WAV) in emulated time\n"
            "      --wifi-ap SSID[:PASSWORD]\n"
            "                         a virtual access point for scans and joins; repeat for more. Without\n"
            "                         one, any network name and password the firmware tries will join\n"
@@ -91,6 +94,9 @@ int main(int argc, char **argv)
         OPT_WIFI_AP,
         OPT_FORWARD,
         OPT_NO_WIFI,
+        OPT_VOLUME,
+        OPT_MUTE,
+        OPT_WAV,
     };
     static const struct option longopts[] = {
         {"board", required_argument, NULL, 'b'},
@@ -112,6 +118,9 @@ int main(int argc, char **argv)
         {"wifi-ap", required_argument, NULL, OPT_WIFI_AP},
         {"forward", required_argument, NULL, OPT_FORWARD},
         {"no-wifi", no_argument, NULL, OPT_NO_WIFI},
+        {"volume", required_argument, NULL, OPT_VOLUME},
+        {"mute", no_argument, NULL, OPT_MUTE},
+        {"wav", required_argument, NULL, OPT_WAV},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
@@ -143,6 +152,13 @@ int main(int argc, char **argv)
                 pcsim_opts.forwards[pcsim_opts.forward_count++] = optarg;
             break;
         case OPT_NO_WIFI: pcsim_opts.no_wifi = true; break;
+        case OPT_VOLUME: {
+            int v = atoi(optarg);
+            pcsim_opts.volume = v < 0 ? 0 : v > 100 ? 100 : v;
+            break;
+        }
+        case OPT_MUTE: pcsim_opts.mute = true; break;
+        case OPT_WAV: pcsim_opts.wav_path = optarg; break;
         case 'h': usage(argv[0]); return 0;
         default: usage(argv[0]); return 2;
         }
@@ -173,6 +189,7 @@ int main(int argc, char **argv)
         code = pcsim_frontend_sdl_run();
 
     pcsim_machine_stop();
+    picocalc_audio_close(pcsim_picocalc.audio);
     pcsim_flush_devices();
     fflush(NULL);
     exit(code);

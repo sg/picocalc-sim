@@ -171,14 +171,18 @@ uint32_t sio_read(cpu_t *c, uint32_t off)
 
 // Only pins whose output or enable actually changed need recomputing; SPI frames already in flight
 // must finish under the old chip-select levels first.
-static void gpio_regs_changed(chip_t *m, uint32_t old_out[2], uint32_t old_oe[2])
+static void gpio_regs_changed(cpu_t *c, uint32_t old_out[2], uint32_t old_oe[2])
 {
+    chip_t *m = c->m;
     uint64_t diff = ((uint64_t)(m->sio_out[0] ^ old_out[0]) | ((uint64_t)(m->sio_out[1] ^ old_out[1]) << 32)) |
                     ((uint64_t)(m->sio_oe[0] ^ old_oe[0]) | ((uint64_t)(m->sio_oe[1] ^ old_oe[1]) << 32));
     if (!diff)
         return;
     pl022_sync_all(m);
+    // The other core may already have run ahead of this one, taking `now` with it.
+    m->edge_t = c->t;
     gpio_refresh_mask(m, diff);
+    m->edge_t = 0;
 }
 
 void sio_write(cpu_t *c, uint32_t off, uint32_t v)
@@ -196,7 +200,7 @@ void sio_write(cpu_t *c, uint32_t off, uint32_t v)
         case 2: *target &= ~v; break;
         case 3: *target ^= v; break;
         }
-        gpio_regs_changed(m, old_out, old_oe);
+        gpio_regs_changed(c, old_out, old_oe);
         return;
     }
     switch (off) {
@@ -276,7 +280,7 @@ bool gpioc_mcr(cpu_t *c, unsigned opc1, unsigned crm, unsigned opc2, uint32_t v)
     } else {
         return false;
     }
-    gpio_regs_changed(m, old_out, old_oe);
+    gpio_regs_changed(c, old_out, old_oe);
     return true;
 }
 
@@ -304,7 +308,7 @@ bool gpioc_mcrr(cpu_t *c, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi)
     } else {
         return false;
     }
-    gpio_regs_changed(m, old_out, old_oe);
+    gpio_regs_changed(c, old_out, old_oe);
     return true;
 }
 

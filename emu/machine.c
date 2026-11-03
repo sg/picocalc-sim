@@ -343,6 +343,7 @@ static void *machine_main(void *arg)
             continue;
         }
         run_slice();
+        pinwave_advance(&chip);
         if (stop_at_ps && chip.now >= stop_at_ps) {
             atomic_store(&stop_flag, true);
             pcsim_request_quit(0);
@@ -431,7 +432,8 @@ bool pcsim_machine_start(void)
         pcsim_opts.flash_path = NULL;
     }
     flash_load();
-    picocalc_board_init();
+    if (!picocalc_board_init())
+        return false;
     if (b->wifi && !pcsim_opts.no_wifi) {
         if (!pcsim_net_init())
             return false;

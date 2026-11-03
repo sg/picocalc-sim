@@ -19,6 +19,7 @@ pcsim_options_t pcsim_opts = {
     .screenshot_dir = ".",
     .scale = 2,
     .battery = 85,
+    .volume = 50,
 };
 
 static atomic_bool quit_flag;

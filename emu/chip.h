@@ -98,6 +98,18 @@ typedef struct {
     bool level;
 } gpio_pin_t;
 
+enum { WAVE_LEVEL, WAVE_PWM };
+
+// A pin's output over time: a steady level, or a running PWM channel that is high while its
+// counter is below `high` (on both slopes when phase correct), inverted when `level` is set.
+typedef struct {
+    uint8_t kind;
+    bool level;
+    bool phase_correct;
+    uint32_t ctr, period, high;
+    uint64_t t0, tick;
+} pin_wave_t;
+
 typedef void (*gpio_watch_fn)(void *ctx, unsigned pin, bool level);
 
 typedef struct gpio_watch {
@@ -277,6 +289,9 @@ struct chip {
     uint32_t flash_dirty_lo, flash_dirty_hi;
 
     uint64_t now;
+    // Time of the pin change in progress when it is not `now` (a core's own time, or a PIO state
+    // machine's as it catches up), or 0.
+    uint64_t edge_t;
     uint32_t sys_ps;
     uint64_t sys_hz, ref_hz, peri_hz, usb_hz, adc_hz, hstx_hz, pll_sys_hz, pll_usb_hz, xosc_hz, rosc_hz;
     emu_event_t *events;
@@ -469,6 +484,12 @@ bool gpio_in(chip_t *m, unsigned pin);
 int gpio_func(chip_t *m, unsigned pin);
 uint64_t gpio_in_all(chip_t *m);
 bool qspi_ss_override(chip_t *m, bool *level);
+void gpio_wave(chip_t *m, unsigned pin, pin_wave_t *w);
+
+// Pins whose waveform a device is recording; see pinwave.c.
+extern uint64_t g_wave_pins;
+void pinwave_update(chip_t *m, uint64_t pins);
+void pinwave_advance(chip_t *m);
 
 void pl022_reset(pl022_t *s, int idx);
 uint32_t pl022_read(chip_t *m, pl022_t *s, uint32_t off, bool peek);
@@ -498,6 +519,7 @@ void dma_kick(chip_t *m);
 void pwm_reset(pwm_t *p);
 uint32_t pwm_read(chip_t *m, uint32_t off);
 void pwm_write(chip_t *m, uint32_t off, uint32_t v);
+void pwm_wave(chip_t *m, unsigned pin, pin_wave_t *w);
 
 void qmi_reset(chip_t *m);
 uint32_t qmi_read(chip_t *m, uint32_t off);

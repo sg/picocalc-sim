@@ -31,6 +31,7 @@ void gpio_reset(chip_t *m)
     for (int i = 0; i < NUM_GPIO_MAX; i++)
         m->gpio[i].level = m->gpio[i].ext_driven ? m->gpio[i].ext_level : false;
     m->gpio_in_valid = false;
+    pinwave_update(m, g_wave_pins);
 }
 
 int gpio_func(chip_t *m, unsigned pin)
@@ -151,6 +152,7 @@ void gpio_refresh_mask(chip_t *m, uint64_t mask)
     unsigned n = m->board->num_gpio;
     uint64_t changed_pins = 0;
     mask &= n >= 64 ? ~0ull : ((1ull << n) - 1);
+    uint64_t waves = mask & g_wave_pins;
     while (mask) {
         unsigned pin = (unsigned)__builtin_ctzll(mask);
         mask &= mask - 1;
@@ -166,6 +168,8 @@ void gpio_refresh_mask(chip_t *m, uint64_t mask)
     }
     if (changed_pins & m->gpio_irq_pins)
         irq_update(m);
+    if (waves)
+        pinwave_update(m, waves);
 }
 
 void gpio_refresh(chip_t *m)
@@ -178,6 +182,21 @@ void gpio_refresh(chip_t *m)
         chip_irq_core(m, 0, IRQ_IO_BANK0, false);
         chip_irq_core(m, 1, IRQ_IO_BANK0, false);
     }
+}
+
+// PWM pins keep the level they were refreshed with, as nothing reads them back; what they put
+// out over time comes from the slice settings instead.
+void gpio_wave(chip_t *m, unsigned pin, pin_wave_t *w)
+{
+    gpio_pin_t *g = &m->gpio[pin];
+    unsigned outover = (g->ctrl >> 12) & 3, oeover = (g->ctrl >> 14) & 3;
+    if (gpio_func(m, pin) == FUNC_PWM && !(m->pads[pin] & (PAD_ISO | PAD_OD)) && outover < 2 && oeover != 2) {
+        pwm_wave(m, pin, w);
+        w->level ^= outover == 1;
+        return;
+    }
+    memset(w, 0, sizeof(*w));
+    w->level = g->level;
 }
 
 bool gpio_in(chip_t *m, unsigned pin)

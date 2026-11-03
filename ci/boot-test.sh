@@ -1,6 +1,6 @@
 #!/bin/sh
 # Boots each UF2 headless and fails if a core faults, the ROM is asked for something it lacks,
-# or the firmware never draws on the panel.
+# the firmware never draws on the panel, or its sound is not recorded.
 #   ci/boot-test.sh PCSIM UF2...
 set -u
 pcsim=$1
@@ -12,10 +12,10 @@ printf 'wait 4000\nscreenshot %s/panel.png\nquit 0\n' "$work" >"$work/boot.pcs"
 failed=0
 for uf2; do
     name=$(basename "$uf2")
-    rm -f "$work/panel.png"
+    rm -f "$work/panel.png" "$work/sound.wav"
     # unthrottled because script waits are host time and a slow runner would otherwise see less boot
     timeout 120 "$pcsim" --headless --unthrottled --trace --flash none --no-card \
-        --script "$work/boot.pcs" "$uf2" >"$work/out.log" 2>"$work/err.log"
+        --wav "$work/sound.wav" --script "$work/boot.pcs" "$uf2" >"$work/out.log" 2>"$work/err.log"
     rc=$?
     problem=
     if [ $rc -ne 0 ]; then
@@ -43,6 +43,16 @@ sys.exit(0 if lit >= 100 else 1)
 EOF
     ); then
         problem="panel is blank (${lit:-no screenshot})"
+    elif ! peak=$(python3 - "$work/sound.wav" <<'EOF'
+import struct, sys
+d = open(sys.argv[1], "rb").read()
+frames = struct.unpack("<I", d[40:44])[0] // 4
+if d[:4] != b"RIFF" or d[8:16] != b"WAVEfmt " or frames < 48000 or len(d) != 44 + 4 * frames:
+    sys.exit(1)
+print(max(abs(v) for v in struct.unpack("<%dh" % (2 * frames), d[44:])))
+EOF
+    ); then
+        problem="no sound recorded"
     fi
 
     if [ -n "$problem" ]; then
@@ -50,7 +60,7 @@ EOF
         sed 's/^/    /' "$work/err.log"
         failed=1
     else
-        echo "ok   $name ($lit pixels drawn)"
+        echo "ok   $name ($lit pixels drawn, sound peak $peak)"
     fi
 done
 exit $failed

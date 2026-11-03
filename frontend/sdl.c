@@ -114,6 +114,38 @@ static void release_all(void)
         key_up(held[nheld - 1].sym);
 }
 
+static void audio_cb(void *ctx, Uint8 *stream, int len)
+{
+    int16_t *s = (int16_t *)stream;
+    size_t frames = (size_t)len / 4;
+    picocalc_audio_pull(pcsim_picocalc.audio, s, frames);
+    int gain = pcsim_opts.volume * 256 / 100;
+    for (size_t i = 0; i < 2 * frames; i++)
+        s[i] = (int16_t)(s[i] * gain / 256);
+}
+
+static SDL_AudioDeviceID open_audio(void)
+{
+    if (pcsim_opts.mute)
+        return 0;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+        pcsim_log("no sound: %s", SDL_GetError());
+        return 0;
+    }
+    SDL_AudioSpec want = {.freq = 48000, .format = AUDIO_S16SYS, .channels = 2, .samples = 512, .callback = audio_cb};
+    SDL_AudioDeviceID dev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
+    if (!dev) {
+        pcsim_log("no sound: %s", SDL_GetError());
+        return 0;
+    }
+    if (!picocalc_audio_play(pcsim_picocalc.audio)) {
+        SDL_CloseAudioDevice(dev);
+        return 0;
+    }
+    SDL_PauseAudioDevice(dev, 0);
+    return dev;
+}
+
 int pcsim_frontend_sdl_run(void)
 {
     SDL_SetMainReady();
@@ -140,6 +172,7 @@ int pcsim_frontend_sdl_run(void)
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                              PCSIM_LCD_WIDTH, PCSIM_LCD_HEIGHT);
     static uint32_t pixels[PCSIM_LCD_WIDTH * PCSIM_LCD_HEIGHT];
+    SDL_AudioDeviceID audio = open_audio();
 
     uint64_t start = pcsim_mono_ns();
     uint32_t last_lcd = ~0u, last_sb = ~0u;
@@ -228,6 +261,8 @@ int pcsim_frontend_sdl_run(void)
         SDL_Delay(8);
     }
 
+    if (audio)
+        SDL_CloseAudioDevice(audio);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

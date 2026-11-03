@@ -3,8 +3,8 @@
 A PicoCalc emulator for Linux and Windows that runs firmware as it ships: the same UF2 file you
 would drop on the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps` folder. macOS should
 build but is untested. It emulates the RP2350 instruction by instruction, with the PicoCalc's LCD,
-keyboard controller and SD card attached to its pins, so nothing has to be rebuilt for the
-simulator.
+keyboard controller, SD card and audio circuit attached to its pins, so nothing has to be rebuilt
+for the simulator.
 
 Boards: **Raspberry Pi Pico 2**, **Pico 2 W** and **Pimoroni Pico Plus 2 / 2 W** (16 MB flash,
 8 MB PSRAM). On the W boards the CYW43439 radio is emulated too: firmware scans, joins a virtual
@@ -149,6 +149,20 @@ ftp -p 127.0.0.1 2121
 `--no-wifi` leaves the radio out, as if it never answered. `PCSIM_WIFI_DEBUG=1` logs the driver's
 ioctls, the chip's events and every bus command.
 
+### Sound
+
+Sound is what the mainboard's audio circuit makes of GP26 (left) and GP27 (right): per its
+schematic, an RC low-pass at about 24 kHz and a coupling capacitor that takes off the DC, ahead of
+the volume control, headphone jack and speakers. Whatever drives the pins is heard: the PWM block
+(as a DAC on a fast carrier, or as a tone generator), a PIO program, or the CPU toggling them. The
+window plays it about 50 ms behind the emulation; `--volume PCT` sets the loudness and `--mute`
+leaves it out. `--wav FILE` records it in emulated time as 48 kHz stereo, so an unthrottled run
+writes the same file every time:
+
+```sh
+PCSIM_STOP_AT_MS=5000 build/pcsim --headless --unthrottled --flash none --wav out.wav fw.uf2
+```
+
 ### Keys
 
 The PC keyboard maps onto the PicoCalc's keys. Keys the PicoCalc lacks are sent as the Shift
@@ -180,6 +194,8 @@ any key powers it back on.
 | `--unthrottled` | run as fast as the host allows instead of at device speed |
 | `--battery PCT`, `--charging` | what the keyboard controller reports |
 | `--scale N` | window scale (default 2) |
+| `--volume PCT` / `--mute` | loudness of the window's sound (default 50), or none |
+| `--wav FILE` | record the sound as a 48 kHz stereo WAV, in emulated time |
 | `--wifi-ap SSID[:PASSWORD]` | a virtual access point (repeatable); without one, any network joins |
 | `--forward [ADDR:]HOSTPORT:PORT` | let host connections to HOSTPORT reach the firmware's TCP PORT (repeatable) |
 | `--no-wifi` | leave the W boards' radio out |
@@ -215,6 +231,7 @@ quit 0
                                                          │ Ethernet frames         │
  sim/net/       DHCP, DNS, UDP and ping NAT; TCP ends at lwIP, relayed to host sockets
  sim/devices/   SD card (SPI mode)   ST7365P LCD controller   STM32 keyboard/battery controller
+                audio filters on GP26/GP27 ─> SDL sound, WAV file
  frontend/      SDL2 window | headless + scripts + PNG
 ```
 
@@ -238,8 +255,9 @@ quit 0
 - **Peripherals.** Register-level models of what the PicoCalc firmware uses: SIO (FIFOs,
   spinlocks, interpolators), IO bank and pads, TIMER0/1, watchdog, POWMAN's always-on timer,
   clocks/PLLs/tick generators, PL022 SPI, DesignWare I2C, PL011 UART, PIO (all three blocks,
-  stepped instruction by instruction), 16-channel DMA, PWM, QMI direct mode with a W25Q flash and
-  an APS6404 PSRAM, TRNG, OTP chip ID, boot RAM and boot locks.
+  stepped instruction by instruction, except that the counting loop of pico-examples' PWM
+  program, which PIO audio drivers use, skips ahead to its next edge), 16-channel DMA, PWM, QMI
+  direct mode with a W25Q flash and an APS6404 PSRAM, TRNG, OTP chip ID, boot RAM and boot locks.
 - **Timing.** Emulated time is paced against the host clock. Buses move data at the rate the
   firmware programmed (a 10 kHz I2C poll of the keyboard takes as long as it does on the board).
 - **Devices.** The LCD, SD card and keyboard controller answer whatever drives their pins: a
@@ -253,19 +271,26 @@ quit 0
   pace the host. Frames go to `sim/net`, which answers ARP, DHCP, DNS and ping itself, relays UDP
   through a host socket per firmware port, and terminates TCP at a copy of lwIP running as the
   far end of every connection, each relayed over a host socket.
+- **Sound.** `emu/pinwave.c` records the waveform of the audio pins without touching the chip: a
+  PWM output as its slice settings, so a fast carrier costs nothing per cycle, and any other
+  driver as edges stamped with the time the core or PIO state machine made them. It integrates
+  that into the fraction of each 1/192000 s the pin was high. `sim/devices/audio.c` puts that
+  through the board's filters, worked out from its resistors and capacitors, and resamples it to
+  48 kHz. A PWM carrier above 20 kHz is taken as its average, since it is inaudible.
 
 ## Status
 
 Tested here with UF2s built from `../pcsh`, `../picocalc_lua`, `../picocalc-z80` and
-`../ftpserver`:
+`../ftpserver`, and with ClockworkPi's PicoMite build:
 
 | Firmware | Pico 2 | Pico 2 W | Pimoroni Plus 2 W |
 | --- | --- | --- | --- |
 | pcsh | shell, SD, Lua | WiFi scan and join, DHCP, DNS, NTP, HTTP, ping to the gateway | boots with an 8 MB PSRAM heap |
-| picocalc_lua | boots, SD mounted | WiFi scan and join | boots |
+| picocalc_lua | boots, SD mounted, `sound` notes | WiFi scan and join | boots |
 | picocalc-z80 | boots to its menu | boots to its menu | boots, finds and benchmarks the PSRAM |
 | ftpserver | (no Pico 2 build) | FTP through a forward: login, list, transfers | same |
 | uf2loader 2.4.1 | menu, flashing and chaining apps | not tried | not tried |
+| PicoMite 6.00.02RC23 | MMBasic prompt after its first-boot flash format (about 20 s), `PLAY TONE` | not tried | same, on the non-W Plus 2 |
 
 Not emulated yet, or not faithfully:
 
@@ -273,7 +298,9 @@ Not emulated yet, or not faithfully:
   broadcasts and multicasts (mDNS, SSDP) stay inside, it is IPv4 only, and the chip's Bluetooth
   is absent. Script `wait`s are host time, so a much slower host (or a sanitizer build)
   can type ahead of the firmware.
-- **Audio.** PWM and PIO audio run, but nothing is played yet.
+- **Sound** is the line signal the headphone jack gets. The speaker amplifiers' 226 Hz input
+  high-pass and the speakers themselves are left out, and the volume knob is `--volume`. The
+  window's sound breaks up when the emulation can't keep up with real time.
 - **Speed.** On a 2.9 GHz i7, firmware that keeps both cores busy (picocalc_lua, picocalc-z80)
   runs at 1.7 to 2 times real time, and a Lua loop at about 2.3 times. Hosts other than x86-64 use
   the block handlers, at about 80% of real time for the same firmware.
@@ -289,7 +316,6 @@ Not emulated yet, or not faithfully:
 
 ## Roadmap
 
-1. Audio from the PWM and PIO audio drivers, through SDL.
-2. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards (Pico W with the same
+1. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards (Pico W with the same
    radio model).
-3. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.
+2. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.

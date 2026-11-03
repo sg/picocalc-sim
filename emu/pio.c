@@ -595,6 +595,32 @@ static bool run_spi_out(chip_t *m, pio_t *p, int smi)
     return true;
 }
 
+// "L: jmp x!=y L+2 / L+2: nop / L+3: jmp y-- L", the count of the PWM program in pico-examples
+// that PIO audio drivers use: until Y reaches X or zero, each pass only decrements Y, which nothing
+// else can see, so passes are skipped in bulk up to the present.
+static bool skip_count_loop(chip_t *m, pio_t *p, int smi)
+{
+    pio_sm_t *sm = &p->sm[smi];
+    unsigned l = sm->pc & 31, top = (sm->execctrl >> 12) & 31;
+    if (sm->delay || sm->stalled || l > 28 || top == l + 2)
+        return false;
+    // Zero side-set and delay fields do nothing only when side-set is optional or absent.
+    if (((sm->pinctrl >> 29) & 7) && !(sm->execctrl & (1u << 30)))
+        return false;
+    if (p->instr[l] != (0x00a0 | (l + 2)) || p->instr[l + 2] != 0xa042 || p->instr[l + 3] != (0x0080 | l))
+        return false;
+    uint32_t x = sm->x, y = sm->y, k = x < y ? y - x : x > y ? y : 0;
+    uint64_t period = sm_period(m, sm);
+    uint64_t fit = ((m->now - sm->next_t) / period + 1) / 3;
+    if (fit < k)
+        k = (uint32_t)fit;
+    if (!k)
+        return false;
+    sm->y -= k;
+    sm->next_t += 3 * (uint64_t)k * period;
+    return true;
+}
+
 // The cyw43 driver's half-duplex bus: "out pins,1 / jmp x--" shifts the command and any data out,
 // "set pindirs,0" (and a nop or two) turns the data pin round, and "in pins,1 / jmp y--" shifts
 // the reply in, with the clock on side-set. Recognised programs trade bits with the radio model
@@ -727,7 +753,7 @@ void pio_sync(chip_t *m, pio_t *p)
         if (which < 0 || next > m->now)
             break;
         pio_sm_t *sm = &p->sm[which];
-        if (run_gspi(m, p, which) || run_spi_out(m, p, which))
+        if (run_gspi(m, p, which) || run_spi_out(m, p, which) || skip_count_loop(m, p, which))
             continue;
         if (sm_blocked_on_cpu(p, which)) {
             sm->next_t = m->now + 1;
@@ -741,7 +767,10 @@ void pio_sync(chip_t *m, pio_t *p)
             sm->delay -= (int)skip;
             sm->next_t += skip * period;
         }
+        uint64_t edge_t = m->edge_t;
+        m->edge_t = sm->next_t;
         sm_step(m, p, which);
+        m->edge_t = edge_t;
         sm->next_t += period;
     }
     p->t = m->now;

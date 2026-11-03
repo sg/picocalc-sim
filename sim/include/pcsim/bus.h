@@ -13,6 +13,13 @@ extern "C" {
 typedef void (*pcsim_gpio_watch_fn)(void *ctx, unsigned pin, bool level);
 
 void pcsim_gpio_watch(unsigned pin, pcsim_gpio_watch_fn fn, void *ctx);
+
+// Gives one device that sees pins through an analog filter (PWM audio) the fraction of each
+// 1/rate_hz of emulated time each pin spent high, n windows of npins values per call, on the
+// emulation thread a little behind the emulated present.
+typedef void (*pcsim_pin_wave_fn)(void *ctx, const float *frac, size_t n);
+bool pcsim_pin_wave(const unsigned *pins, int npins, unsigned rate_hz, pcsim_pin_wave_fn fn, void *ctx);
+
 // Drives an input pin from outside the chip: 0 or 1, or -1 to let it float to its pull.
 void pcsim_gpio_drive_input(unsigned pin, int level);
 bool pcsim_gpio_level(unsigned pin);

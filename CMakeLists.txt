@@ -60,6 +60,7 @@ add_executable(pcsim
     emu/gpio.c
     emu/jitmem.c
     emu/machine.c
+    emu/pinwave.c
     emu/pio.c
     emu/pl011.c
     emu/pl022.c
@@ -73,6 +74,7 @@ add_executable(pcsim
     sim/src/runtime.c
     sim/net/net.c
     sim/net/tcp.c
+    sim/devices/audio.c
     sim/devices/picocalc_board.c
     sim/devices/sdcard.c
     sim/devices/southbridge.c

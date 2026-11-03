@@ -82,6 +82,33 @@ static void rebase(chip_t *m, int idx)
     s->t0 = m->now;
 }
 
+void pwm_wave(chip_t *m, unsigned pin, pin_wave_t *w)
+{
+    int idx = pin < 32 ? (int)((pin >> 1) & 7) : 8 + (int)((pin >> 1) & 3);
+    bool b = pin & 1;
+    pwm_slice_t *s = &m->pwm.s[idx];
+    uint32_t top = s->top & 0xffff;
+    uint32_t cc = b ? s->cc >> 16 : s->cc & 0xffff;
+    uint32_t h = cc < top + 1 ? cc : top + 1;
+    bool phase = s->csr & 2;
+    uint32_t period = (uint32_t)period_ticks(s);
+    memset(w, 0, sizeof(*w));
+    w->level = (s->csr >> (b ? 3 : 2)) & 1;
+    // A stopped counter, or one clocked from the B pin, leaves the output where the count is.
+    if (!(m->pwm.en & (1u << idx)) || ((s->csr >> 4) & 3)) {
+        uint32_t x = counter(m, s, idx) % period;
+        w->level ^= x < h || (phase && x >= period - h);
+        return;
+    }
+    w->kind = WAVE_PWM;
+    w->phase_correct = phase;
+    w->ctr = s->ctr % period;
+    w->period = period;
+    w->high = h;
+    w->t0 = s->t0;
+    w->tick = tick_ps(m, s);
+}
+
 uint32_t pwm_read(chip_t *m, uint32_t off)
 {
     pwm_t *p = &m->pwm;
@@ -156,4 +183,5 @@ void pwm_write(chip_t *m, uint32_t off, uint32_t v)
     for (int i = 0; i < 12; i++)
         schedule_wrap(m, i);
     update_irq(m);
+    pinwave_update(m, g_wave_pins);
 }

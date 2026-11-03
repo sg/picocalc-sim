@@ -40,14 +40,28 @@ void sdcard_eject(sdcard_t *sd);
 void sdcard_flush(sdcard_t *sd);
 bool sdcard_present(sdcard_t *sd);
 
+// The mainboard's filters on the two audio pins, as 48 kHz stereo; it costs nothing until it is
+// recorded or played.
+typedef struct picocalc_audio picocalc_audio_t;
+picocalc_audio_t *picocalc_audio_create(unsigned left_pin, unsigned right_pin);
+// Writes everything from now on to a WAV file, in emulated time.
+bool picocalc_audio_record(picocalc_audio_t *a, const char *wav_path);
+void picocalc_audio_close(picocalc_audio_t *a);
+// Starts filling the playback buffer that picocalc_audio_pull empties, from the host's audio thread.
+bool picocalc_audio_play(picocalc_audio_t *a);
+// Fills n stereo frames, padding with silence while the buffer builds up; returns frames that
+// came from the device.
+size_t picocalc_audio_pull(picocalc_audio_t *a, int16_t *frames, size_t n);
+
 typedef struct picocalc {
     st7365p_t *lcd;
     southbridge_t *sb;
     sdcard_t *sd;
+    picocalc_audio_t *audio;
 } picocalc_t;
 
 extern picocalc_t pcsim_picocalc;
-void picocalc_board_init(void);
+bool picocalc_board_init(void);
 
 #ifdef __cplusplus
 }
