@@ -7,8 +7,8 @@ PicoCalc's LCD, keyboard controller and SD card attached to its pins, so nothing
 for the simulator.
 
 Boards: **Raspberry Pi Pico 2**, **Pico 2 W** and **Pimoroni Pico Plus 2 / 2 W** (16 MB flash,
-8 MB PSRAM). The W boards boot and run, but their CYW43439 radio is not emulated yet, so firmware
-reports that WiFi failed to start (see [Roadmap](#roadmap)).
+8 MB PSRAM). On the W boards the CYW43439 radio is emulated too: firmware scans, joins a virtual
+access point and reaches the network through a router built into the emulator (see [WiFi](#wifi)).
 
 ## Building
 
@@ -22,7 +22,8 @@ cmake --build build -j
 If SDL2 is not installed the build downloads SDL 2.30.9 (hash-pinned) and links it statically.
 Installing the system package (`libsdl2-dev`, `brew install sdl2`) skips that; `-DPCSIM_SDL=OFF`
 builds a headless-only binary. FatFs, used by the card-image tool, comes from a sibling
-`ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one and is fetched otherwise.
+`ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and lwIP, used by the
+emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is fetched otherwise.
 
 The build produces `build/pcsim`, the emulator, and `build/tools/mkcard/pcsim-mkcard`, which makes
 SD card images.
@@ -30,8 +31,9 @@ SD card images.
 ### Continuous integration and releases
 
 `.forgejo/workflows/build.yml` builds every pushed branch in the shared `picocalc-builder` image
-and boots the latest pcsh, picocalc_lua and picocalc-z80 releases on each board
-(`ci/boot-test.sh`). Pushing a `v*` tag runs `release.yml`, which stages a draft release with a
+and boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on each board
+(`ci/boot-test.sh`), then transfers files to and from ftpserver over the emulated WiFi
+(`ci/wifi-test.sh`). Pushing a `v*` tag runs `release.yml`, which stages a draft release with a
 `pcsim-TAG-linux-x86_64.tar.gz`. `ci/build-linux.sh` installs the X11, Wayland and audio headers
 SDL needs, so the binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13,
 Fedora 39) and can be built on a headless machine and copied to a desktop.
@@ -74,6 +76,41 @@ With no app in flash the loader opens its menu; choosing a UF2 flashes it into t
 and boots it. Later runs (`build/pcsim` with no UF2) boot the app directly; hold F1 (or Up) and
 press F12 to reset into the menu instead.
 
+### WiFi
+
+The W boards' firmware sees a CYW43439 that answers the SDK's driver as the real chip does, from
+the firmware download onwards. Behind it is a private network the emulator routes for:
+
+| Address | What it is |
+| --- | --- |
+| 10.0.2.15 | the PicoCalc, handed out by DHCP |
+| 10.0.2.2 | the gateway, which is the host: a connection to 10.0.2.2:PORT reaches the host's 127.0.0.1:PORT |
+| 10.0.2.3 | DNS, answered from the host's own resolver |
+
+Without `--wifi-ap`, a scan finds one network, `PicoCalc-Sim`, and any network name and password
+the firmware tries will join, so settings already saved on a card just work. With
+`--wifi-ap SSID[:PASSWORD]` (repeat it for more), only those networks exist and a join behaves as
+on real hardware: a wrong password fails authentication and an unknown name is not found. A
+network given without a password is open.
+
+TCP and UDP from the firmware go out through ordinary sockets on the host, as from behind a home
+router. Pings to 10.0.2.2 and 10.0.2.3 are always answered; pings beyond need unprivileged ICMP
+sockets, which macOS allows and Linux allows when `net.ipv4.ping_group_range` covers your group
+(the default on Ubuntu, Debian and Fedora desktops).
+
+Nothing outside can reach the firmware unless a port is forwarded. `--forward 2121:21` makes
+127.0.0.1:2121 reach the firmware's port 21; `--forward *:2121:21` or `--forward ADDR:2121:21`
+opens it to other machines too. Forwarding port 21 also handles FTP's passive mode, so ftpserver
+works from an ordinary client:
+
+```sh
+build/pcsim --forward 2121:21 ../ftpserver/build-pico2w/picocalc-ftpserver.uf2
+ftp -p 127.0.0.1 2121
+```
+
+`--no-wifi` leaves the radio out, as if it never answered. `PCSIM_WIFI_DEBUG=1` logs the driver's
+ioctls, the chip's events and every bus command.
+
 ### Keys
 
 The PC keyboard maps onto the PicoCalc's keys. Keys the PicoCalc lacks are sent as the Shift
@@ -105,6 +142,9 @@ any key powers it back on.
 | `--unthrottled` | run as fast as the host allows instead of at device speed |
 | `--battery PCT`, `--charging` | what the keyboard controller reports |
 | `--scale N` | window scale (default 2) |
+| `--wifi-ap SSID[:PASSWORD]` | a virtual access point (repeatable); without one, any network joins |
+| `--forward [ADDR:]HOSTPORT:PORT` | let host connections to HOSTPORT reach the firmware's TCP PORT (repeatable) |
+| `--no-wifi` | leave the W boards' radio out |
 | `--trace` | log faults, unknown ROM calls and bus errors, and dump the cores on exit |
 
 ### Scripts and headless runs
@@ -133,7 +173,9 @@ quit 0
  emu/  Cortex-M33 x2 ─ bus ─ SIO/GPIO coprocessor   PL022 SPI ─ pins ─ PL022/PIO  DW I2C
         FPU, DCP       │     timers, watchdog       PIO, DMA                       │
                        │     clocks, PLLs, resets    PWM, UART                      │
-                    boot ROM replacement                                          │
+                    boot ROM replacement   PIO gSPI ─ CYW43439 (emu/cyw43.c)       │
+                                                         │ Ethernet frames         │
+ sim/net/       DHCP, DNS, UDP and ping NAT; TCP ends at lwIP, relayed to host sockets
  sim/devices/   SD card (SPI mode)   ST7365P LCD controller   STM32 keyboard/battery controller
  frontend/      SDL2 window | headless + scripts + PNG
 ```
@@ -161,21 +203,34 @@ quit 0
 - **Devices.** The LCD, SD card and keyboard controller answer whatever drives their pins: a
   PL022, a PIO program, or bit-banging. A PIO program that shifts one bit out per clock (the
   common LCD driver) is recognised and run in bulk.
+- **WiFi.** The SDK drives the CYW43439 over a half-duplex SPI from a PIO program, which is
+  recognised and exchanges bits with the chip model directly. The model implements the gSPI bus
+  registers and the backplane the radio firmware is downloaded into (the firmware in the UF2 is
+  stored but never run), then serves the SDPCM channels that firmware would: ioctls and iovars on
+  the control channel, scan, join and link events, and Ethernet frames, with the bus credits that
+  pace the host. Frames go to `sim/net`, which answers ARP, DHCP, DNS and ping itself, relays UDP
+  through a host socket per firmware port, and terminates TCP at a copy of lwIP running as the
+  far end of every connection, each relayed over a host socket.
 
 ## Status
 
-Tested here with UF2s built from `../pcsh`, `../picocalc_lua` and `../picocalc-z80`:
+Tested here with UF2s built from `../pcsh`, `../picocalc_lua`, `../picocalc-z80` and
+`../ftpserver`:
 
 | Firmware | Pico 2 | Pico 2 W | Pimoroni Plus 2 W |
 | --- | --- | --- | --- |
-| pcsh | shell, SD, Lua | boots; WiFi unavailable | boots with an 8 MB PSRAM heap; WiFi unavailable |
-| picocalc_lua | boots, SD mounted | boots; WiFi unavailable | boots; WiFi unavailable |
+| pcsh | shell, SD, Lua | WiFi scan and join, DHCP, DNS, NTP, HTTP, ping to the gateway | boots with an 8 MB PSRAM heap |
+| picocalc_lua | boots, SD mounted | WiFi scan and join | boots |
 | picocalc-z80 | boots to its menu | boots to its menu | boots, finds and benchmarks the PSRAM |
+| ftpserver | (no Pico 2 build) | FTP through a forward: login, list, transfers | same |
 | uf2loader 2.4.1 | menu, flashing and chaining apps | not tried | not tried |
 
 Not emulated yet, or not faithfully:
 
-- **WiFi.** The CYW43439 on the W boards is absent, so `cyw43_arch_init()` fails.
+- **WiFi** is a virtual network rather than a radio. Access point mode is not modelled,
+  broadcasts and multicasts (mDNS, SSDP) stay inside, it is IPv4 only, and the chip's Bluetooth
+  is absent. Script `wait`s are host time, so a much slower host (or a sanitizer build)
+  can type ahead of the firmware.
 - **Audio.** PWM and PIO audio run, but nothing is played yet.
 - **Speed.** One busy core runs at full speed; firmware that keeps both cores busy (picocalc_lua,
   picocalc-z80) runs at about 55-60% of real time on a 2.9 GHz i7.
@@ -189,9 +244,9 @@ Not emulated yet, or not faithfully:
 
 ## Roadmap
 
-1. CYW43439 emulation for the Pico 2 W and Pico Plus 2 W: the gSPI bus behind the PIO driver,
-   firmware download, the SDPCM control channel (scan, join, events), and Ethernet frames bridged
-   to a user-mode network stack on the host.
-2. Audio from the PWM and PIO audio drivers, through SDL.
-3. A faster CPU core (predecoded blocks) so dual-core firmware reaches real time.
-4. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards.
+1. Audio from the PWM and PIO audio drivers, through SDL.
+2. A faster CPU core (predecoded blocks) so dual-core firmware reaches real time.
+3. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards (Pico W with the same
+   radio model).
+4. Windows (MinGW) and macOS builds, and optionally bridged networking so the firmware gets an
+   address on the LAN.

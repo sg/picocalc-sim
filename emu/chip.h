@@ -152,6 +152,8 @@ typedef struct {
     int txn, rxn, txh, rxh;
     int delay;
     bool stalled;
+    // An IN filled the ISR while the RX FIFO was full; it stays stalled until the push goes through.
+    bool push_stall;
     uint32_t div_acc;
     uint64_t next_t;
 } pio_sm_t;
@@ -356,6 +358,8 @@ struct chip {
     char req_reason[96];
     bool in_bootsel;
 
+    struct cyw43 *wifi;
+
     bool trace;
 };
 
@@ -466,6 +470,12 @@ void xipctrl_write(chip_t *m, uint32_t off, uint32_t v);
 void xip_flush(chip_t *m);
 void flash_erase(chip_t *m, uint32_t off, uint32_t len);
 void flash_program(chip_t *m, uint32_t off, const uint8_t *src, uint32_t len);
+
+void cyw43_init(chip_t *m);
+void cyw43_reset(chip_t *m);
+bool cyw43_bus_pins(chip_t *m, unsigned clk, unsigned data);
+void cyw43_bus_out(chip_t *m, int bit);
+int cyw43_bus_in(chip_t *m);
 
 void rom_build(chip_t *m);
 void rom_hle(cpu_t *c, unsigned n);

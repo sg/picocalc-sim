@@ -25,6 +25,11 @@ typedef struct pcsim_options {
     double timeout_s;
     int battery;
     bool charging;
+    bool no_wifi;
+    const char *wifi_aps[16];
+    int wifi_ap_count;
+    const char *forwards[16];
+    int forward_count;
 } pcsim_options_t;
 
 extern pcsim_options_t pcsim_opts;

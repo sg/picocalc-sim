@@ -53,3 +53,24 @@ if(NOT FATFS_DIR)
     set(FATFS_DIR ${pico_fatfs_SOURCE_DIR}/fatfs)
 endif()
 message(STATUS "pcsim: FatFs from ${FATFS_DIR}")
+
+# lwIP terminates the emulated WiFi's TCP connections. The Pico SDK carries the release the
+# firmware itself uses; a checkout next to this one (or PICO_SDK_PATH) saves fetching it.
+if(NOT LWIP_DIR)
+    foreach(candidate
+            ${CMAKE_SOURCE_DIR}/../pico-sdk/lib/lwip
+            $ENV{PICO_SDK_PATH}/lib/lwip)
+        if(EXISTS ${candidate}/src/core/tcp.c)
+            get_filename_component(LWIP_DIR ${candidate} ABSOLUTE)
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOT LWIP_DIR)
+    FetchContent_Declare(lwip
+        GIT_REPOSITORY https://github.com/lwip-tcpip/lwip.git
+        GIT_TAG 77dcd25a72509eb83f72b033d219b1d40cd8eb95)
+    FetchContent_Populate(lwip)
+    set(LWIP_DIR ${lwip_SOURCE_DIR})
+endif()
+message(STATUS "pcsim: lwIP from ${LWIP_DIR}")

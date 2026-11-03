@@ -11,6 +11,7 @@
 
 #include "chip.h"
 #include "pcsim/devices.h"
+#include "pcsim/net.h"
 #include "pcsim/sim.h"
 #include "uf2.h"
 
@@ -433,6 +434,11 @@ bool pcsim_machine_start(void)
     }
     flash_load();
     picocalc_board_init();
+    if (b->wifi && !pcsim_opts.no_wifi) {
+        if (!pcsim_net_init())
+            return false;
+        cyw43_init(&chip);
+    }
     if (have_uf2) {
         if (!uf2_program(&chip, &f, err, sizeof(err))) {
             pcsim_log("%s", err);
@@ -444,7 +450,7 @@ bool pcsim_machine_start(void)
         flash_save();
     }
     pcsim_log("%s: RP2350, %u MB flash%s%s", b->name, b->flash_size >> 20, b->psram_size ? ", 8 MB PSRAM" : "",
-              b->wifi ? ", CYW43439 (not emulated yet)" : "");
+              !b->wifi ? "" : pcsim_opts.no_wifi ? ", CYW43439 left out (--no-wifi)" : ", CYW43439 WiFi");
     if (pcsim_opts.flash_path)
         pcsim_log("flash image: %s", pcsim_opts.flash_path);
     uint32_t boot_type = chip.boot_type;
@@ -470,6 +476,19 @@ void pcsim_machine_stop(void)
         for (int i = 0; i < 2; i++) {
             pcsim_log("core %d: %llu instructions", i, (unsigned long long)chip.core[i].insns);
             cpu_dump(&chip.core[i]);
+        }
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 4; j++) {
+                pio_sm_t *sm = &chip.pio[i].sm[j];
+                if (chip.pio[i].ctrl & (1u << j))
+                    pcsim_log("pio%d sm%d pc=%u x=%08x y=%08x osr=%d isr=%d tx=%d rx=%d%s", i, j, sm->pc, sm->x, sm->y,
+                              sm->osr_count, sm->isr_count, sm->txn, sm->rxn, sm->stalled ? " stalled" : "");
+            }
+        for (int i = 0; i < 16; i++) {
+            dma_ch_t *c = &chip.dma.ch[i];
+            if (c->ctrl & (1u << 26))
+                pcsim_log("dma%d busy ctrl=%08x read=%08x write=%08x count=%08x", i, c->ctrl, c->read_addr,
+                          c->write_addr, c->trans_count);
         }
     }
 }

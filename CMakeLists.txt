@@ -9,6 +9,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(FATFS_DIR "" CACHE PATH "FatFs sources (ff.c); found or fetched when empty")
+set(LWIP_DIR "" CACHE PATH "lwIP sources (src/core/tcp.c); found or fetched when empty")
 option(PCSIM_SDL "Build the SDL2 window frontend" ON)
 option(PCSIM_FETCH_SDL "Download and build SDL2 when it is not installed" ON)
 set(PCSIM_SDL_SHA256 "24b574f71c87a763f50704bbb630cbe38298d544a1f890f099a4696b1d6beba4" CACHE STRING "SHA-256 of the SDL2 release tarball")
@@ -16,9 +17,33 @@ set(PCSIM_SDL_SHA256 "24b574f71c87a763f50704bbb630cbe38298d544a1f890f099a4696b1d
 find_package(Threads REQUIRED)
 include(cmake/Dependencies.cmake)
 
+set(LWIP_SRC ${LWIP_DIR}/src/core)
+add_library(pcsim_lwip STATIC
+    ${LWIP_SRC}/def.c
+    ${LWIP_SRC}/inet_chksum.c
+    ${LWIP_SRC}/init.c
+    ${LWIP_SRC}/ip.c
+    ${LWIP_SRC}/mem.c
+    ${LWIP_SRC}/memp.c
+    ${LWIP_SRC}/netif.c
+    ${LWIP_SRC}/pbuf.c
+    ${LWIP_SRC}/stats.c
+    ${LWIP_SRC}/sys.c
+    ${LWIP_SRC}/tcp.c
+    ${LWIP_SRC}/tcp_in.c
+    ${LWIP_SRC}/tcp_out.c
+    ${LWIP_SRC}/timeouts.c
+    ${LWIP_SRC}/ipv4/icmp.c
+    ${LWIP_SRC}/ipv4/ip4.c
+    ${LWIP_SRC}/ipv4/ip4_addr.c
+    ${LWIP_SRC}/ipv4/ip4_frag.c)
+target_include_directories(pcsim_lwip PUBLIC sim/net ${LWIP_DIR}/src/include)
+target_compile_options(pcsim_lwip PRIVATE -w)
+
 add_executable(pcsim
     emu/chip.c
     emu/cpu.c
+    emu/cyw43.c
     emu/dcp.c
     emu/devices.c
     emu/dma.c
@@ -36,6 +61,8 @@ add_executable(pcsim
     emu/timer.c
     emu/uf2.c
     sim/src/runtime.c
+    sim/net/net.c
+    sim/net/tcp.c
     sim/devices/picocalc_board.c
     sim/devices/sdcard.c
     sim/devices/southbridge.c
@@ -47,7 +74,7 @@ add_executable(pcsim
     frontend/sdl.c)
 target_include_directories(pcsim PRIVATE emu sim/include)
 target_compile_options(pcsim PRIVATE -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(pcsim PRIVATE Threads::Threads m)
+target_link_libraries(pcsim PRIVATE pcsim_lwip Threads::Threads m)
 if(PCSIM_HAVE_SDL)
     target_compile_definitions(pcsim PRIVATE PCSIM_HAVE_SDL=1)
     target_link_libraries(pcsim PRIVATE ${PCSIM_SDL_TARGET})

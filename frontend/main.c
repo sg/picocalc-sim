@@ -34,6 +34,13 @@ static void usage(const char *argv0)
            "      --battery PCT      battery level the keyboard controller reports (default 85)\n"
            "      --charging         report the battery as charging\n"
            "      --screenshot-dir D where F11 saves screenshots (default .)\n"
+           "      --wifi-ap SSID[:PASSWORD]\n"
+           "                         a virtual access point for scans and joins; repeat for more. Without\n"
+           "                         one, any network name and password the firmware tries will join\n"
+           "      --forward [ADDR:]HOSTPORT:PORT\n"
+           "                         let connections to HOSTPORT on the host (127.0.0.1 unless ADDR is\n"
+           "                         given; * for all interfaces) reach the firmware's TCP PORT; repeatable\n"
+           "      --no-wifi          leave the W boards' radio out, as if it never answered\n"
            "      --trace            log faults, unknown ROM calls and bus errors\n"
            "\n"
            "In the window: F11 saves a screenshot, F12 is the reset button, Shift+F12 resets into BOOTSEL,\n"
@@ -85,6 +92,9 @@ int main(int argc, char **argv)
         OPT_NOCARD,
         OPT_TRACE,
         OPT_ERASE,
+        OPT_WIFI_AP,
+        OPT_FORWARD,
+        OPT_NO_WIFI,
     };
     static const struct option longopts[] = {
         {"board", required_argument, NULL, 'b'},
@@ -103,6 +113,9 @@ int main(int argc, char **argv)
         {"charging", no_argument, NULL, OPT_CHARGING},
         {"screenshot-dir", required_argument, NULL, OPT_SHOTS},
         {"trace", no_argument, NULL, OPT_TRACE},
+        {"wifi-ap", required_argument, NULL, OPT_WIFI_AP},
+        {"forward", required_argument, NULL, OPT_FORWARD},
+        {"no-wifi", no_argument, NULL, OPT_NO_WIFI},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
@@ -125,6 +138,15 @@ int main(int argc, char **argv)
         case OPT_CHARGING: pcsim_opts.charging = true; break;
         case OPT_SHOTS: pcsim_opts.screenshot_dir = optarg; break;
         case OPT_TRACE: pcsim_opts.trace = true; break;
+        case OPT_WIFI_AP:
+            if (pcsim_opts.wifi_ap_count < 16)
+                pcsim_opts.wifi_aps[pcsim_opts.wifi_ap_count++] = optarg;
+            break;
+        case OPT_FORWARD:
+            if (pcsim_opts.forward_count < 16)
+                pcsim_opts.forwards[pcsim_opts.forward_count++] = optarg;
+            break;
+        case OPT_NO_WIFI: pcsim_opts.no_wifi = true; break;
         case 'h': usage(argv[0]); return 0;
         default: usage(argv[0]); return 2;
         }

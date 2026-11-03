@@ -1,5 +1,6 @@
-# Builds the Linux binaries on every branch push and pull request, then boots the latest
-# pcsh, picocalc_lua and picocalc-z80 releases on the Pico 2, Pico 2 W and Pimoroni Plus 2 W.
+# Builds the Linux binaries on every branch push and pull request, boots the latest pcsh,
+# picocalc_lua, picocalc-z80 and ftpserver releases on the Pico 2, Pico 2 W and Pimoroni Plus 2 W,
+# and transfers files to and from ftpserver over the emulated WiFi.
 name: Build
 
 on:
@@ -31,3 +32,6 @@ jobs:
         run: |
           src/ci/fetch-firmware.sh "$GITHUB_API_URL" "${GITHUB_REPOSITORY%%/*}" fw
           src/ci/boot-test.sh build/pcsim fw/*.uf2
+
+      - name: Serve FTP over the emulated WiFi
+        run: src/ci/wifi-test.sh build/pcsim build/tools/mkcard/pcsim-mkcard fw/picocalc-ftpserver-*.uf2

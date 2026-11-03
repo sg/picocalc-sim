@@ -156,6 +156,7 @@ static void sm_restart(pio_sm_t *sm)
     sm->osr_count = 32;
     sm->delay = 0;
     sm->stalled = false;
+    sm->push_stall = false;
 }
 
 static ex_t execute(chip_t *m, pio_t *p, int smi, uint16_t ins, bool *jumped)
@@ -213,13 +214,15 @@ static ex_t execute(chip_t *m, pio_t *p, int smi, uint16_t ins, bool *jumped)
     }
     case 2: {
         unsigned n = arg2 ? arg2 : 32;
-        if (autopush && sm->isr_count >= (int)push_thresh) {
+        if (sm->push_stall) {
             if (!rx_push(sm, sm->isr)) {
                 p->fdebug |= 1u << smi;
                 return EX_STALL;
             }
             sm->isr = 0;
             sm->isr_count = 0;
+            sm->push_stall = false;
+            return EX_DONE;
         }
         uint32_t data;
         switch (arg1) {
@@ -240,10 +243,13 @@ static ex_t execute(chip_t *m, pio_t *p, int smi, uint16_t ins, bool *jumped)
         if (sm->isr_count > 32)
             sm->isr_count = 32;
         if (autopush && sm->isr_count >= (int)push_thresh) {
-            if (rx_push(sm, sm->isr)) {
-                sm->isr = 0;
-                sm->isr_count = 0;
+            if (!rx_push(sm, sm->isr)) {
+                sm->push_stall = true;
+                p->fdebug |= 1u << smi;
+                return EX_STALL;
             }
+            sm->isr = 0;
+            sm->isr_count = 0;
         }
         return EX_DONE;
     }
@@ -496,7 +502,7 @@ static bool sm_blocked_on_cpu(pio_t *p, int smi)
     } else if (op == 3)
         blocked = sm->txn == 0;
     else if (op == 2) {
-        blocked = sm->rxn >= fifo_depth_rx(sm);
+        blocked = sm->push_stall && sm->rxn >= fifo_depth_rx(sm);
         tx = false;
     }
     if (blocked)
@@ -575,6 +581,117 @@ static bool run_spi_out(chip_t *m, pio_t *p, int smi)
     return true;
 }
 
+// The cyw43 driver's half-duplex bus: "out pins,1 / jmp x--" shifts the command and any data out,
+// "set pindirs,0" (and a nop or two) turns the data pin round, and "in pins,1 / jmp y--" shifts
+// the reply in, with the clock on side-set. Recognised programs trade bits with the radio model
+// directly instead of through clock edges on the pins.
+typedef struct {
+    unsigned out_pc, set_pc, in_pc, end_pc, clk, data;
+} gspi_prog_t;
+
+static bool gspi_program(chip_t *m, pio_t *p, pio_sm_t *sm, gspi_prog_t *g)
+{
+    if (!m->wifi)
+        return false;
+    uint32_t pinctrl = sm->pinctrl;
+    if (((pinctrl >> 29) & 7) != 1 || (sm->execctrl & (3u << 29)) || (sm->shiftctrl & 0xffff0000u) != 0x00030000u)
+        return false;
+    unsigned outb = pinctrl & 31, setb = (pinctrl >> 5) & 31, inb = (pinctrl >> 15) & 31;
+    if (((pinctrl >> 20) & 63) != 1 || ((pinctrl >> 26) & 7) != 1 || setb != outb || inb != outb)
+        return false;
+    unsigned b = (sm->execctrl >> 7) & 31;
+    if (p->instr[b] != 0x6001 || p->instr[(b + 1) & 31] != (0x1040 | b))
+        return false;
+    unsigned k = (b + 2) & 31;
+    if (p->instr[k] != 0xe080)
+        return false;
+    g->set_pc = k;
+    k = (k + 1) & 31;
+    for (int n = 0; n < 3 && (p->instr[k] == 0xa042 || p->instr[k] == 0xb042); n++)
+        k = (k + 1) & 31;
+    uint16_t in = p->instr[k];
+    if ((in & 0xefff) != 0x4001 || p->instr[(k + 1) & 31] != ((0x0080u | k) | ((in & 0x1000u) ^ 0x1000u)))
+        return false;
+    g->out_pc = b;
+    g->in_pc = k;
+    g->end_pc = (k + 1) & 31;
+    g->clk = base_pin(p, (pinctrl >> 10) & 31);
+    g->data = base_pin(p, outb);
+    return cyw43_bus_pins(m, g->clk, g->data);
+}
+
+static bool run_gspi(chip_t *m, pio_t *p, int smi)
+{
+    pio_sm_t *sm = &p->sm[smi];
+    gspi_prog_t g;
+    if (sm->delay || !gspi_program(m, p, sm, &g))
+        return false;
+    unsigned pc = sm->pc;
+    if (((pc - g.out_pc) & 31) > ((g.end_pc - g.out_pc) & 31))
+        return false;
+    unsigned top = (sm->execctrl >> 12) & 31;
+    uint64_t period = sm_period(m, sm);
+    while (sm->next_t <= m->now) {
+        uint16_t ins = p->instr[pc];
+        unsigned next = pc == top ? g.out_pc : (pc + 1) & 31;
+        set_pin_quiet(m, p, g.clk, (ins & 0x1000) != 0);
+        if (pc == g.out_pc) {
+            if (sm->osr_count >= 32) {
+                uint32_t v;
+                if (!tx_pop(sm, &v)) {
+                    p->fdebug |= 1u << (24 + smi);
+                    sm->stalled = true;
+                    sm->next_t = m->now + 1;
+                    break;
+                }
+                sm->osr = v;
+                sm->osr_count = 0;
+            }
+            int bit = (int)(sm->osr >> 31);
+            sm->osr <<= 1;
+            sm->osr_count++;
+            set_pin_quiet(m, p, g.data, bit);
+            cyw43_bus_out(m, bit);
+            pc = next;
+        } else if (pc == ((g.out_pc + 1) & 31)) {
+            bool take = sm->x != 0;
+            sm->x--;
+            pc = take ? g.out_pc : next;
+        } else if (pc == g.set_pc) {
+            write_pins(m, p, (sm->pinctrl >> 5) & 31, 1, 0, true);
+            pc = next;
+        } else if (pc == g.in_pc) {
+            if (!sm->push_stall) {
+                sm->isr = (sm->isr << 1) | (uint32_t)cyw43_bus_in(m);
+                sm->isr_count++;
+                sm->push_stall = sm->isr_count >= 32;
+            }
+            if (sm->push_stall) {
+                if (!rx_push(sm, sm->isr)) {
+                    p->fdebug |= 1u << smi;
+                    sm->stalled = true;
+                    sm->next_t = m->now + 1;
+                    break;
+                }
+                sm->isr = 0;
+                sm->isr_count = 0;
+                sm->push_stall = false;
+            }
+            pc = next;
+        } else if (pc == g.end_pc) {
+            bool take = sm->y != 0;
+            sm->y--;
+            pc = take ? g.in_pc : next;
+        } else {
+            pc = next;
+        }
+        sm->stalled = false;
+        sm->next_t += period;
+    }
+    sm->pc = pc;
+    return true;
+}
+
 void pio_sync(chip_t *m, pio_t *p)
 {
     uint32_t en = p->ctrl & 0xf;
@@ -596,7 +713,7 @@ void pio_sync(chip_t *m, pio_t *p)
         if (which < 0 || next > m->now)
             break;
         pio_sm_t *sm = &p->sm[which];
-        if (run_spi_out(m, p, which))
+        if (run_gspi(m, p, which) || run_spi_out(m, p, which))
             continue;
         if (sm_blocked_on_cpu(p, which)) {
             sm->next_t = m->now + 1;

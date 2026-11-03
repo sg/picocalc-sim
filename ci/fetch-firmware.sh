@@ -8,7 +8,7 @@ owner=$2
 dest=$3
 mkdir -p "$dest"
 
-for repo in pcsh picocalc_lua picocalc-z80; do
+for repo in pcsh picocalc_lua picocalc-z80 picocalc-ftpserver; do
     curl -sSf "$api/repos/$owner/$repo/releases/latest" |
         python3 -c '
 import json, re, sys

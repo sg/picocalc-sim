@@ -688,6 +688,8 @@ void chip_reset(chip_t *m, bool watchdog)
     for (int i = 0; i < 2; i++)
         timer_reset(m, &m->timer[i], i);
     gpio_reset(m);
+    // WL_REG_ON falls back to its pull-down with the rest of the pins, which powers the radio off.
+    cyw43_reset(m);
     sio_reset(m);
     for (int i = 0; i < 2; i++) {
         pl022_reset(&m->spi[i], i);
