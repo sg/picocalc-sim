@@ -28,6 +28,15 @@ bool pcsim_keys_chord(const char *spec, unsigned hold_ms);
 
 const char *pcsim_window_title(void);
 
+// The window's settings file in the data directory. Loading sets pcsim_opts from it, except for
+// the long options named in cli, which the command line gave.
+void pcsim_settings_load(const char *const *cli, int ncli);
+const char *pcsim_settings_get(const char *key);
+// A NULL value removes the setting.
+void pcsim_settings_set(const char *key, const char *value);
+void pcsim_settings_set_list(const char *key, const char *const *values, int n);
+bool pcsim_settings_save(void);
+
 #ifdef __cplusplus
 }
 #endif

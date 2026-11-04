@@ -52,7 +52,9 @@ static void usage(const char *argv0)
            "In the window, the menus change these settings and restart the machine. F11 saves a\n"
            "screenshot, F12 is the reset button, Shift+F12 resets into BOOTSEL, and dropping a UF2 file on\n"
            "the window flashes it (a .img file goes in as the SD card). PgUp, PgDn, Home, End, Insert and\n"
-           "Pause are sent as the Shift chords the PicoCalc keyboard uses.\n",
+           "Pause are sent as the Shift chords the PicoCalc keyboard uses. What the window changes is\n"
+           "saved in settings.ini in the data directory for its next launch, where an option given here\n"
+           "overrides it; headless runs ignore that file.\n",
            argv0);
 }
 
@@ -134,8 +136,14 @@ int main(int argc, char **argv)
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0},
     };
+    // The long names of the options given, which the settings file then leaves alone.
+    const char *given[sizeof(longopts) / sizeof(longopts[0])];
+    int ngiven = 0;
     int opt;
     while ((opt = getopt_long(argc, argv, "b:f:c:s:t:h", longopts, NULL)) != -1) {
+        for (const struct option *o = longopts; o->name; o++)
+            if (o->val == opt && ngiven < (int)(sizeof(given) / sizeof(given[0])))
+                given[ngiven++] = o->name;
         switch (opt) {
         case 'b': pcsim_opts.board = optarg; break;
         case 'f': pcsim_opts.flash_path = optarg; break;
@@ -180,12 +188,22 @@ int main(int argc, char **argv)
         usage(argv[0]);
         return 2;
     }
+    bool window = !pcsim_opts.headless && pcsim_frontend_sdl_available();
+    if (window) {
+        pcsim_settings_load(given, ngiven);
+        const char *saved = pcsim_settings_get("card");
+        if (saved && *saved && !card && !no_card) {
+            if (!strcmp(saved, "none"))
+                no_card = true;
+            else
+                card = saved;
+        }
+    }
     if (!card && !no_card)
         card = default_card();
     pcsim_opts.card_path = no_card ? NULL : card;
 
     // The window can show why the machine did not start, and has the settings to fix it.
-    bool window = !pcsim_opts.headless && pcsim_frontend_sdl_available();
     if (!pcsim_machine_start() && !window)
         return 1;
     if (!card && !no_card)

@@ -19,6 +19,8 @@ extern "C" {
 
 typedef struct pcsim_options {
     const char *board;
+    // The board for when neither board nor the UF2 names one; the window's last.
+    const char *default_board;
     const char *flash_path;
     const char *rom_path;
     const char *card_path;

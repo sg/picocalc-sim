@@ -458,9 +458,13 @@ static const board_info_t *pick_board(const uf2_file_t *f)
         const board_info_t *b = board_find(hint);
         if (b && b->rp2040 == rp2040)
             return b;
-        pcsim_log("image was built for board %s; running it on a %s", hint, rp2040 ? "pico" : "pico2");
     }
-    return board_find(rp2040 ? "pico" : "pico2");
+    const board_info_t *b = pcsim_opts.default_board ? board_find(pcsim_opts.default_board) : NULL;
+    if (!b || (f && b->rp2040 != rp2040))
+        b = board_find(rp2040 ? "pico" : "pico2");
+    if (hint)
+        pcsim_log("image was built for board %s; running it on a %s", hint, b->name);
+    return b;
 }
 
 // Takes down whatever pcsim_machine_start set up, in the order nothing freed is used again.

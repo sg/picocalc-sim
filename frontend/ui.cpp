@@ -78,6 +78,9 @@ std::deque<std::pair<unsigned, std::string>> log_lines;
 unsigned log_seen, start_mark;
 bool log_scroll;
 
+// When changed settings are next written to the settings file, or 0.
+Uint64 save_at;
+
 enum pick_kind { PICK_UF2, PICK_CARD, PICK_WAV, PICK_ROM, PICK_FLASH, PICK_SHOTS };
 int prompt_kind = -1;
 bool ask_path;
@@ -112,6 +115,72 @@ start_options from_opts()
     return s;
 }
 
+std::string ap_spec(const access_point &ap)
+{
+    return ap.password.empty() ? ap.ssid : ap.ssid + ":" + ap.password;
+}
+
+void save_soon()
+{
+    // A slider being dragged changes its setting every frame, so the file waits for it to settle.
+    save_at = SDL_GetTicks() + 1000;
+}
+
+void remember(const char *key, const char *value)
+{
+    const char *old = pcsim_settings_get(key);
+    if (value ? old && !strcmp(old, value) : !old)
+        return;
+    pcsim_settings_set(key, value);
+    save_soon();
+}
+
+void remember_on(const char *key, bool on)
+{
+    remember(key, on ? "on" : "off");
+}
+
+void remember_int(const char *key, int n)
+{
+    char text[16];
+    snprintf(text, sizeof(text), "%d", n);
+    remember(key, text);
+}
+
+void remember_list(const char *key, const std::vector<std::string> &values)
+{
+    std::vector<const char *> v;
+    for (const std::string &s : values)
+        v.push_back(s.c_str());
+    pcsim_settings_set_list(key, v.data(), (int)v.size());
+    save_soon();
+}
+
+// Only what was changed here, so an option given on the command line stays with its own run.
+void remember_start_options(const start_options &was, const start_options &now)
+{
+    if (now.rom != was.rom)
+        remember("rom", now.rom.empty() ? nullptr : now.rom.c_str());
+    if (now.flash != was.flash || now.flash_file != was.flash_file)
+        remember("flash", now.flash == FLASH_MEMORY                          ? "none"
+                          : now.flash == FLASH_FILE && !now.flash_file.empty() ? now.flash_file.c_str()
+                                                                               : nullptr);
+    if (now.fast != was.fast)
+        remember_on("fast", now.fast);
+    if (now.trace != was.trace)
+        remember_on("trace", now.trace);
+    if (now.no_wifi != was.no_wifi)
+        remember_on("no-wifi", now.no_wifi);
+    if (!(start_options::named(now.aps) == start_options::named(was.aps))) {
+        std::vector<std::string> specs;
+        for (const access_point &ap : start_options::named(now.aps))
+            specs.push_back(ap_spec(ap));
+        remember_list("wifi-ap", specs);
+    }
+    if (start_options::filled(now.forwards) != start_options::filled(was.forwards))
+        remember_list("forward", start_options::filled(now.forwards));
+}
+
 void to_opts(const start_options &s)
 {
     pcsim_options_t &o = pcsim_opts;
@@ -129,7 +198,7 @@ void to_opts(const start_options &s)
         if (ap.ssid.empty() || o.wifi_ap_count == 16)
             continue;
         std::string &spec = store.aps[o.wifi_ap_count];
-        spec = ap.password.empty() ? ap.ssid : ap.ssid + ":" + ap.password;
+        spec = ap_spec(ap);
         o.wifi_aps[o.wifi_ap_count++] = spec.c_str();
     }
     o.forward_count = 0;
@@ -151,6 +220,7 @@ void restart(bool erase)
         pcsim_opts.wav_path = nullptr;
     }
     pcsim_opts.erase_flash = erase;
+    remember_start_options(applied, pending);
     applied = pending;
     to_opts(applied);
     pcsim_request_restart();
@@ -186,6 +256,7 @@ void insert_card(const char *path)
         return;
     store.card = path;
     pcsim_opts.card_path = store.card.c_str();
+    remember("card", path);
 }
 
 void eject_card()
@@ -193,6 +264,7 @@ void eject_card()
     if (pcsim_machine_running())
         sdcard_eject(pcsim_picocalc.sd);
     pcsim_opts.card_path = nullptr;
+    remember("card", "none");
     pcsim_log("SD card ejected");
 }
 
@@ -229,6 +301,12 @@ void set_shots(const char *dir)
     pcsim_opts.screenshot_dir = store.shots.c_str();
 }
 
+void choose_shots(const char *dir)
+{
+    set_shots(dir);
+    remember("screenshot-dir", dir);
+}
+
 void chose(int kind, const char *path)
 {
     switch (kind) {
@@ -240,7 +318,7 @@ void chose(int kind, const char *path)
         pending.flash = FLASH_FILE;
         pending.flash_file = path;
         break;
-    case PICK_SHOTS: set_shots(path); break;
+    case PICK_SHOTS: choose_shots(path); break;
     }
 }
 
@@ -369,9 +447,11 @@ void menu_bar()
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Sound")) {
-        ImGui::MenuItem("Mute", nullptr, &pcsim_opts.mute);
+        if (ImGui::MenuItem("Mute", nullptr, &pcsim_opts.mute))
+            remember_on("mute", pcsim_opts.mute);
         ImGui::SetNextItemWidth(120 * content_scale);
-        ImGui::SliderInt("Volume", &pcsim_opts.volume, 0, 100, "%d%%");
+        if (ImGui::SliderInt("Volume", &pcsim_opts.volume, 0, 100, "%d%%"))
+            remember_int("volume", pcsim_opts.volume);
         ImGui::Separator();
         if (running && picocalc_audio_recording(pcsim_picocalc.audio)) {
             if (ImGui::MenuItem("Stop recording"))
@@ -388,6 +468,7 @@ void menu_bar()
             if (ImGui::MenuItem(label, nullptr, pcsim_opts.scale == n)) {
                 pcsim_opts.scale = n;
                 ui_fit_window(n);
+                remember_int("scale", n);
             }
         }
         ImGui::Separator();
@@ -476,28 +557,24 @@ void machine_tab()
     ImGui::SetItemTooltip("The RP2040's own boot ROM, which pcsim cannot include: b2.elf from "
                           "github.com/raspberrypi/pico-bootrom-rp2040/releases");
 
-    ImGui::TextUnformatted("Flash");
-    ImGui::SameLine();
-    ImGui::RadioButton("In the data folder", &pending.flash, FLASH_DEFAULT);
-    ImGui::SameLine();
-    ImGui::RadioButton("In memory", &pending.flash, FLASH_MEMORY);
-    ImGui::SetItemTooltip("Kept across restarts but not saved, so it is lost when pcsim quits");
-    ImGui::SameLine();
-    ImGui::RadioButton("In a file", &pending.flash, FLASH_FILE);
+    static const char *const places[] = {"In the data folder", "In memory until pcsim quits", "In a file"};
+    ImGui::Combo("Flash", &pending.flash, places, 3);
     if (pending.flash == FLASH_FILE)
         path_field("Flash image", "a file that holds the whole flash", &pending.flash_file, PICK_FLASH);
     else if (pending.flash == FLASH_DEFAULT) {
         char file[64];
         snprintf(file, sizeof(file), "%s.flash", pending.board.empty() ? "BOARD" : pending.board.c_str());
         pcsim_data_path(def, sizeof(def), file, false);
-        ImGui::TextDisabled("%s", def);
+        note(def);
     }
     ImGui::Checkbox("Instant SPI, I2C and UART transfers", &pending.fast);
     ImGui::Checkbox("Log faults, unknown ROM calls and bus errors", &pending.trace);
 
     ImGui::SeparatorText("Now");
-    ImGui::Checkbox("Run as fast as the host allows", &pcsim_opts.unthrottled);
-    ImGui::Checkbox("Print what the firmware sends on UART0", &pcsim_opts.console);
+    if (ImGui::Checkbox("Run as fast as the host allows", &pcsim_opts.unthrottled))
+        remember_on("unthrottled", pcsim_opts.unthrottled);
+    if (ImGui::Checkbox("Print what the firmware sends on UART0", &pcsim_opts.console))
+        remember_on("console", pcsim_opts.console);
 }
 
 void wifi_tab()
@@ -561,15 +638,21 @@ void wifi_tab()
 void devices_tab()
 {
     ImGui::SeparatorText("Now");
-    if (ImGui::SliderInt("Battery", &pcsim_opts.battery, 0, 100, "%d%%"))
+    if (ImGui::SliderInt("Battery", &pcsim_opts.battery, 0, 100, "%d%%")) {
         set_battery();
-    if (ImGui::Checkbox("Charging", &pcsim_opts.charging))
+        remember_int("battery", pcsim_opts.battery);
+    }
+    if (ImGui::Checkbox("Charging", &pcsim_opts.charging)) {
         set_battery();
-    ImGui::SliderInt("Volume", &pcsim_opts.volume, 0, 100, "%d%%");
-    ImGui::Checkbox("Mute", &pcsim_opts.mute);
+        remember_on("charging", pcsim_opts.charging);
+    }
+    if (ImGui::SliderInt("Volume", &pcsim_opts.volume, 0, 100, "%d%%"))
+        remember_int("volume", pcsim_opts.volume);
+    if (ImGui::Checkbox("Mute", &pcsim_opts.mute))
+        remember_on("mute", pcsim_opts.mute);
     std::string shots = store.shots;
     if (path_field("Screenshots", "folder for F11's screenshots", &shots, PICK_SHOTS))
-        set_shots(shots.c_str());
+        choose_shots(shots.c_str());
 }
 
 void settings_window()
@@ -810,6 +893,8 @@ void ui_init(SDL_Window *w, SDL_Renderer *r)
 
 void ui_shutdown(void)
 {
+    if (save_at)
+        pcsim_settings_save();
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
@@ -835,13 +920,14 @@ bool ui_event(const SDL_Event *e)
         }
         return true;
     }
+    bool wanted = ImGui::GetIO().WantCaptureKeyboard;
+    // ImGui takes in one key change a frame, so keys typed at the PicoCalc would queue up ahead of
+    // the next click on a menu; letting every key-up through clears any key it saw go down.
+    if (e->type == SDL_EVENT_KEY_DOWN && !wanted)
+        return false;
     ImGui_ImplSDL3_ProcessEvent(e);
-    switch (e->type) {
-    case SDL_EVENT_KEY_DOWN:
-    case SDL_EVENT_KEY_UP:
-    case SDL_EVENT_TEXT_INPUT: return ImGui::GetIO().WantCaptureKeyboard;
-    default: return false;
-    }
+    bool key = e->type == SDL_EVENT_KEY_DOWN || e->type == SDL_EVENT_KEY_UP || e->type == SDL_EVENT_TEXT_INPUT;
+    return key && wanted;
 }
 
 void ui_drop_file(const char *path)
@@ -867,6 +953,16 @@ float ui_frame(void)
     if (pcsim_machine_running() && applied.board.empty()) {
         // Pinned, so that a restart without the UF2 that chose the board stays on it.
         applied.board = pending.board = pcsim_board_name();
+    }
+    static unsigned seen_starts;
+    if (pcsim_machine_running() && pcsim_machine_starts() != seen_starts) {
+        // The next launch comes back to it, as the PicoCalc keeps the Pico it was last given.
+        seen_starts = pcsim_machine_starts();
+        remember("board", pcsim_board_name());
+    }
+    if (save_at && SDL_GetTicks() >= save_at) {
+        save_at = 0;
+        pcsim_settings_save();
     }
     menu_bar();
     if (!pcsim_machine_running())

@@ -88,7 +88,8 @@ add_executable(pcsim
     frontend/main.c
     frontend/png.c
     frontend/script.c
-    frontend/sdl.c)
+    frontend/sdl.c
+    frontend/settings.c)
 target_include_directories(pcsim PRIVATE emu sim/include)
 target_compile_options(pcsim PRIVATE -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(pcsim PRIVATE pcsim_lwip Threads::Threads m)

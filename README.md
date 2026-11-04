@@ -101,7 +101,9 @@ build/pcsim ../pcsh/build-pico2/pcsh.uf2
 A UF2 on the command line is written into flash as BOOTSEL's drive would write it, then the board
 boots. Without one, the board boots whatever its flash already holds, like switching the PicoCalc
 on. The board is taken from the image's binary info (`pico2`, `pico2_w`,
-`pimoroni_pico_plus2_w_rp2350`, `pico`, `pico_w`); `--board` overrides it.
+`pimoroni_pico_plus2_w_rp2350`, `pico`, `pico_w`); `--board` overrides it. Where neither names
+one, the window uses the board it last ran (see [Settings file](#settings-file)), and otherwise
+`pico2`.
 
 Each board's flash persists in `~/.local/share/pcsim/BOARD.flash` (`--flash FILE` to choose,
 `--flash none` to keep it only in memory until pcsim exits, `--erase-flash` to start blank). The
@@ -248,8 +250,32 @@ UART0 console, battery, sound and the screenshot folder, which take effect at on
 PicoCalc's power switch: each board's flash keeps what it holds (one board's flash is not
 another's, as if the Pico were swapped), and the UF2, `--erase-flash` and `--wav` from the command
 line apply only to the first start. If the machine cannot start, say for a missing boot ROM or a
-port already in use, the window shows why and waits for the settings to be fixed. Changed settings
-last until pcsim exits.
+port already in use, the window shows why and waits for the settings to be fixed.
+
+### Settings file
+
+What is changed in the window is saved to `settings.ini` in the data folder
+(`~/.local/share/pcsim`, or `%LOCALAPPDATA%\pcsim` on Windows) and used at its next launch, along
+with the board it last ran and the card last inserted or ejected. Each line is a long option
+without its dashes, so the file can be edited by hand:
+
+```ini
+board = pico2_w
+card = /home/me/cards/lua.img
+wifi-ap = HomeNet:secret123
+forward = 2121:21
+volume = 30
+mute = off
+scale = 3
+```
+
+The keys are `board`, `rom`, `flash` (a file, `none` or `default`), `card` (an image or `none`),
+`fast`, `unthrottled`, `trace`, `console`, `no-wifi`, `wifi-ap` and `forward` (repeated for each),
+`battery`, `charging`, `volume`, `mute`, `scale` and `screenshot-dir`; switches take `on` or `off`.
+An option given on the command line wins for that run and is not written to the file unless it
+is then changed in the window; the board is the exception, as the one last run is always kept.
+pcsim rewrites the file as settings change, keeping keys it does not know but not comments.
+Headless runs ignore it, so scripts and CI see only their own options.
 
 ### Options
 
