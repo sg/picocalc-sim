@@ -65,12 +65,13 @@ emulator should give the same one.
 
 ### Continuous integration and releases
 
-`.forgejo/workflows/build.yml` builds every pushed branch in the shared `picocalc-builder` image
-and boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on each board
-(`ci/boot-test.sh`), then transfers files to and from ftpserver over the emulated WiFi
-(`ci/wifi-test.sh`). A second job cross-compiles the Windows build (`ci/build-windows.sh`) and runs
-the same tests on it under Wine (`ci/wine-wrap.sh`). Pushing a `v*` tag runs `release.yml`, which
-stages a draft release with `pcsim-TAG-linux-x86_64.tar.gz` and `pcsim-TAG-windows-x86_64.zip`.
+Pushing a `v*` tag runs `.forgejo/workflows/release.yml` in the shared `picocalc-builder` image.
+It builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on
+each board (`ci/boot-test.sh`) and transfers files to and from ftpserver over the emulated WiFi
+(`ci/wifi-test.sh`), then cross-compiles the Windows build (`ci/build-windows.sh`) and runs the
+same tests on it under Wine (`ci/wine-wrap.sh`). If they pass, it stages a draft release with
+`pcsim-TAG-linux-x86_64.tar.gz` and `pcsim-TAG-windows-x86_64.zip`. Pushing a commit runs nothing;
+`build.yml` runs the same tests on a branch when started by hand from the Actions page.
 `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux binaries
 depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be built on a
 headless machine and copied to a desktop.

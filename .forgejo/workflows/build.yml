@@ -1,14 +1,10 @@
-# Builds the Linux and Windows binaries on every branch push and pull request, boots the latest
-# pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on the Pico 2, Pico 2 W and Pimoroni
-# Plus 2 W, and transfers files to and from ftpserver over the emulated WiFi. The Windows build is
-# tested under Wine.
+# Builds the Linux and Windows binaries of a branch, boots the latest pcsh, picocalc_lua,
+# picocalc-z80 and ftpserver releases on the Pico 2, Pico 2 W and Pimoroni Plus 2 W, and transfers
+# files to and from ftpserver over the emulated WiFi. The Windows build is tested under Wine. It
+# runs only when started by hand, since release.yml does the same for every version tag.
 name: Build
 
 on:
-  push:
-    branches:
-      - "**"
-  pull_request:
   workflow_dispatch:
 
 jobs:
