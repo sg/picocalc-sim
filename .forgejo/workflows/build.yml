@@ -1,11 +1,16 @@
 # Builds the Linux and Windows binaries of a branch, boots the latest pcsh, picocalc_lua,
-# picocalc-z80 and ftpserver releases on the Pico 2, Pico 2 W and Pimoroni Plus 2 W, and transfers
-# files to and from ftpserver over the emulated WiFi. The Windows build is tested under Wine. It
-# runs only when started by hand, since release.yml does the same for every version tag.
+# picocalc-z80 and ftpserver releases on the Pico 2, Pico 2 W, Pimoroni Plus 2 W, Pico and
+# Pico W, and transfers files to and from ftpserver over the emulated WiFi. The Windows build is
+# tested under Wine. It runs only when started by hand, since release.yml does the same for every
+# version tag.
 name: Build
 
 on:
   workflow_dispatch:
+
+env:
+  # the RP2040 boot ROM the Pico and Pico W tests need, fetched for the run
+  PCSIM_ROM: rom/b2.elf
 
 jobs:
   linux:
@@ -24,6 +29,9 @@ jobs:
 
       - name: Build
         run: src/ci/build-linux.sh src build
+
+      - name: Fetch the RP2040 boot ROM
+        run: src/ci/fetch-rp2040-rom.sh "$PCSIM_ROM"
 
       - name: Boot the latest firmware releases
         run: |
@@ -51,6 +59,9 @@ jobs:
 
       - name: Set up Wine
         run: src/ci/wine-wrap.sh build-win
+
+      - name: Fetch the RP2040 boot ROM
+        run: src/ci/fetch-rp2040-rom.sh "$PCSIM_ROM"
 
       - name: Boot the latest firmware releases
         run: |

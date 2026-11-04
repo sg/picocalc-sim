@@ -22,6 +22,8 @@ env:
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
   PRERELEASE: ${{ github.event.inputs.prerelease }}
   TOKEN: ${{ github.token }}
+  # the RP2040 boot ROM the Pico and Pico W tests need, fetched for the run and never packed
+  PCSIM_ROM: rom/b2.elf
 
 jobs:
   release:
@@ -38,6 +40,9 @@ jobs:
 
       - name: Build
         run: src/ci/build-linux.sh src build
+
+      - name: Fetch the RP2040 boot ROM
+        run: src/ci/fetch-rp2040-rom.sh "$PCSIM_ROM"
 
       - name: Boot the latest firmware releases
         run: |
