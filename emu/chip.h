@@ -388,6 +388,8 @@ struct chip {
     uint32_t bootlock_stat;
     uint32_t bootram_write_once[2];
     uint32_t trng_regs[8];
+    // What ROSC's random bit and the TRNG read: the same sequence from every power-up.
+    uint64_t rng;
     uint32_t glitch[16];
     uint32_t sha256_regs[16];
     uint32_t hstx_regs[16];
@@ -483,6 +485,8 @@ extern const board_info_t board_table[];
 const board_info_t *board_find(const char *name);
 
 void chip_init(chip_t *m, const board_info_t *b);
+// Undoes chip_init, leaving nothing behind that a later chip_init would see.
+void chip_free(chip_t *m);
 void chip_power_on(chip_t *m);
 void chip_reset(chip_t *m, bool watchdog);
 void chip_update_clocks(chip_t *m);
@@ -523,6 +527,7 @@ bool coproc_mrc(cpu_t *c, unsigned cp, unsigned opc1, unsigned crn, unsigned crm
 bool coproc_mcrr(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi);
 bool coproc_mrrc(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t *lo, uint32_t *hi);
 bool coproc_cdp(cpu_t *c, unsigned cp, unsigned opc1, unsigned crd, unsigned crn, unsigned crm, unsigned opc2);
+void dcp_reset(void);
 bool dcp_mcrr(cpu_t *c, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi);
 bool dcp_mrrc(cpu_t *c, unsigned opc1, unsigned crm, uint32_t *lo, uint32_t *hi, bool pop);
 bool dcp_mrc(cpu_t *c, unsigned crm, unsigned opc2, uint32_t *v, bool pop);
@@ -570,6 +575,7 @@ void gpio_wave(chip_t *m, unsigned pin, pin_wave_t *w);
 extern uint64_t g_wave_pins;
 void pinwave_update(chip_t *m, uint64_t pins);
 void pinwave_advance(chip_t *m);
+void pinwave_stop(void);
 
 void pl022_reset(pl022_t *s, int idx);
 uint32_t pl022_read(chip_t *m, pl022_t *s, uint32_t off, bool peek);
@@ -611,6 +617,7 @@ void flash_erase(chip_t *m, uint32_t off, uint32_t len);
 void flash_program(chip_t *m, uint32_t off, const uint8_t *src, uint32_t len);
 
 void cyw43_init(chip_t *m);
+void cyw43_free(chip_t *m);
 void cyw43_reset(chip_t *m);
 bool cyw43_bus_pins(chip_t *m, unsigned clk, unsigned data);
 void cyw43_bus_out(chip_t *m, int bit);
@@ -648,6 +655,8 @@ int devices_i2c_start(chip_t *m, int bus, uint8_t addr, void **dev);
 void devices_i2c_write(void *dev, const uint8_t *buf, int len, bool nostop);
 int devices_i2c_read(void *dev, uint8_t *buf, int len, bool nostop);
 void devices_uart_tx(chip_t *m, int idx, uint8_t byte);
+// Drops every device, watch and waveform listener the device models registered.
+void devices_detach_all(void);
 
 static inline uint32_t rd32le(const uint8_t *p)
 {

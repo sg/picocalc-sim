@@ -282,6 +282,12 @@ southbridge_t *southbridge_create(unsigned sda_pin, unsigned scl_pin, uint8_t ad
     return sb;
 }
 
+void southbridge_destroy(southbridge_t *sb)
+{
+    pthread_mutex_destroy(&sb->lock);
+    free(sb);
+}
+
 uint8_t southbridge_lcd_backlight(southbridge_t *sb)
 {
     pthread_mutex_lock(&sb->lock);

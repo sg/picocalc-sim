@@ -203,12 +203,13 @@ static uint32_t adc_sample(chip_t *m, unsigned ch)
     }
 }
 
-static uint32_t rng32(void)
+static uint32_t rng32(chip_t *m)
 {
-    static uint64_t s = 0x9e3779b97f4a7c15ull;
+    uint64_t s = m->rng;
     s ^= s << 13;
     s ^= s >> 7;
     s ^= s << 17;
+    m->rng = s;
     return (uint32_t)(s >> 16);
 }
 
@@ -343,9 +344,9 @@ uint32_t sysctl_read(chip_t *m, uint32_t base, uint32_t off)
         }
     case 0x400e8000:
         switch (off) {
-        case 0x0c: return rng32();
+        case 0x0c: return rng32(m);
         case 0x1c: return (1u << 31) | (1u << 12);
-        case 0x20: return rng32() & 1;
+        case 0x20: return rng32(m) & 1;
         default: return off < 0x28 ? m->rosc_regs[off >> 2] : 0;
         }
     case 0x400f0000:
@@ -357,7 +358,7 @@ uint32_t sysctl_read(chip_t *m, uint32_t base, uint32_t off)
         case 0x11c:
         case 0x120:
         case 0x124:
-        case 0x128: return rng32();
+        case 0x128: return rng32(m);
         case 0x12c: return m->trng_regs[0];
         case 0x10c: return m->trng_regs[1];
         case 0x1c0: return 0x0000b5;

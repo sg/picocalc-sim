@@ -91,8 +91,11 @@ static uint32_t stub_addr(int hle)
     return ROM_STUBS + 4u * (uint32_t)hle;
 }
 
+static void forget_state(void);
+
 void rom_build(chip_t *m)
 {
+    forget_state();
     uint8_t *r = m->rom;
     memset(r, 0, ROM_SIZE);
     wr32le(r + 0x00, 0x20082000u);
@@ -547,6 +550,14 @@ enum { W_DRAIN, W_SEND, W_RECV };
 // 1, vector table, stack pointer, entry point launches it.
 static uint32_t launch_seq[2][4];
 static int send_next[2];
+
+// What the ROM keeps between calls, which a new chip starts without.
+static void forget_state(void)
+{
+    memset(&pt, 0, sizeof(pt));
+    memset(launch_seq, 0, sizeof(launch_seq));
+    memset(send_next, 0, sizeof(send_next));
+}
 
 static bool fifo_push(chip_t *m, int core, uint32_t v)
 {

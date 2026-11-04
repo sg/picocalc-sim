@@ -829,6 +829,18 @@ void tcpnat_reset(void)
             f->expires = 0;
 }
 
+void tcpnat_shutdown(void)
+{
+    tcpnat_reset();
+    while (fwds) {
+        fwd_t *f = fwds;
+        fwds = f->next;
+        sock_close(f->fd);
+        free(f);
+    }
+    next_port = PORT_LO;
+}
+
 void tcpnat_init(void)
 {
     static bool done;

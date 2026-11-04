@@ -47,6 +47,11 @@ typedef struct {
 
 static dcp_state_t st[2];
 
+void dcp_reset(void)
+{
+    memset(st, 0, sizeof(st));
+}
+
 static double X(dcp_state_t *s)
 {
     return bits_to_d(s->x);

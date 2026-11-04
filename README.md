@@ -58,6 +58,11 @@ SRAM. Unthrottled headless runs are deterministic, so a change that should not a
 PCSIM_STOP_AT_MS=3000 build/pcsim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
 ```
 
+`PCSIM_RESTART_AT_MS=MS` restarts the machine once at that emulated time, as a frontend does
+when its settings change, and the run then starts again from power-on. Nothing of the first run
+may survive it, so with `PCSIM_STOP_AT_MS` the second run's digest must match a fresh launch's
+(`ci/restart-test.sh` checks this for each firmware).
+
 ### Measuring the hardware
 
 `tools/psramprobe` is firmware for a real PicoCalc, built on its own with the Pico SDK (the first
@@ -71,11 +76,12 @@ emulator should give the same one.
 
 Pushing a `v*` tag runs `.forgejo/workflows/release.yml` in the shared `picocalc-builder` image.
 It builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on
-each board (`ci/boot-test.sh`) and transfers files to and from ftpserver over the emulated WiFi
-(`ci/wifi-test.sh`), then cross-compiles the Windows build (`ci/build-windows.sh`) and runs the
-same tests on it under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads the
-RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`); the
-ROM is used only for the tests and is not packed into the release. If they pass, it stages a draft release with
+each board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-test.sh`) and
+transfers files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`), then
+cross-compiles the Windows build (`ci/build-windows.sh`) and runs the same tests on it under Wine
+(`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads the RP2040 boot ROM from Raspberry
+Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`); the ROM is used only for the tests
+and is not packed into the release. If they pass, it stages a draft release with
 `pcsim-TAG-linux-x86_64.tar.gz` and `pcsim-TAG-windows-x86_64.zip`. Pushing a commit runs nothing;
 `build.yml` runs the same tests on a branch when started by hand from the Actions page.
 `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux binaries
@@ -255,7 +261,9 @@ quit 0
 ```
 
 `type` takes the rest of the line with C escapes and holds Shift wherever the PicoCalc needs it.
-`key` takes chords such as `ctrl+alt+del`, `shift+up`, `brk` or `f6`. `quit N` sets the exit code.
+`key` takes chords such as `ctrl+alt+del`, `shift+up`, `brk` or `f6`. `restart` stops the
+machine and starts it again as a fresh launch with the same options would, so the UF2 given on
+the command line is written again and the card stays in the slot. `quit N` sets the exit code.
 
 ## How it works
 

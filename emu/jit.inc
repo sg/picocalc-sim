@@ -582,6 +582,12 @@ static bool jit_available(void)
     return J.on;
 }
 
+static void jit_forget(void)
+{
+    if (J.on > 0)
+        jit_flush();
+}
+
 static void jit_set_ps(uint32_t ps);
 
 // What block_run does when a handler asks for a look: a fault is taken (it is the IT state of the
@@ -2621,6 +2627,10 @@ static bool jit_run(cpu_t *c, block_t *b, uint64_t until)
 static bool jit_available(void)
 {
     return false;
+}
+
+static void jit_forget(void)
+{
 }
 
 static bool jit_run(cpu_t *c, block_t *b, uint64_t until)

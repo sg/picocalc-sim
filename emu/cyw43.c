@@ -1169,6 +1169,18 @@ void cyw43_init(chip_t *m)
     pcsim_gpio_watch(PIN_CS, cs_changed, w);
 }
 
+void cyw43_free(chip_t *m)
+{
+    cyw43_t *w = m->wifi;
+    if (!w)
+        return;
+    power(w, false);
+    pcsim_net_attach(NULL, NULL);
+    free(w->ram);
+    free(w);
+    m->wifi = NULL;
+}
+
 void cyw43_reset(chip_t *m)
 {
     if (m->wifi)

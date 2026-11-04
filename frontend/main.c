@@ -60,6 +60,8 @@ int pcsim_frontend_headless_run(void)
     uint64_t start = pcsim_mono_ns();
     int code = 0;
     for (;;) {
+        if (pcsim_restart_requested() && !pcsim_machine_restart())
+            return 1;
         southbridge_tick(pcsim_picocalc.sb);
         if (pcsim_quit_requested(&code))
             return code;
@@ -177,11 +179,10 @@ int main(int argc, char **argv)
     }
     if (!card && !no_card)
         card = default_card();
+    pcsim_opts.card_path = no_card ? NULL : card;
 
     if (!pcsim_machine_start())
         return 1;
-    if (!no_card && card && !sdcard_insert(pcsim_picocalc.sd, card))
-        pcsim_log("continuing with the card slot empty");
     if (!card && !no_card)
         pcsim_log("no SD card (make one with pcsim-mkcard and pass it with --card)");
 
@@ -195,8 +196,6 @@ int main(int argc, char **argv)
         code = pcsim_frontend_sdl_run();
 
     pcsim_machine_stop();
-    picocalc_audio_close(pcsim_picocalc.audio);
-    pcsim_flush_devices();
     fflush(NULL);
     exit(code);
 }

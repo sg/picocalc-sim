@@ -319,3 +319,9 @@ esp_psram_t *esp_psram_create(unsigned cs_pin, unsigned sck_pin, const unsigned 
     pcsim_gpio_drive_input(p->sio[1], 1);
     return p;
 }
+
+void esp_psram_destroy(esp_psram_t *p)
+{
+    free(p->mem);
+    free(p);
+}

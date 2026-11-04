@@ -164,6 +164,14 @@ void pinwave_advance(chip_t *m)
         W.fn(W.ctx, W.buf, (size_t)k);
 }
 
+void pinwave_stop(void)
+{
+    for (int i = 0; i < W.n; i++)
+        free(W.tr[i]);
+    memset(&W, 0, sizeof(W));
+    g_wave_pins = 0;
+}
+
 bool pcsim_pin_wave(const unsigned *pins, int npins, unsigned rate_hz, pcsim_pin_wave_fn fn, void *ctx)
 {
     chip_t *m = g_chip;

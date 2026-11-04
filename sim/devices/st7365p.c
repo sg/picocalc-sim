@@ -350,6 +350,12 @@ st7365p_t *st7365p_create(pcsim_spi_pins_t pins, unsigned dc_pin, unsigned rst_p
     return lcd;
 }
 
+void st7365p_destroy(st7365p_t *lcd)
+{
+    pthread_mutex_destroy(&lcd->lock);
+    free(lcd);
+}
+
 uint32_t st7365p_generation(st7365p_t *lcd)
 {
     pthread_mutex_lock(&lcd->lock);

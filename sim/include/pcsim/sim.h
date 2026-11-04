@@ -83,14 +83,22 @@ void pcsim_machine_lock(void);
 void pcsim_machine_unlock(void);
 
 bool pcsim_machine_start(void);
+// Takes down everything pcsim_machine_start set up, saving flash and finishing any recording.
 void pcsim_machine_stop(void);
+// Stops the machine and starts it as a fresh launch with the current pcsim_opts would. Call it
+// from the frontend's thread while nothing else touches pcsim_picocalc; false if the machine
+// could not start, which leaves it stopped.
+bool pcsim_machine_restart(void);
+// Asks the frontend to restart the machine when it next can; safe from any thread.
+void pcsim_request_restart(void);
+bool pcsim_restart_requested(void);
+// How many times the machine has started, so a thread that asked for a restart can wait for it.
+unsigned pcsim_machine_starts(void);
 const char *pcsim_board_name(void);
 double pcsim_speed(void);
 
 void pcsim_console_out(int uart, uint8_t byte);
 void pcsim_console_in(uint8_t byte);
-
-void pcsim_flush_devices(void);
 
 #ifdef __cplusplus
 }

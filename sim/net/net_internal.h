@@ -64,4 +64,6 @@ int tcpnat_pollfds(pollfd_t *fds, int max);
 void tcpnat_service(const pollfd_t *fds, int n);
 void tcpnat_timers(void);
 void tcpnat_reset(void);
+// Closes every connection and port forward.
+void tcpnat_shutdown(void);
 bool tcpnat_forward(const char *spec);

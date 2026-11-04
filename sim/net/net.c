@@ -127,10 +127,11 @@ void net_send_ip(const uint8_t *pkt, size_t len)
     send_frame(guest_mac_known ? guest_mac : bcast_mac, 0x0800, pkt, len);
 }
 
+static uint16_t ip_id;
+
 static size_t build_udp(uint8_t *pkt, uint32_t src, uint16_t sport, uint32_t dst, uint16_t dport, const uint8_t *data,
                         size_t len)
 {
-    static uint16_t ip_id;
     memset(pkt, 0, 28);
     pkt[0] = 0x45;
     net_wr16(pkt + 2, (uint32_t)(28 + len));
@@ -773,6 +774,16 @@ void pcsim_net_poll(void)
     }
     ping_poll(have_ping_fd ? &fds[ping_slot] : NULL);
     tcpnat_timers();
+}
+
+void pcsim_net_shutdown(void)
+{
+    pcsim_net_link(false);
+    tcpnat_shutdown();
+    rx_fn = NULL;
+    rx_ctx = NULL;
+    guest_mac_known = false;
+    ip_id = 0;
 }
 
 bool pcsim_net_init(void)

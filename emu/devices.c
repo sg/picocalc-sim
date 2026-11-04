@@ -13,6 +13,27 @@ static pcsim_spi_device_t *spi_devs;
 static pcsim_i2c_device_t *i2c_devs;
 static gpio_watch_t *watches[NUM_GPIO_MAX];
 
+void devices_detach_all(void)
+{
+    while (spi_devs) {
+        pcsim_spi_device_t *d = spi_devs;
+        spi_devs = d->next;
+        free(d);
+    }
+    while (i2c_devs) {
+        pcsim_i2c_device_t *d = i2c_devs;
+        i2c_devs = d->next;
+        free(d);
+    }
+    for (int pin = 0; pin < NUM_GPIO_MAX; pin++)
+        while (watches[pin]) {
+            gpio_watch_t *w = watches[pin];
+            watches[pin] = w->next;
+            free(w);
+        }
+    pinwave_stop();
+}
+
 void pcsim_spi_attach(pcsim_spi_device_t *dev)
 {
     dev->next = spi_devs;

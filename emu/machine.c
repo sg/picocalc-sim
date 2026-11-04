@@ -34,6 +34,17 @@ static char pending_uf2[4096];
 // PCSIM_STOP_AT_MS ends the run at an exact emulated time, so that with --trace two builds can be
 // compared by the state digest they print.
 static uint64_t stop_at_ps;
+// PCSIM_RESTART_AT_MS restarts the machine once at an exact emulated time, so the digest the
+// second run ends with can be checked against a fresh launch's.
+static uint64_t restart_at_ps;
+
+// What pcsim_machine_start has set up, for pcsim_machine_stop or a failed start to take down.
+static bool chip_ready, net_up, running;
+static atomic_uint starts;
+static atomic_bool restart_flag;
+// The flash image this run keeps, once "none" and the default are worked out from pcsim_opts.
+static char flash_file[4096];
+static const char *flash_path;
 
 void pcsim_machine_lock(void)
 {
@@ -104,13 +115,13 @@ void pcsim_bootsel_button(bool held)
 
 static void flash_save(void)
 {
-    if (!pcsim_opts.flash_path || !chip.flash_dirty)
+    if (!flash_path || !chip.flash || !chip.flash_dirty)
         return;
-    FILE *f = fopen(pcsim_opts.flash_path, "r+b");
+    FILE *f = fopen(flash_path, "r+b");
     if (!f)
-        f = fopen(pcsim_opts.flash_path, "w+b");
+        f = fopen(flash_path, "w+b");
     if (!f) {
-        pcsim_log("cannot write flash image %s: %s", pcsim_opts.flash_path, strerror(errno));
+        pcsim_log("cannot write flash image %s: %s", flash_path, strerror(errno));
         return;
     }
     fseek(f, 0, SEEK_END);
@@ -128,26 +139,17 @@ static void flash_save(void)
 
 static void flash_load(void)
 {
-    if (!pcsim_opts.flash_path || pcsim_opts.erase_flash)
+    if (!flash_path || pcsim_opts.erase_flash)
         return;
-    FILE *f = fopen(pcsim_opts.flash_path, "rb");
+    FILE *f = fopen(flash_path, "rb");
     if (!f)
         return;
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (size > 0 && size <= (long)chip.flash_size && fread(chip.flash, 1, (size_t)size, f) != (size_t)size)
-        pcsim_log("short read from flash image %s", pcsim_opts.flash_path);
+        pcsim_log("short read from flash image %s", flash_path);
     fclose(f);
-}
-
-void pcsim_flush_devices(void)
-{
-    pcsim_machine_lock();
-    flash_save();
-    pcsim_machine_unlock();
-    if (pcsim_picocalc.sd)
-        sdcard_flush(pcsim_picocalc.sd);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -347,6 +349,10 @@ static void *machine_main(void *arg)
         }
         run_slice();
         pinwave_advance(&chip);
+        if (restart_at_ps && chip.now >= restart_at_ps) {
+            restart_at_ps = 0;
+            pcsim_request_restart();
+        }
         if (stop_at_ps && chip.now >= stop_at_ps) {
             atomic_store(&stop_flag, true);
             pcsim_request_quit(0);
@@ -423,68 +429,97 @@ static const board_info_t *pick_board(const uf2_file_t *f)
     return board_find(rp2040 ? "pico" : "pico2");
 }
 
-bool pcsim_machine_start(void)
+// Takes down whatever pcsim_machine_start set up, in the order nothing freed is used again.
+static void teardown(void)
+{
+    // The frontend's other threads look at pcsim_picocalc with the machine locked.
+    pcsim_machine_lock();
+    picocalc_board_free();
+    pcsim_machine_unlock();
+    if (chip_ready)
+        cyw43_free(&chip);
+    devices_detach_all();
+    if (net_up)
+        pcsim_net_shutdown();
+    net_up = false;
+    if (chip_ready)
+        chip_free(&chip);
+    chip_ready = false;
+    pthread_mutex_lock(&uf2_lock);
+    pending_uf2[0] = 0;
+    pthread_mutex_unlock(&uf2_lock);
+}
+
+static bool start(uf2_file_t *f)
 {
     const char *stop_ms = getenv("PCSIM_STOP_AT_MS");
-    if (stop_ms && *stop_ms)
-        stop_at_ps = (uint64_t)(atof(stop_ms) * PS_PER_MS);
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&lock, &attr);
-    pthread_mutexattr_destroy(&attr);
-
-    uf2_file_t f;
-    bool have_uf2 = false;
-    char err[256];
-    if (pcsim_opts.uf2_path) {
-        if (!uf2_load(pcsim_opts.uf2_path, &f, err, sizeof(err))) {
-            pcsim_log("%s", err);
-            return false;
-        }
-        have_uf2 = true;
+    stop_at_ps = stop_ms && *stop_ms ? (uint64_t)(atof(stop_ms) * PS_PER_MS) : 0;
+    static bool restart_at_read;
+    if (!restart_at_read) {
+        restart_at_read = true;
+        const char *restart_ms = getenv("PCSIM_RESTART_AT_MS");
+        if (restart_ms && *restart_ms)
+            restart_at_ps = (uint64_t)(atof(restart_ms) * PS_PER_MS);
     }
-    const board_info_t *b = pick_board(have_uf2 ? &f : NULL);
+    atomic_store(&stop_flag, false);
+    atomic_store(&power_button, false);
+    set_state(PCSIM_RUNNING, "");
+    speed = 1.0;
+
+    char err[256];
+    if (pcsim_opts.uf2_path && !uf2_load(pcsim_opts.uf2_path, f, err, sizeof(err))) {
+        pcsim_log("%s", err);
+        return false;
+    }
+    bool have_uf2 = f->blocks != NULL;
+    const board_info_t *b = pick_board(have_uf2 ? f : NULL);
     if (!b)
         return false;
     chip_init(&chip, b);
+    chip_ready = true;
     chip.trace = pcsim_opts.trace;
     g_fast_bus = pcsim_opts.fast;
     if (!pcsim_opts.flash_path) {
-        static char path[4096];
         char file[64];
         snprintf(file, sizeof(file), "%s.flash", b->name);
-        pcsim_data_path(path, sizeof(path), file, true);
-        pcsim_opts.flash_path = path;
+        pcsim_data_path(flash_file, sizeof(flash_file), file, true);
+        flash_path = flash_file;
     } else if (!strcmp(pcsim_opts.flash_path, "none")) {
-        pcsim_opts.flash_path = NULL;
+        flash_path = NULL;
+    } else {
+        snprintf(flash_file, sizeof(flash_file), "%s", pcsim_opts.flash_path);
+        flash_path = flash_file;
     }
     flash_load();
     if (b->rp2040 && !load_rp2040_rom())
         return false;
-    if (!picocalc_board_init())
+    pcsim_machine_lock();
+    bool board = picocalc_board_init();
+    pcsim_machine_unlock();
+    if (!board)
         return false;
+    // The card is in the slot when the PicoCalc is switched on, as a fresh launch has it.
+    if (pcsim_opts.card_path && !sdcard_insert(pcsim_picocalc.sd, pcsim_opts.card_path))
+        pcsim_log("continuing with the card slot empty");
     if (b->wifi && !pcsim_opts.no_wifi) {
+        net_up = true;
         if (!pcsim_net_init())
             return false;
         cyw43_init(&chip);
     }
-    bool ram_image = have_uf2 && f.ram;
-    if (have_uf2 && !ram_image) {
-        if (!uf2_program(&chip, &f, err, sizeof(err))) {
+    if (have_uf2 && !f->ram) {
+        if (!uf2_program(&chip, f, err, sizeof(err))) {
             pcsim_log("%s", err);
-            uf2_free(&f);
             return false;
         }
-        uf2_free(&f);
         pcsim_log("wrote %s to %s flash", pcsim_opts.uf2_path, b->name);
         flash_save();
     }
     pcsim_log("%s: %s, %u MB flash%s%s", b->name, b->rp2040 ? "RP2040" : "RP2350", b->flash_size >> 20,
               b->psram_size ? ", 8 MB PSRAM" : "",
               !b->wifi ? "" : pcsim_opts.no_wifi ? ", CYW43439 left out (--no-wifi)" : ", CYW43439 WiFi");
-    if (pcsim_opts.flash_path)
-        pcsim_log("flash image: %s", pcsim_opts.flash_path);
+    if (flash_path)
+        pcsim_log("flash image: %s", flash_path);
     uint32_t boot_type = chip.boot_type;
     uint32_t p0 = chip.boot_param[0], p1 = chip.boot_param[1];
     chip_power_on(&chip);
@@ -493,10 +528,8 @@ bool pcsim_machine_start(void)
     chip.boot_param[1] = p1;
     // A RAM image goes in once power-on has given SRAM its random contents, as BOOTSEL's drive
     // would put it there, and the board then resets without losing it.
-    if (ram_image) {
-        bool ok = uf2_program(&chip, &f, err, sizeof(err));
-        uf2_free(&f);
-        if (!ok) {
+    if (have_uf2 && f->ram) {
+        if (!uf2_program(&chip, f, err, sizeof(err))) {
             pcsim_log("%s", err);
             return false;
         }
@@ -507,6 +540,31 @@ bool pcsim_machine_start(void)
         pcsim_log("cannot start the emulation thread");
         return false;
     }
+    return true;
+}
+
+bool pcsim_machine_start(void)
+{
+    if (running)
+        return true;
+    static bool lock_ready;
+    if (!lock_ready) {
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&lock, &attr);
+        pthread_mutexattr_destroy(&attr);
+        lock_ready = true;
+    }
+    uf2_file_t f = {0};
+    bool ok = start(&f);
+    uf2_free(&f);
+    if (!ok) {
+        teardown();
+        return false;
+    }
+    running = true;
+    atomic_fetch_add(&starts, 1);
     return true;
 }
 
@@ -541,8 +599,11 @@ static uint64_t state_digest(void)
 
 void pcsim_machine_stop(void)
 {
+    if (!running)
+        return;
     atomic_store(&stop_flag, true);
     pthread_join(thread, NULL);
+    running = false;
     if (chip.trace) {
         pcsim_log("stopped at %.3f s emulated, clk_sys %llu Hz", (double)chip.now / PS_PER_S,
                   (unsigned long long)chip.sys_hz);
@@ -565,4 +626,26 @@ void pcsim_machine_stop(void)
                           c->write_addr, c->trans_count);
         }
     }
+    teardown();
+}
+
+bool pcsim_machine_restart(void)
+{
+    pcsim_machine_stop();
+    return pcsim_machine_start();
+}
+
+void pcsim_request_restart(void)
+{
+    atomic_store(&restart_flag, true);
+}
+
+bool pcsim_restart_requested(void)
+{
+    return atomic_exchange(&restart_flag, false);
+}
+
+unsigned pcsim_machine_starts(void)
+{
+    return atomic_load(&starts);
 }

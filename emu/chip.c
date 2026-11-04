@@ -738,6 +738,7 @@ void chip_init(chip_t *m, const board_info_t *b)
     m->rp2040 = b->rp2040;
     m->sram_size = b->rp2040 ? 0x42000u : SRAM_SIZE;
     m->xip_cached_top = b->rp2040 ? 0x12 : 0x14;
+    m->rng = 0x9e3779b97f4a7c15ull;
     for (int i = 0; i < 2; i++) {
         m->core[i].m = m;
         m->core[i].id = i;
@@ -749,6 +750,18 @@ void chip_init(chip_t *m, const board_info_t *b)
         memcpy(m->rom + ROM_SIZE, m->rom, ROM_SIZE);
     }
     m->now = 0;
+}
+
+void chip_free(chip_t *m)
+{
+    // Models keep some of their events outside the chip, still marked as queued.
+    while (m->events)
+        ev_cancel(m, m->events);
+    free(m->flash);
+    free(m->psram);
+    m->flash = m->psram = NULL;
+    pthread_mutex_destroy(&m->power_lock);
+    cpu_flush_code();
 }
 
 // The lines as the NVICs number them, from the ones the models raise.
@@ -831,6 +844,7 @@ void chip_reset(chip_t *m, bool watchdog)
     m->adc_cs = m->adc_result = m->adc_fcs = m->adc_div = m->adc_inte = m->adc_intf = 0;
     memset(m->usb_regs, 0, sizeof(m->usb_regs));
     memset(m->dcp, 0, sizeof(m->dcp));
+    dcp_reset();
     if (m->rp2040)
         rp2040_reset(m, !watchdog);
     chip_update_clocks(m);

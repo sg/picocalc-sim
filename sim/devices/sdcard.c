@@ -350,6 +350,16 @@ sdcard_t *sdcard_create(pcsim_spi_pins_t pins, int detect_pin)
     return sd;
 }
 
+void sdcard_destroy(sdcard_t *sd)
+{
+    if (sd->fd >= 0) {
+        fsync(sd->fd);
+        close(sd->fd);
+    }
+    pthread_mutex_destroy(&sd->lock);
+    free(sd);
+}
+
 bool sdcard_insert(sdcard_t *sd, const char *image_path)
 {
     int fd = open(image_path, O_RDWR | O_BINARY);

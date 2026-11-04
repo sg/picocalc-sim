@@ -9,7 +9,7 @@
 
 // Drives the keyboard from a file, one command per line:
 //   wait <ms>            type <text>          key <chord>
-//   screenshot <file>    quit [code]          # comment
+//   screenshot <file>    restart              quit [code]          # comment
 // type takes the rest of the line with C escapes (\n \t \e \b \\); key takes chords such as
 // ctrl+c, shift+up, brk or f6.
 
@@ -76,6 +76,11 @@ static void *script_thread(void *arg)
             pcsim_sleep_ns(KEY_GAP_MS * 1000000ull);
         } else if (!strcmp(cmd, "screenshot")) {
             pcsim_screenshot(rest);
+        } else if (!strcmp(cmd, "restart")) {
+            unsigned n = pcsim_machine_starts();
+            pcsim_request_restart();
+            while (pcsim_machine_starts() == n && !pcsim_quit_requested(NULL))
+                pcsim_sleep_ns(10000000ull);
         } else if (!strcmp(cmd, "quit")) {
             fclose(f);
             pcsim_request_quit(*rest ? atoi(rest) : 0);

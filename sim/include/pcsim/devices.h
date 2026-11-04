@@ -20,6 +20,7 @@ st7365p_t *st7365p_create(pcsim_spi_pins_t pins, unsigned dc_pin, unsigned rst_p
 // Composes what the panel shows (scroll, inversion, sleep, backlight) into 320x320 ARGB8888.
 void st7365p_render(st7365p_t *lcd, uint32_t *argb, uint8_t backlight);
 uint32_t st7365p_generation(st7365p_t *lcd);
+void st7365p_destroy(st7365p_t *lcd);
 
 typedef struct southbridge southbridge_t;
 southbridge_t *southbridge_create(unsigned sda_pin, unsigned scl_pin, uint8_t addr);
@@ -32,6 +33,7 @@ bool southbridge_caps_lock(southbridge_t *sb);
 bool southbridge_shift_held(southbridge_t *sb);
 void southbridge_set_battery(southbridge_t *sb, uint8_t percent, bool charging);
 uint32_t southbridge_generation(southbridge_t *sb);
+void southbridge_destroy(southbridge_t *sb);
 
 typedef struct sdcard sdcard_t;
 sdcard_t *sdcard_create(pcsim_spi_pins_t pins, int detect_pin);
@@ -39,6 +41,8 @@ bool sdcard_insert(sdcard_t *sd, const char *image_path);
 void sdcard_eject(sdcard_t *sd);
 void sdcard_flush(sdcard_t *sd);
 bool sdcard_present(sdcard_t *sd);
+// Closes the image without the card-detect pin seeing it leave.
+void sdcard_destroy(sdcard_t *sd);
 
 // The mainboard's filters on the two audio pins, as 48 kHz stereo; it costs nothing until it is
 // recorded or played.
@@ -52,10 +56,13 @@ bool picocalc_audio_play(picocalc_audio_t *a);
 // Fills n stereo frames, padding with silence while the buffer builds up; returns frames that
 // came from the device.
 size_t picocalc_audio_pull(picocalc_audio_t *a, int16_t *frames, size_t n);
+// Finishes any recording; nothing may be pulling.
+void picocalc_audio_destroy(picocalc_audio_t *a);
 
 // The mainboard's PSRAM, an ESP-PSRAM64H on GPIOs; sio_pins are SIO0 (SI) to SIO3.
 typedef struct esp_psram esp_psram_t;
 esp_psram_t *esp_psram_create(unsigned cs_pin, unsigned sck_pin, const unsigned sio_pins[4]);
+void esp_psram_destroy(esp_psram_t *p);
 
 typedef struct picocalc {
     st7365p_t *lcd;
@@ -67,6 +74,8 @@ typedef struct picocalc {
 
 extern picocalc_t pcsim_picocalc;
 bool picocalc_board_init(void);
+// Frees the devices picocalc_board_init made; the machine drops their pin registrations.
+void picocalc_board_free(void);
 
 #ifdef __cplusplus
 }

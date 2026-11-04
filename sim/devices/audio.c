@@ -244,3 +244,9 @@ void picocalc_audio_close(picocalc_audio_t *a)
     a->wav = NULL;
     pcsim_machine_unlock();
 }
+
+void picocalc_audio_destroy(picocalc_audio_t *a)
+{
+    picocalc_audio_close(a);
+    free(a);
+}

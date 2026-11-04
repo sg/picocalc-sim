@@ -45,7 +45,8 @@ typedef struct pcsim_spi_device {
     int nbits;
 } pcsim_spi_device_t;
 
-// The device answers whichever SPI controller, PIO program or bit-banging drives its pins.
+// The device answers whichever SPI controller, PIO program or bit-banging drives its pins. The
+// machine frees dev, which must come from malloc, when it stops.
 void pcsim_spi_attach(pcsim_spi_device_t *dev);
 
 typedef struct pcsim_i2c_device {
@@ -59,6 +60,7 @@ typedef struct pcsim_i2c_device {
     struct pcsim_i2c_device *next;
 } pcsim_i2c_device_t;
 
+// As for SPI, the machine frees dev when it stops.
 void pcsim_i2c_attach(pcsim_i2c_device_t *dev);
 
 #ifdef __cplusplus

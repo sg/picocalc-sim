@@ -1419,6 +1419,13 @@ static void step(cpu_t *c)
 #include "block.inc"
 #include "jit.inc"
 
+void cpu_flush_code(void)
+{
+    memset(blocks, 0, sizeof(blocks));
+    memset(block_mru, 0, sizeof(block_mru));
+    jit_forget();
+}
+
 void cpu_run(cpu_t *c, uint64_t until)
 {
     chip_t *m = c->m;

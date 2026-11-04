@@ -99,6 +99,8 @@ struct cpu {
 
 void cpu_reset(cpu_t *c);
 void cpu_run(cpu_t *c, uint64_t until);
+// Forgets every translated block, which a new machine could otherwise mistake for its own code.
+void cpu_flush_code(void);
 uint32_t cpu_ppb_read(cpu_t *c, uint32_t off);
 void cpu_ppb_write(cpu_t *c, uint32_t off, uint32_t v);
 static inline void cpu_poke(cpu_t *c)

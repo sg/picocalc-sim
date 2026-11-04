@@ -240,6 +240,19 @@ int pcsim_frontend_sdl_run(void)
             }
         }
 
+        if (pcsim_restart_requested()) {
+            // The devices are about to be freed, so nothing may hold a key or pull sound from them.
+            release_all();
+            if (audio)
+                SDL_DestroyAudioStream(audio);
+            audio = NULL;
+            if (!pcsim_machine_restart()) {
+                code = 1;
+                break;
+            }
+            audio = open_audio();
+            last_lcd = last_sb = ~0u;
+        }
         southbridge_tick(pcsim_picocalc.sb);
         if (pcsim_quit_requested(&code))
             break;
