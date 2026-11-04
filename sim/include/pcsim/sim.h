@@ -20,6 +20,7 @@ extern "C" {
 typedef struct pcsim_options {
     const char *board;
     const char *flash_path;
+    const char *rom_path;
     const char *card_path;
     const char *uf2_path;
     const char *script_path;

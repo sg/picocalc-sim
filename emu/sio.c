@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <string.h>
 
 #include "chip.h"
@@ -117,10 +118,108 @@ static uint64_t mtime(chip_t *m)
     return m->now / PS_PER_US;
 }
 
+// The RP2040's divider, one per core: the M0+ has no divide instruction, so the SDK writes the
+// operands here and reads the result eight cycles later.
+static void div_calc(cpu_t *c, bool sign)
+{
+    __typeof__(c->m->rp.div[0]) *d = &c->m->rp.div[c->id];
+    d->dirty = true;
+    if (sign) {
+        int32_t a = (int32_t)d->dividend, b = (int32_t)d->divisor;
+        if (b == 0) {
+            d->quotient = a < 0 ? 1u : 0xffffffffu;
+            d->remainder = (uint32_t)a;
+        } else if (a == INT32_MIN && b == -1) {
+            d->quotient = (uint32_t)INT32_MIN;
+            d->remainder = 0;
+        } else {
+            d->quotient = (uint32_t)(a / b);
+            d->remainder = (uint32_t)(a % b);
+        }
+    } else if (d->divisor == 0) {
+        d->quotient = 0xffffffffu;
+        d->remainder = d->dividend;
+    } else {
+        d->quotient = d->dividend / d->divisor;
+        d->remainder = d->dividend % d->divisor;
+    }
+}
+
+static bool rp2040_read(cpu_t *c, uint32_t off, uint32_t *v)
+{
+    chip_t *m = c->m;
+    __typeof__(m->rp.div[0]) *d = &m->rp.div[c->id];
+    switch (off) {
+    case 0x008: *v = rp2040_qspi_in(m); return true;
+    case 0x010: *v = m->sio_out[0]; return true;
+    case 0x020: *v = m->sio_oe[0]; return true;
+    case 0x030: *v = m->rp.sio_hi_out; return true;
+    case 0x040: *v = m->rp.sio_hi_oe; return true;
+    case 0x060:
+    case 0x068: *v = d->dividend; return true;
+    case 0x064:
+    case 0x06c: *v = d->divisor; return true;
+    case 0x070:
+        d->dirty = false;
+        *v = d->quotient;
+        return true;
+    case 0x074: *v = d->remainder; return true;
+    case 0x078: *v = 1u | (d->dirty ? 2u : 0); return true;
+    default:
+        if ((off >= 0x010 && off < 0x050) || off >= 0x180) {
+            *v = 0;
+            return true;
+        }
+        return false;
+    }
+}
+
+static void apply_op(uint32_t *t, unsigned op, uint32_t v)
+{
+    switch (op) {
+    case 0: *t = v; break;
+    case 1: *t |= v; break;
+    case 2: *t &= ~v; break;
+    default: *t ^= v; break;
+    }
+}
+
+static void gpio_regs_changed(cpu_t *c, uint32_t old_out[2], uint32_t old_oe[2]);
+
+static bool rp2040_write(cpu_t *c, uint32_t off, uint32_t v)
+{
+    chip_t *m = c->m;
+    __typeof__(m->rp.div[0]) *d = &m->rp.div[c->id];
+    if (off >= 0x010 && off < 0x050) {
+        unsigned reg = (off - 0x10) >> 2, grp = reg >> 2, op = reg & 3;
+        if (grp < 2) {
+            uint32_t old_out[2] = {m->sio_out[0], m->sio_out[1]}, old_oe[2] = {m->sio_oe[0], m->sio_oe[1]};
+            apply_op(grp ? &m->sio_oe[0] : &m->sio_out[0], op, v & 0x3fffffffu);
+            gpio_regs_changed(c, old_out, old_oe);
+        } else {
+            apply_op(grp == 3 ? &m->rp.sio_hi_oe : &m->rp.sio_hi_out, op, v & 0x3f);
+            rp2040_sio_hi_changed(m);
+        }
+        return true;
+    }
+    switch (off) {
+    case 0x060: d->dividend = v; div_calc(c, false); return true;
+    case 0x064: d->divisor = v; div_calc(c, false); return true;
+    case 0x068: d->dividend = v; div_calc(c, true); return true;
+    case 0x06c: d->divisor = v; div_calc(c, true); return true;
+    case 0x070: d->quotient = v; d->dirty = true; return true;
+    case 0x074: d->remainder = v; d->dirty = true; return true;
+    default: return off >= 0x180;
+    }
+}
+
 uint32_t sio_read(cpu_t *c, uint32_t off)
 {
     chip_t *m = c->m;
     off &= 0xfff;
+    uint32_t rv;
+    if (m->rp2040 && rp2040_read(c, off, &rv))
+        return rv;
     switch (off) {
     case 0x000: return (uint32_t)c->id;
     case 0x004: return (uint32_t)gpio_in_all(m);
@@ -189,6 +288,8 @@ void sio_write(cpu_t *c, uint32_t off, uint32_t v)
 {
     chip_t *m = c->m;
     off &= 0xfff;
+    if (m->rp2040 && rp2040_write(c, off, v))
+        return;
     if (off >= 0x010 && off < 0x050) {
         uint32_t old_out[2] = {m->sio_out[0], m->sio_out[1]}, old_oe[2] = {m->sio_oe[0], m->sio_oe[1]};
         unsigned reg = (off - 0x10) >> 2;

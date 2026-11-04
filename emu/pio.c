@@ -859,7 +859,7 @@ static void pio_event(chip_t *m, emu_event_t *ev)
     pio_sync(m, ev->ctx);
 }
 
-uint32_t pio_read(chip_t *m, pio_t *p, uint32_t off, bool peek)
+static uint32_t regs_read(chip_t *m, pio_t *p, uint32_t off, bool peek)
 {
     if (!peek)
         pio_sync(m, p);
@@ -952,7 +952,7 @@ uint32_t pio_read(chip_t *m, pio_t *p, uint32_t off, bool peek)
     }
 }
 
-void pio_write(chip_t *m, pio_t *p, uint32_t off, uint32_t v)
+static void regs_write(chip_t *m, pio_t *p, uint32_t off, uint32_t v)
 {
     pio_sync(m, p);
     switch (off) {
@@ -1025,4 +1025,56 @@ void pio_write(chip_t *m, pio_t *p, uint32_t off, uint32_t v)
     }
     update_irqs(m, p);
     pio_sync(m, p);
+}
+
+// The RP2040's PIO, the first version: with no GPIOBASE or RX FIFO random access its interrupt
+// registers sit 0x44 lower, EXECCTRL's STATUS_SEL is one bit lower with a 4-bit STATUS_N, and
+// SHIFTCTRL has nothing below bit 16.
+static uint32_t execctrl_in(uint32_t v)
+{
+    return (v & ~0x7fu) | (((v >> 4) & 1) << 5) | (v & 0xf);
+}
+
+static uint32_t execctrl_out(uint32_t v)
+{
+    return (v & ~0x7fu) | (((v >> 5) & 1) << 4) | (v & 0xf);
+}
+
+static bool sm_reg(uint32_t off, unsigned reg)
+{
+    return off >= 0xc8 && off < 0x128 && (off - 0xc8) % 0x18 == reg;
+}
+
+uint32_t pio_read(chip_t *m, pio_t *p, uint32_t off, bool peek)
+{
+    if (!m->rp2040)
+        return regs_read(m, p, off, peek);
+    if (off == 0x044)
+        return 0x00200404u;
+    if (off >= 0x128)
+        return off <= 0x140 ? regs_read(m, p, off + 0x44, peek) : 0;
+    uint32_t v = regs_read(m, p, off, peek);
+    if (sm_reg(off, 4))
+        return execctrl_out(v);
+    if (sm_reg(off, 8))
+        return v & 0xffff0000u;
+    return v;
+}
+
+void pio_write(chip_t *m, pio_t *p, uint32_t off, uint32_t v)
+{
+    if (!m->rp2040) {
+        regs_write(m, p, off, v);
+        return;
+    }
+    if (off >= 0x128) {
+        if (off <= 0x140)
+            regs_write(m, p, off + 0x44, v);
+        return;
+    }
+    if (sm_reg(off, 4))
+        v = execctrl_in(v);
+    else if (sm_reg(off, 8))
+        v &= 0xffff0000u;
+    regs_write(m, p, off, v);
 }

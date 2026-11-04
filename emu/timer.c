@@ -14,6 +14,9 @@ static uint64_t tick_ps(chip_t *m, unsigned gen)
         m->tick_memo[gen].cycles = cycles;
         m->tick_memo[gen].ref_hz = m->ref_hz;
         m->tick_memo[gen].ps = (uint64_t)cycles * PS_PER_S / m->ref_hz;
+        // RP2040-E1: the watchdog counts down two for every tick.
+        if (m->rp2040 && gen == 4)
+            m->tick_memo[gen].ps /= 2;
     }
     return m->tick_memo[gen].ps;
 }

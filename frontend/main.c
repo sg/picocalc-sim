@@ -13,12 +13,15 @@ static void usage(const char *argv0)
 {
     printf("usage: %s [options] [FIRMWARE.uf2]\n"
            "\n"
-           "Emulates a PicoCalc with an RP2350 board. A UF2 given on the command line is written into\n"
+           "Emulates a PicoCalc with an RP2350 or RP2040 board. A UF2 given on the command line is written into\n"
            "flash as if dropped on the BOOTSEL drive; without one, whatever the flash already holds\n"
            "boots, as when the PicoCalc is switched on.\n"
            "\n"
-           "  -b, --board NAME       pico2, pico2_w or pimoroni_pico_plus2_w (default: from the UF2,\n"
-           "                         otherwise pico2)\n"
+           "  -b, --board NAME       pico2, pico2_w, pimoroni_pico_plus2_w, pico or pico_w (default: from\n"
+           "                         the UF2, otherwise pico2)\n"
+           "      --rom FILE         the RP2040 boot ROM, as b2.elf from github.com/raspberrypi/\n"
+           "                         pico-bootrom-rp2040 or a 16 KB image (default\n"
+           "                         ~/.local/share/pcsim/rp2040-rom.elf or .bin); pico and pico_w need it\n"
            "  -f, --flash FILE       flash image to use and keep (default ~/.local/share/pcsim/BOARD.flash;\n"
            "                         'none' for a flash that is discarded on exit)\n"
            "      --erase-flash      start with erased flash\n"
@@ -97,10 +100,12 @@ int main(int argc, char **argv)
         OPT_VOLUME,
         OPT_MUTE,
         OPT_WAV,
+        OPT_ROM,
     };
     static const struct option longopts[] = {
         {"board", required_argument, NULL, 'b'},
         {"flash", required_argument, NULL, 'f'},
+        {"rom", required_argument, NULL, OPT_ROM},
         {"erase-flash", no_argument, NULL, OPT_ERASE},
         {"card", required_argument, NULL, 'c'},
         {"no-card", no_argument, NULL, OPT_NOCARD},
@@ -129,6 +134,7 @@ int main(int argc, char **argv)
         switch (opt) {
         case 'b': pcsim_opts.board = optarg; break;
         case 'f': pcsim_opts.flash_path = optarg; break;
+        case OPT_ROM: pcsim_opts.rom_path = optarg; break;
         case OPT_ERASE: pcsim_opts.erase_flash = true; break;
         case 'c': card = optarg; break;
         case OPT_NOCARD: no_card = true; break;

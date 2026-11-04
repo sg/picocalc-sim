@@ -2,13 +2,15 @@
 
 A PicoCalc emulator for Linux and Windows that runs firmware as it ships: the same UF2 file you
 would drop on the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps` folder. macOS should
-build but is untested. It emulates the RP2350 instruction by instruction, with the PicoCalc's LCD,
-keyboard controller, SD card, audio circuit and PSRAM attached to its pins, so nothing has to be
-rebuilt for the simulator.
+build but is untested. It emulates the RP2350 or RP2040 instruction by instruction, with the
+PicoCalc's LCD, keyboard controller, SD card, audio circuit and PSRAM attached to its pins, so
+nothing has to be rebuilt for the simulator.
 
 Boards: **Raspberry Pi Pico 2**, **Pico 2 W** and **Pimoroni Pico Plus 2 / 2 W** (16 MB flash,
-8 MB PSRAM). On the W boards the CYW43439 radio is emulated too: firmware scans, joins a virtual
-access point and reaches the network through a router built into the emulator (see [WiFi](#wifi)).
+8 MB PSRAM), and the RP2040 **Raspberry Pi Pico** and **Pico W**, which need the RP2040's boot ROM
+(see [RP2040 boards](#rp2040-boards)). On the W boards the CYW43439 radio is emulated too: firmware
+scans, joins a virtual access point and reaches the network through a router built into the
+emulator (see [WiFi](#wifi)).
 
 ## Building
 
@@ -69,7 +71,9 @@ Pushing a `v*` tag runs `.forgejo/workflows/release.yml` in the shared `picocalc
 It builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on
 each board (`ci/boot-test.sh`) and transfers files to and from ftpserver over the emulated WiFi
 (`ci/wifi-test.sh`), then cross-compiles the Windows build (`ci/build-windows.sh`) and runs the
-same tests on it under Wine (`ci/wine-wrap.sh`). If they pass, it stages a draft release with
+same tests on it under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads the
+RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`); the
+ROM is used only for the tests and is not packed into the release. If they pass, it stages a draft release with
 `pcsim-TAG-linux-x86_64.tar.gz` and `pcsim-TAG-windows-x86_64.zip`. Pushing a commit runs nothing;
 `build.yml` runs the same tests on a branch when started by hand from the Actions page.
 `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux binaries
@@ -85,7 +89,7 @@ build/pcsim ../pcsh/build-pico2/pcsh.uf2
 A UF2 on the command line is written into flash as BOOTSEL's drive would write it, then the board
 boots. Without one, the board boots whatever its flash already holds, like switching the PicoCalc
 on. The board is taken from the image's binary info (`pico2`, `pico2_w`,
-`pimoroni_pico_plus2_w_rp2350`); `--board` overrides it.
+`pimoroni_pico_plus2_w_rp2350`, `pico`, `pico_w`); `--board` overrides it.
 
 Each board's flash persists in `~/.local/share/pcsim/BOARD.flash` (`--flash FILE` to choose,
 `--flash none` to discard it on exit, `--erase-flash` to start blank). The SD card is
@@ -107,6 +111,23 @@ pcsim.exe pcsh-pico2w-v0.1.2.uf2
 `pcsim-mkcard IMAGE [-s MB] [-l LABEL] [DIR...]` formats an MBR/FAT32 card (512 MB by default)
 and copies each directory's contents to the root. Files the firmware writes persist in the image.
 
+### RP2040 boards
+
+The RP2040 runs its own boot ROM, which reads boot2 from flash, checks it, and runs it to set up
+the flash for execute-in-place; firmware also calls the ROM for flash writes, memory copies and
+all of its floating-point maths. Raspberry Pi publishes the exact ROM of each chip revision, but
+its floating-point code is licensed only for use on an RP2040, so it is not included here.
+Download `b2.elf` (the revision in current Picos) from
+[the pico-bootrom-rp2040 releases](https://github.com/raspberrypi/pico-bootrom-rp2040/releases)
+and either save it as `~/.local/share/pcsim/rp2040-rom.elf` or pass it each time:
+
+```sh
+build/pcsim --rom b2.elf ../pcsh/build-pico/pcsh.uf2
+```
+
+A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
+`picotool save -r 0x0 0x4000`) works too.
+
 ### uf2loader
 
 pelrun's [uf2loader](https://github.com/pelrun/uf2loader) works as it does on a real PicoCalc:
@@ -121,7 +142,11 @@ build/pcsim --board pico2 bootloader_pico2.uf2
 
 With no app in flash the loader opens its menu; choosing a UF2 flashes it into the app partition
 and boots it. Later runs (`build/pcsim` with no UF2) boot the app directly; hold F1 (or Up) and
-press F12 to reset into the menu instead.
+press F12 to reset into the menu instead. The RP2040 build works the same way, with
+`BOOT2040.UF2`, a `pico1-apps` folder and `--board pico bootloader_pico.uf2`.
+
+A UF2 for RAM rather than flash (such as `BOOT2350.UF2` itself) is loaded into SRAM after
+power-on, as BOOTSEL's drive would, and the board resets into it.
 
 ### WiFi
 
@@ -196,7 +221,8 @@ any key powers it back on.
 
 | Option | Effect |
 | --- | --- |
-| `-b`, `--board NAME` | `pico2`, `pico2_w`, `pimoroni_pico_plus2_w` or `pimoroni_pico_plus2` |
+| `-b`, `--board NAME` | `pico2`, `pico2_w`, `pimoroni_pico_plus2_w`, `pimoroni_pico_plus2`, `pico` or `pico_w` |
+| `--rom FILE` | the RP2040 boot ROM, as an ELF file or a 16 KB image (see [RP2040 boards](#rp2040-boards)) |
 | `-f`, `--flash FILE` | flash image to use and keep |
 | `-c`, `--card IMAGE` / `--no-card` | SD card image, or an empty slot |
 | `--console` | print UART0 output, as a serial adapter on the PicoCalc's header would show |
@@ -254,15 +280,18 @@ quit 0
   straight-line code are decoded once into blocks of small handlers (`emu/block.inc`) and reused
   while the code they came from is unchanged, and on x86-64 hosts each block is then translated
   to native code (`emu/jit.inc`). Both behave exactly as stepping one instruction at a time:
-  `PCSIM_NO_JIT=1` keeps to the block handlers and `PCSIM_NO_BLOCKS=1` steps.
+  `PCSIM_NO_JIT=1` keeps to the block handlers and `PCSIM_NO_BLOCKS=1` steps. The RP2040's
+  Cortex-M0+ cores run the ARMv6-M subset the same way, faulting on what the M0+ lacks
+  (unaligned accesses, Thumb-2 instructions other than BL, MSR, MRS and the barriers).
 - **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP) is
   modelled by what each canned operation computes rather than its internal datapath: operands are
   captured as doubles and the final read returns the IEEE result.
-- **Boot ROM.** Raspberry Pi's ROM can't be redistributed, so `emu/rom.c` replaces it. It follows
+- **Boot ROM.** Raspberry Pi's RP2350 ROM can't be redistributed, so `emu/rom.c` replaces it. It follows
   the real boot path (watchdog and reboot parameters, the picobin block loop, embedded and
   standalone partition tables, ATRANS address translation, load maps, BOOTSEL when nothing
   boots), runs core 1's launch handshake, and implements the ROM API the SDK and uf2loader call:
-  flash operations, partition queries, `chain_image`, `reboot`, `get_sys_info` and so on.
+  flash operations, partition queries, `chain_image`, `reboot`, `get_sys_info` and so on. The
+  RP2040 runs its real ROM, from a file the user supplies.
 - **Peripherals.** Register-level models of what the PicoCalc firmware uses: SIO (FIFOs,
   spinlocks, interpolators), IO bank and pads, TIMER0/1, watchdog, POWMAN's always-on timer,
   clocks/PLLs/tick generators, PL022 SPI, DesignWare I2C, PL011 UART, PIO (all three blocks,
@@ -270,6 +299,10 @@ quit 0
   uneven ones as on the chip, except that the counting loop of pico-examples' PWM program, which
   PIO audio drivers use, skips ahead to its next edge), 16-channel DMA, PWM, QMI
   direct mode with a W25Q flash and an APS6404 PSRAM, TRNG, OTP chip ID, boot RAM and boot locks.
+  On the RP2040 the same models sit behind its register layout (`emu/rp2040.c`), with its own
+  clock tree, resets, SIO hardware divider, RTC, and the SSI and XIP cache it reaches flash through;
+  XIP reads get flash data only while the SSI and the flash's continuous-read mode are set up as
+  boot2 leaves them.
 - **Timing.** Emulated time is paced against the host clock. Buses move data at the rate the
   firmware programmed (a 10 kHz I2C poll of the keyboard takes as long as it does on the board).
 - **Pin timing.** A pin's change reaches the PIO's inputs a cycle plus the pads' delays later
@@ -303,14 +336,14 @@ quit 0
 Tested here with UF2s built from `../pcsh`, `../picocalc_lua`, `../picocalc-z80` and
 `../ftpserver`, and with ClockworkPi's PicoMite build:
 
-| Firmware | Pico 2 | Pico 2 W | Pimoroni Plus 2 W |
-| --- | --- | --- | --- |
-| pcsh | shell, SD, Lua | WiFi scan and join, DHCP, DNS, NTP, HTTP, ping to the gateway | boots with an 8 MB PSRAM heap |
-| picocalc_lua | boots, SD mounted, `sound` notes, `psram` on the mainboard PSRAM | WiFi scan and join, `psram` | boots |
-| picocalc-z80 | boots to its menu | boots to its menu | boots, finds and benchmarks the PSRAM |
-| ftpserver | (no Pico 2 build) | FTP through a forward: login, list, transfers | same |
-| uf2loader 2.4.1 | menu, flashing and chaining apps | not tried | not tried |
-| PicoMite 6.00.02RC23 | MMBasic prompt after its first-boot flash format (about 20 s), `PLAY TONE` | not tried | same, on the non-W Plus 2 |
+| Firmware | Pico 2 | Pico 2 W | Pimoroni Plus 2 W | Pico | Pico W |
+| --- | --- | --- | --- | --- | --- |
+| pcsh | shell, SD, Lua | WiFi scan and join, DHCP, DNS, NTP, HTTP, ping to the gateway | boots with an 8 MB PSRAM heap | shell, SD | boots |
+| picocalc_lua | boots, SD mounted, `sound` notes, `psram` on the mainboard PSRAM | WiFi scan and join, `psram` | boots | boots, `psram` | boots |
+| picocalc-z80 | boots to its menu | boots to its menu | boots, finds and benchmarks the PSRAM | boots to its menu | boots to its menu |
+| ftpserver | (no Pico 2 build) | FTP through a forward: login, list, transfers | same | (no Pico build) | same as Pico 2 W |
+| uf2loader 2.4.1 | menu, flashing and chaining apps | not tried | not tried | menu, flashing and booting apps | not tried |
+| PicoMite 6.00.02RC23 | MMBasic prompt after its first-boot flash format (about 20 s), `PLAY TONE` | not tried | same, on the non-W Plus 2 | not tried | not tried |
 
 Not emulated yet, or not faithfully:
 
@@ -329,7 +362,11 @@ Not emulated yet, or not faithfully:
   that lands within a fraction of a nanosecond of a change, which varies from read to read on the
   board, gives the same answer every time here.
 - **USB** enumerates nothing: the controller's registers exist but no host is connected.
-- **RP2040 boards** (Pico, Pico W) and RISC-V images are not supported.
+- **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
+  RP2040, and the ROM's USB boot waits for a host that never comes, as on a Pico with nothing
+  plugged in. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
+  flash reads give zeros; what a real RP2040 returns there is unverified.
+- **RISC-V** images for the RP2350 are not supported.
 - **Windows:** `pcsim-mkcard.exe` reads host file names in the system code page, so files whose
   names are not plain ASCII may not copy.
 - Secure state only: TrustZone, the MPU and the redundancy coprocessor accept their
@@ -339,5 +376,5 @@ Not emulated yet, or not faithfully:
 
 ## Roadmap
 
-1. The RP2040 boards (Pico, and Pico W with the same radio model).
+1. The RP2040 boards' pin and PSRAM timing measured on a Pico.
 2. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.

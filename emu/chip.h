@@ -48,6 +48,8 @@ enum {
     IRQ_TRNG = 39,
     IRQ_POWMAN_POW = 44,
     IRQ_POWMAN_TIMER = 45,
+    // A line the RP2350 leaves spare, for the RP2040's RTC.
+    IRQ_RTC = 51,
 };
 
 enum {
@@ -265,6 +267,8 @@ typedef enum {
     BOARD_PICO2_W,
     BOARD_PIMORONI_PICO_PLUS2_W,
     BOARD_PIMORONI_PICO_PLUS2,
+    BOARD_PICO,
+    BOARD_PICO_W,
 } board_t;
 
 typedef struct {
@@ -276,7 +280,56 @@ typedef struct {
     unsigned num_gpio;
     int psram_cs_pin;
     bool wifi;
+    bool rp2040;
 } board_info_t;
+
+// The DW_apb_ssi the RP2040 reaches its flash through, for commands and for XIP.
+typedef struct {
+    uint32_t ctrlr0, ctrlr1, ssienr, ser, baudr, txftlr, rxftlr, imr, dmacr, dmatdlr, dmardlr;
+    uint32_t rx_sample_dly, spi_ctrlr0, txd_drive_edge;
+    uint32_t rxf[16];
+    int rxn, rxh;
+    bool rx_over;
+    // Frames written for an EEPROM-mode read that has not started yet.
+    uint32_t eeprom_tx[2];
+    int eeprom_n;
+    // The flash is selected by the SSI itself until this time, when the frames it has been sent
+    // have finished shifting out.
+    bool auto_cs;
+    uint64_t busy_until;
+    // Whether XIP reads get flash data with the present settings, and what a cache miss costs.
+    bool xip_ok;
+    uint32_t miss_cyc;
+} ssi_t;
+
+// State only the RP2040 has, or keeps in its own layout.
+typedef struct {
+    uint32_t resets;
+    uint32_t gpio_ctrl[30];
+    uint32_t qspi_ctrl[6];
+    uint32_t pads_qspi[7];
+    uint32_t clk_div[10];
+    uint32_t wd_tick;
+    uint32_t vreg, bod, chip_reset;
+    uint32_t syscfg[8];
+    uint32_t xip_ctrl;
+    struct {
+        uint32_t dividend, divisor, quotient, remainder;
+        bool dirty;
+    } div[2];
+    uint32_t sio_hi_out, sio_hi_oe;
+    uint32_t busctrl[10];
+    uint32_t dma_ctrl[12];
+    uint32_t psm_frce_on, psm_frce_off, psm_wdsel;
+    uint32_t xip_stream_addr, xip_stream_ctr;
+    uint32_t rtc[12];
+    uint64_t rtc_base_t;
+    int64_t rtc_base_s;
+    uint64_t rtc_hz;
+    ssi_t ssi;
+    // The flash is in continuous read mode, taking each selection as the address of a quad read.
+    bool flash_crm;
+} rp2040_t;
 
 struct chip {
     cpu_t core[2];
@@ -307,6 +360,9 @@ struct chip {
     emu_event_t *events;
     uint64_t irq_lines;
     uint64_t irq_core[2];
+    // The same lines numbered as the cores' NVICs see them, which differs on the RP2040.
+    uint64_t irq_ext;
+    uint64_t irq_core_ext[2];
     bool dreq[DREQ_COUNT];
 
     uint32_t resets;
@@ -413,6 +469,12 @@ struct chip {
 
     struct cyw43 *wifi;
 
+    bool rp2040;
+    uint32_t sram_size;
+    // XIP aliases below this one look in the cache.
+    uint8_t xip_cached_top;
+    rp2040_t rp;
+
     bool trace;
 };
 
@@ -444,7 +506,7 @@ uint32_t xip_access(chip_t *m, uint32_t addr);
 // cache state as it was apart from the counters.
 static inline uint32_t xip_cost(chip_t *m, uint32_t addr)
 {
-    if (likely((addr >> 24) < 0x14 && (m->xip_ctrl & 1))) {
+    if (likely((addr >> 24) < m->xip_cached_top && (m->xip_ctrl & 1))) {
         uint32_t line = (addr & 0x01ffffffu) >> 3, set = line & 1023;
         if (m->xip_mru[set] == ((line >> 10) | 0x80000000u)) {
             m->xip_ctr_acc++;
@@ -557,6 +619,26 @@ int cyw43_bus_in(chip_t *m);
 void rom_build(chip_t *m);
 void rom_hle(cpu_t *c, unsigned n);
 void rom_core_start(cpu_t *c);
+
+// The flash behind QMI chip select 0 or the RP2040's SSI, a byte at a time.
+void flash_dev_select(chip_t *m, bool selected);
+uint8_t flash_dev_xfer(chip_t *m, uint8_t mosi);
+bool flash_dev_quad_enabled(chip_t *m);
+
+bool rp2040_load_rom(chip_t *m, const char *path, char *err, size_t errlen);
+void rp2040_reset(chip_t *m, bool power_on);
+void rp2040_update_clocks(chip_t *m);
+uint32_t rp2040_periph_read(chip_t *m, uint32_t addr, bool peek, bool *ok);
+void rp2040_periph_write(chip_t *m, uint32_t addr, uint32_t v, bool *ok);
+uint32_t rp2040_xip_read(chip_t *m, cpu_t *c, uint32_t addr, int size, bool *ok);
+void rp2040_xip_write(chip_t *m, uint32_t addr, uint32_t v, int size, bool *ok);
+uint8_t *rp2040_xip_translate(chip_t *m, uint32_t addr);
+uint32_t rp2040_dreq_in(uint32_t treq);
+int rp2040_irq_line(unsigned irq, int core);
+uint32_t rp2040_qspi_in(chip_t *m);
+void rp2040_sio_hi_changed(chip_t *m);
+uint32_t rp2040_dreq_out(uint32_t treq);
+void chip_core1_power(chip_t *m, bool off);
 
 void devices_spi_frame(chip_t *m, int bus, uint16_t mosi, int bits, uint16_t *miso);
 void devices_gpio_changed(chip_t *m, unsigned pin, bool level);

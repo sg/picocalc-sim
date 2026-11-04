@@ -66,6 +66,7 @@ add_executable(pcsim
     emu/pl022.c
     emu/pwm.c
     emu/qmi.c
+    emu/rp2040.c
     emu/rom.c
     emu/sio.c
     emu/sys.c

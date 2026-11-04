@@ -7,13 +7,15 @@
 chip_t *g_chip;
 
 const board_info_t board_table[] = {
-    {BOARD_PICO2, "pico2", "pico2", 4u << 20, 0, 30, -1, false},
-    {BOARD_PICO2_W, "pico2_w", "pico2_w", 4u << 20, 0, 30, -1, true},
+    {BOARD_PICO2, "pico2", "pico2", 4u << 20, 0, 30, -1, false, false},
+    {BOARD_PICO2_W, "pico2_w", "pico2_w", 4u << 20, 0, 30, -1, true, false},
     {BOARD_PIMORONI_PICO_PLUS2_W, "pimoroni_pico_plus2_w", "pimoroni_pico_plus2_w_rp2350", 16u << 20, 8u << 20, 48,
-     47, true},
+     47, true, false},
     {BOARD_PIMORONI_PICO_PLUS2, "pimoroni_pico_plus2", "pimoroni_pico_plus2_rp2350", 16u << 20, 8u << 20, 48, 47,
-     false},
-    {0, NULL, NULL, 0, 0, 0, 0, false},
+     false, false},
+    {BOARD_PICO, "pico", "pico", 2u << 20, 0, 30, -1, false, true},
+    {BOARD_PICO_W, "pico_w", "pico_w", 2u << 20, 0, 30, -1, true, true},
+    {0, NULL, NULL, 0, 0, 0, 0, false, false},
 };
 
 const board_info_t *board_find(const char *name)
@@ -25,6 +27,8 @@ const board_info_t *board_find(const char *name)
         return &board_table[2];
     if (!strcmp(name, "pico2w"))
         return &board_table[1];
+    if (!strcmp(name, "picow"))
+        return board_find("pico_w");
     return NULL;
 }
 
@@ -58,6 +62,14 @@ void ev_cancel(chip_t *m, emu_event_t *ev)
     ev->next = NULL;
 }
 
+static uint64_t ext_bit(chip_t *m, unsigned irq, int core)
+{
+    if (!m->rp2040)
+        return 1ull << irq;
+    int line = rp2040_irq_line(irq, core);
+    return line < 0 ? 0 : 1ull << line;
+}
+
 void chip_irq(chip_t *m, unsigned irq, bool level)
 {
     uint64_t bit = 1ull << irq;
@@ -66,6 +78,11 @@ void chip_irq(chip_t *m, unsigned irq, bool level)
         m->irq_lines |= bit;
     else
         m->irq_lines &= ~bit;
+    uint64_t e = ext_bit(m, irq, 0);
+    if (level)
+        m->irq_ext |= e;
+    else
+        m->irq_ext &= ~e;
     if (level && !(old & bit))
         for (int i = 0; i < 2; i++)
             cpu_poke(&m->core[i]);
@@ -79,6 +96,11 @@ void chip_irq_core(chip_t *m, int core, unsigned irq, bool level)
         m->irq_core[core] |= bit;
     else
         m->irq_core[core] &= ~bit;
+    uint64_t e = ext_bit(m, irq, core);
+    if (level)
+        m->irq_core_ext[core] |= e;
+    else
+        m->irq_core_ext[core] &= ~e;
     if (level && !(old & bit))
         cpu_poke(&m->core[core]);
 }
@@ -126,6 +148,8 @@ void chip_dreq(chip_t *m, unsigned dreq, bool level)
 // units; the untranslated aliases bypass them.
 uint8_t *xip_translate(chip_t *m, uint32_t addr)
 {
+    if (m->rp2040)
+        return rp2040_xip_translate(m, addr);
     unsigned alias = (addr >> 24) & 0x1f;
     bool cs1 = alias & 1;
     bool translate = alias < 0x1c;
@@ -154,14 +178,21 @@ void chip_rebuild_pages(chip_t *m)
     memset(m->rpage, 0, sizeof(m->rpage));
     memset(m->wpage, 0, sizeof(m->wpage));
     m->rpage[0] = m->rom;
-    for (uint32_t p = 0; p < 9; p++) {
+    // The RP2040's last SRAM page holds only the two 4 KB banks; the rest of it is mapped too,
+    // which no firmware reaches.
+    uint32_t sram_pages = (m->sram_size + 0xffff) >> 16;
+    for (uint32_t p = 0; p < sram_pages; p++) {
         m->rpage[0x2000 + p] = m->sram + p * 0x10000;
         m->wpage[0x2000 + p] = m->sram + p * 0x10000;
     }
     static const uint32_t aliases[] = {0x10, 0x11, 0x14, 0x15, 0x1c, 0x1d};
-    for (unsigned i = 0; i < sizeof(aliases) / sizeof(aliases[0]); i++) {
+    static const uint32_t aliases_rp2040[] = {0x10, 0x11, 0x12, 0x13};
+    const uint32_t *al = m->rp2040 ? aliases_rp2040 : aliases;
+    unsigned nal = m->rp2040 ? 4 : sizeof(aliases) / sizeof(aliases[0]);
+    for (unsigned i = 0; i < nal; i++) {
+        uint32_t alias = al[i];
         for (uint32_t p = 0; p < 0x100; p++) {
-            uint32_t addr = (aliases[i] << 24) | (p << 16);
+            uint32_t addr = (alias << 24) | (p << 16);
             uint8_t *ptr = xip_translate(m, addr);
             if (!ptr)
                 continue;
@@ -169,7 +200,7 @@ void chip_rebuild_pages(chip_t *m)
             if (!xip_translate(m, addr + 0xffff) || xip_translate(m, addr + 0xffff) != ptr + 0xffff)
                 continue;
             m->rpage[(addr >> 16)] = ptr;
-            if (aliases[i] & 1)
+            if ((alias & 1) && !m->rp2040)
                 m->wpage[(addr >> 16)] = ptr;
         }
     }
@@ -183,14 +214,19 @@ void chip_rebuild_pages(chip_t *m)
 uint32_t xip_access(chip_t *m, uint32_t addr)
 {
     unsigned alias = (addr >> 24) & 0x1f;
-    unsigned cs = alias & 1;
-    uint32_t clkdiv = m->qmi.m[cs][0] & 0xff;
-    if (!clkdiv)
-        clkdiv = 256;
-    uint32_t miss = 8 + 24 * clkdiv;
-    if (alias >= 0x14 || !(m->xip_ctrl & 1))
+    uint32_t miss;
+    if (m->rp2040) {
+        miss = m->rp.ssi.miss_cyc;
+    } else {
+        uint32_t clkdiv = m->qmi.m[alias & 1][0] & 0xff;
+        if (!clkdiv)
+            clkdiv = 256;
+        miss = 8 + 24 * clkdiv;
+    }
+    if (alias >= m->xip_cached_top || !(m->xip_ctrl & 1))
         return miss;
-    uint32_t line = (addr & 0x01ffffffu) >> 3;
+    // The RP2040's aliases all reach the same flash; the RP2350's bit 24 picks the chip select.
+    uint32_t line = (addr & (m->rp2040 ? 0x00ffffffu : 0x01ffffffu)) >> 3;
     uint32_t set = line & 1023;
     uint32_t tag = (line >> 10) | 0x80000000u;
     m->xip_ctr_acc++;
@@ -205,6 +241,8 @@ uint32_t xip_access(chip_t *m, uint32_t addr)
         m->xip_ctr_hit++;
         return 0;
     }
+    if (m->rp2040 && alias == 0x11)
+        return miss;
     int way = m->xip_lru[set];
     m->xip_tag[set][way] = tag;
     m->xip_lru[set] = (uint8_t)!way;
@@ -334,6 +372,8 @@ static void ahb_reg_write(chip_t *m, uint32_t addr, uint32_t v, bool *ok)
 
 static uint32_t periph_read(chip_t *m, uint32_t addr, bool *ok)
 {
+    if (m->rp2040)
+        return rp2040_periph_read(m, addr & ~0x3003u, false, ok);
     if (addr >= 0x40130000u && addr < 0x40140000u)
         return otp_data_read(m, addr);
     uint32_t a = addr & ~0x3003u;
@@ -344,14 +384,16 @@ static uint32_t periph_read(chip_t *m, uint32_t addr, bool *ok)
 
 static void periph_write(chip_t *m, uint32_t addr, uint32_t v, bool *ok)
 {
-    if (addr >= 0x40130000u && addr < 0x40140000u)
+    if (!m->rp2040 && addr >= 0x40130000u && addr < 0x40140000u)
         return;
     uint32_t a = addr & ~0x3003u;
     unsigned alias = (addr >> 12) & 3;
     bool apb = (addr >> 28) == 4;
     if (alias) {
         bool pok = true;
-        uint32_t old = apb ? apb_reg_read(m, a, true) : ahb_reg_read(m, a, true, &pok);
+        uint32_t old = m->rp2040 ? rp2040_periph_read(m, a, true, &pok)
+                       : apb     ? apb_reg_read(m, a, true)
+                                 : ahb_reg_read(m, a, true, &pok);
         if (alias == 1)
             v = old ^ v;
         else if (alias == 2)
@@ -359,7 +401,9 @@ static void periph_write(chip_t *m, uint32_t addr, uint32_t v, bool *ok)
         else
             v = old & ~v;
     }
-    if (apb)
+    if (m->rp2040)
+        rp2040_periph_write(m, a, v, ok);
+    else if (apb)
         apb_reg_write(m, a, v);
     else
         ahb_reg_write(m, a, v, ok);
@@ -389,6 +433,16 @@ static uint32_t otp_data_read(chip_t *m, uint32_t addr)
     return (addr & 2) ? v : (v | (v2 << 16));
 }
 
+// SRAM banks 0-3 one after another at 0x21000000 on the RP2040, rather than striped word by word.
+static uint32_t *unstriped(chip_t *m, uint32_t addr)
+{
+    uint32_t o = addr & 0xffffff;
+    if (!m->rp2040 || (addr >> 24) != 0x21 || o >= 0x40000)
+        return NULL;
+    uint32_t word = (o & 0xffff) >> 2, bank = o >> 16;
+    return (uint32_t *)(m->sram + ((word * 4 + bank) << 2));
+}
+
 static uint32_t mem_read(chip_t *m, cpu_t *c, uint32_t addr, int size, bool *ok)
 {
     switch (addr >> 28) {
@@ -397,6 +451,8 @@ static uint32_t mem_read(chip_t *m, cpu_t *c, uint32_t addr, int size, bool *ok)
             return size == 4 ? rd32le(m->rom + addr) : size == 2 ? rd16le(m->rom + addr) : m->rom[addr];
         break;
     case 0x1: {
+        if (m->rp2040)
+            return rp2040_xip_read(m, c, addr, size, ok);
         if (addr >= XIP_SRAM_BASE && addr < XIP_NOCACHE_BASE) {
             uint32_t o = addr & 0x3fff;
             return size == 4 ? rd32le(m->xip_sram + o) : size == 2 ? rd16le(m->xip_sram + o) : m->xip_sram[o];
@@ -413,14 +469,18 @@ static uint32_t mem_read(chip_t *m, cpu_t *c, uint32_t addr, int size, bool *ok)
             return size == 4 ? 0xffffffffu : size == 2 ? 0xffffu : 0xffu;
         break;
     }
-    case 0x2:
-        if (addr - SRAM_BASE < SRAM_SIZE) {
+    case 0x2: {
+        if (addr - SRAM_BASE < m->sram_size) {
             uint32_t o = addr - SRAM_BASE;
             return size == 4 ? rd32le(m->sram + o) : size == 2 ? rd16le(m->sram + o) : m->sram[o];
         }
+        uint32_t *w = unstriped(m, addr);
+        if (w)
+            return extract(*w, addr, size);
         break;
+    }
     case 0x4:
-        if ((addr & 0xffffc000u) == 0x400e0000u && (addr & 0xfff) < 0x400) {
+        if (!m->rp2040 && (addr & 0xffffc000u) == 0x400e0000u && (addr & 0xfff) < 0x400) {
             uint32_t o = addr & 0x3ff;
             return size == 4 ? rd32le(m->bootram + o) : size == 2 ? rd16le(m->bootram + o) : m->bootram[o];
         }
@@ -459,6 +519,10 @@ static void mem_write(chip_t *m, cpu_t *c, uint32_t addr, uint32_t v, int size, 
     case 0x0:
         return;
     case 0x1: {
+        if (m->rp2040) {
+            rp2040_xip_write(m, addr, v, size, ok);
+            return;
+        }
         if (addr >= XIP_SRAM_BASE && addr < XIP_NOCACHE_BASE) {
             uint32_t o = addr & 0x3fff;
             if (size == 4)
@@ -489,8 +553,8 @@ static void mem_write(chip_t *m, cpu_t *c, uint32_t addr, uint32_t v, int size, 
             return;
         break;
     }
-    case 0x2:
-        if (addr - SRAM_BASE < SRAM_SIZE) {
+    case 0x2: {
+        if (addr - SRAM_BASE < m->sram_size) {
             uint32_t o = addr - SRAM_BASE;
             if (size == 4)
                 wr32le(m->sram + o, v);
@@ -500,9 +564,21 @@ static void mem_write(chip_t *m, cpu_t *c, uint32_t addr, uint32_t v, int size, 
                 m->sram[o] = (uint8_t)v;
             return;
         }
+        uint32_t *w = unstriped(m, addr);
+        if (w) {
+            uint8_t *b = (uint8_t *)w + (addr & 3);
+            if (size == 4)
+                wr32le(b, v);
+            else if (size == 2)
+                wr16le(b, (uint16_t)v);
+            else
+                *b = (uint8_t)v;
+            return;
+        }
         break;
+    }
     case 0x4:
-        if ((addr & 0xffffc000u) == 0x400e0000u && (addr & 0xfff) < 0x400) {
+        if (!m->rp2040 && (addr & 0xffffc000u) == 0x400e0000u && (addr & 0xfff) < 0x400) {
             // Boot RAM sits on APB and so has the atomic XOR, set and clear aliases.
             uint32_t o = addr & 0x3ff;
             uint32_t old = size == 4 ? rd32le(m->bootram + o) : size == 2 ? rd16le(m->bootram + o) : m->bootram[o];
@@ -659,14 +735,35 @@ void chip_init(chip_t *m, const board_info_t *b)
         m->psram_size = b->psram_size;
         m->psram = calloc(1, m->psram_size + 0x10000);
     }
+    m->rp2040 = b->rp2040;
+    m->sram_size = b->rp2040 ? 0x42000u : SRAM_SIZE;
+    m->xip_cached_top = b->rp2040 ? 0x12 : 0x14;
     for (int i = 0; i < 2; i++) {
         m->core[i].m = m;
         m->core[i].id = i;
-        m->core[i].v8 = true;
+        m->core[i].v8 = !b->rp2040;
     }
-    rom_build(m);
-    memcpy(m->rom + ROM_SIZE, m->rom, ROM_SIZE);
+    // The RP2040 runs its own ROM, which the caller loads.
+    if (!b->rp2040) {
+        rom_build(m);
+        memcpy(m->rom + ROM_SIZE, m->rom, ROM_SIZE);
+    }
     m->now = 0;
+}
+
+// The lines as the NVICs number them, from the ones the models raise.
+static void sync_irq_ext(chip_t *m)
+{
+    m->irq_ext = 0;
+    for (int core = 0; core < 2; core++)
+        m->irq_core_ext[core] = 0;
+    for (unsigned irq = 0; irq < NUM_IRQ; irq++) {
+        if ((m->irq_lines >> irq) & 1)
+            m->irq_ext |= ext_bit(m, irq, 0);
+        for (int core = 0; core < 2; core++)
+            if ((m->irq_core[core] >> irq) & 1)
+                m->irq_core_ext[core] |= ext_bit(m, irq, core);
+    }
 }
 
 static void fill_noise(uint8_t *p, size_t n, uint32_t seed)
@@ -734,13 +831,17 @@ void chip_reset(chip_t *m, bool watchdog)
     m->adc_cs = m->adc_result = m->adc_fcs = m->adc_div = m->adc_inte = m->adc_intf = 0;
     memset(m->usb_regs, 0, sizeof(m->usb_regs));
     memset(m->dcp, 0, sizeof(m->dcp));
+    if (m->rp2040)
+        rp2040_reset(m, !watchdog);
     chip_update_clocks(m);
     chip_rebuild_pages(m);
+    sync_irq_ext(m);
     for (int i = 0; i < 2; i++) {
         cpu_t *c = &m->core[i];
         c->t = m->now;
         cpu_reset(c);
-        rom_core_start(c);
+        if (!m->rp2040)
+            rom_core_start(c);
     }
     m->boot_count++;
 }

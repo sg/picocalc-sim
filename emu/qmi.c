@@ -194,6 +194,33 @@ static uint8_t psram_byte(chip_t *m, uint8_t mosi)
     }
 }
 
+void flash_dev_select(chip_t *m, bool selected)
+{
+    if (selected && !txn_open[0])
+        dev_begin(0);
+    else if (!selected && txn_open[0])
+        dev_end(m, 0);
+}
+
+uint8_t flash_dev_xfer(chip_t *m, uint8_t mosi)
+{
+    if (!txn_open[0])
+        return 0xff;
+    // In continuous read mode the flash takes what follows chip select as address and mode bits
+    // on all four lines, which serial bytes leave wrong, so it drops out of that mode instead.
+    if (m->rp.flash_crm && devs[0].phase == PH_CMD) {
+        m->rp.flash_crm = false;
+        devs[0].phase = PH_IGNORE;
+        return 0xff;
+    }
+    return flash_byte(m, mosi);
+}
+
+bool flash_dev_quad_enabled(chip_t *m)
+{
+    return (m->qmi.sr2 & 2) != 0;
+}
+
 void qmi_reset(chip_t *m)
 {
     qmi_t *q = &m->qmi;

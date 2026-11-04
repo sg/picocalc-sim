@@ -403,7 +403,7 @@ static unsigned best_pending(cpu_t *c, int *prio)
 {
     uint32_t act[2];
     active_irq_mask(c, act);
-    uint64_t lines = (c->m->irq_lines | c->m->irq_core[c->id]);
+    uint64_t lines = (c->m->irq_ext | c->m->irq_core_ext[c->id]);
     c->nvic_pend[0] |= (uint32_t)lines & ~act[0];
     c->nvic_pend[1] |= (uint32_t)(lines >> 32) & ~act[1];
     if (c->pend_nmi) {
@@ -655,7 +655,7 @@ static void sleep_check(cpu_t *c)
         } else if (c->scr & 0x10) {
             uint32_t act[2];
             active_irq_mask(c, act);
-            uint64_t lines = (c->m->irq_lines | c->m->irq_core[c->id]);
+            uint64_t lines = (c->m->irq_ext | c->m->irq_core_ext[c->id]);
             if (c->nvic_pend[0] | c->nvic_pend[1] | ((uint32_t)lines & ~act[0]) | ((uint32_t)(lines >> 32) & ~act[1]))
                 c->state = CPU_RUN;
         }
@@ -1340,7 +1340,7 @@ static void exec16(cpu_t *c, uint32_t pc, uint16_t op)
     case 0x1b: {
         unsigned cond = (op >> 8) & 0xf;
         if (cond == 0xe) {
-            if (pc < ROM_SIZE) {
+            if (pc < ROM_SIZE && !c->m->rp2040) {
                 rom_hle(c, op & 0xff);
             } else {
                 undefined(c, pc, op);
@@ -1422,7 +1422,7 @@ static void step(cpu_t *c)
 void cpu_run(cpu_t *c, uint64_t until)
 {
     chip_t *m = c->m;
-    bool use_blocks = c->v8 && blocks_on();
+    bool use_blocks = blocks_on();
     bool use_jit = use_blocks && jit_available();
     // Set when native code stopped short of the limit for block_run to reach it exactly. A just
     // taken exception leaves check_exc set, which block_run answers after one instruction.

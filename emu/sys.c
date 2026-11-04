@@ -52,6 +52,12 @@ void chip_update_clocks(chip_t *m)
     m->rosc_hz = ((m->rosc_regs[0] >> 12) & 0xfff) == 0xd1e ? 0 : ROSC_HZ;
     m->pll_sys_hz = pll_hz(m, &m->pll_sys);
     m->pll_usb_hz = pll_hz(m, &m->pll_usb);
+    if (m->rp2040) {
+        rp2040_update_clocks(m);
+        timer_retime(m);
+        watchdog_retime(m);
+        return;
+    }
 
     uint32_t ref_ctrl = m->clk[CLK_REF].ctrl;
     uint64_t ref;
@@ -124,7 +130,7 @@ static uint64_t fc0_source_hz(chip_t *m, uint32_t src)
     }
 }
 
-static void core1_power(chip_t *m, bool off)
+void chip_core1_power(chip_t *m, bool off)
 {
     cpu_t *c = &m->core[1];
     if (off) {
@@ -133,7 +139,8 @@ static void core1_power(chip_t *m, bool off)
     } else if (c->state == CPU_OFF) {
         c->t = m->now;
         cpu_reset(c);
-        rom_core_start(c);
+        if (!m->rp2040)
+            rom_core_start(c);
     }
 }
 
@@ -422,7 +429,7 @@ void sysctl_write(chip_t *m, uint32_t base, uint32_t off, uint32_t v)
         case 0x0: m->psm_frce_on = v & 0x1ffffff; break;
         case 0x4:
             m->psm_frce_off = v & 0x1ffffff;
-            core1_power(m, v & (1u << 24));
+            chip_core1_power(m, v & (1u << 24));
             break;
         case 0x8: m->psm_wdsel = v & 0x1ffffff; break;
         default: break;

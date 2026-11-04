@@ -842,6 +842,17 @@ static unsigned block_add_it(block_t *b, unsigned n, const uint8_t *page, uint32
     return n;
 }
 
+// Whether the ARMv6-M subset has this instruction as the blocks decode it: of the 32-bit ones
+// only BL, MSR, MRS, the barriers and the hint space, and neither CBZ/CBNZ nor IT. Others are
+// left to stepping, which treats them as the M0+ does.
+static bool armv6m_block_op(uint16_t hw1, uint16_t hw2, bool wide)
+{
+    if (wide)
+        return ((hw1 & 0xf800) == 0xf000 && (hw2 & 0xd000) == 0xd000) || (hw1 & 0xffe0) == 0xf3e0 ||
+               (hw1 & 0xfff0) == 0xf380 || hw1 == 0xf3bf || hw1 == 0xf3af;
+    return (hw1 & 0xf500) != 0xb100 && !((hw1 & 0xff00) == 0xbf00 && (hw1 & 0xf));
+}
+
 static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
 {
     bool xip = (pc >> 28) == 1;
@@ -852,6 +863,8 @@ static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
         bool wide = (hw1 >> 11) >= 0x1d;
         // Both halves of an instruction must come from this page.
         if (wide && ((a + 2) & 0xffff) == 0)
+            break;
+        if (m->rp2040 && !armv6m_block_op(hw1, wide ? rd16le(page + ((a + 2) & 0xffff)) : 0, wide))
             break;
         dop_t *d = &b->ops[n++];
         d->pc = a;

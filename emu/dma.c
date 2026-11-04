@@ -200,7 +200,7 @@ static void sync_pacers(chip_t *m)
             pio_sync(m, &m->pio[i]);
 }
 
-uint32_t dma_read(chip_t *m, uint32_t off, bool peek)
+static uint32_t regs_read(chip_t *m, uint32_t off, bool peek)
 {
     dma_t *d = &m->dma;
     if (!peek)
@@ -259,7 +259,7 @@ uint32_t dma_read(chip_t *m, uint32_t off, bool peek)
     }
 }
 
-void dma_write(chip_t *m, uint32_t off, uint32_t v)
+static void regs_write(chip_t *m, uint32_t off, uint32_t v)
 {
     dma_t *d = &m->dma;
     if (off < 0x400) {
@@ -334,4 +334,73 @@ void dma_write(chip_t *m, uint32_t off, uint32_t v)
         break;
     }
     update_irq(m);
+}
+
+// The RP2040's DMA: 12 channels, CTRL fields packed lower (no reversed increments), the DREQs
+// numbered its own way, a plain 32-bit TRANS_COUNT, and the global registers 0x20 lower.
+static bool is_ctrl(uint32_t r)
+{
+    return r == 0x0c || r == 0x10 || r == 0x20 || r == 0x30;
+}
+
+static bool is_count(uint32_t r)
+{
+    return r == 0x08 || r == 0x1c || r == 0x24 || r == 0x38;
+}
+
+static uint32_t ctrl_in(uint32_t v)
+{
+    return (v & 0xf) | (((v >> 4) & 1) << 4) | (((v >> 5) & 1) << 6) | (((v >> 6) & 0x1ff) << 8) |
+           (rp2040_dreq_in((v >> 15) & 0x3f) << 17) | (((v >> 21) & 7) << 23) | (v & 0x60000000u);
+}
+
+static uint32_t global_off(uint32_t off)
+{
+    return off >= 0x420 && off < 0x448 ? off + 0x20 : off;
+}
+
+uint32_t dma_read(chip_t *m, uint32_t off, bool peek)
+{
+    if (!m->rp2040)
+        return regs_read(m, off, peek);
+    if (off < 0x400) {
+        unsigned ch = off >> 6;
+        if (ch >= 12)
+            return 0;
+        uint32_t v = regs_read(m, off, peek);
+        if (!is_ctrl(off & 0x3f))
+            return v;
+        uint32_t err = v & 0x60000000u;
+        return (m->rp.dma_ctrl[ch] & 0x00ffffffu) | ((v & CH_BUSY) ? 1u << 24 : 0) | err | (err ? 1u << 31 : 0);
+    }
+    if (off == 0x448)
+        return 12;
+    if (off >= 0x800 && ((off - 0x800) >> 6) >= 12)
+        return 0;
+    return regs_read(m, global_off(off), peek);
+}
+
+void dma_write(chip_t *m, uint32_t off, uint32_t v)
+{
+    if (!m->rp2040) {
+        regs_write(m, off, v);
+        return;
+    }
+    if (off < 0x400) {
+        unsigned ch = off >> 6, r = off & 0x3f;
+        if (ch >= 12)
+            return;
+        if (is_ctrl(r)) {
+            m->rp.dma_ctrl[ch] = v & 0x00ffffffu;
+            v = ctrl_in(v);
+        } else if (is_count(r) && (v >> 28)) {
+            v = 0x0fffffffu;
+        }
+        regs_write(m, off, v);
+        return;
+    }
+    off = global_off(off);
+    if (off == 0x450 || off == 0x464)
+        v &= 0xfff;
+    regs_write(m, off, v);
 }

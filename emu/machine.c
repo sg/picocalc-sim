@@ -159,8 +159,11 @@ static bool program_uf2_locked(const char *path, char *err, size_t errlen)
     if (!uf2_load(path, &f, err, errlen))
         return false;
     bool ok = uf2_program(&chip, &f, err, errlen);
+    bool ram = f.ram;
     uf2_free(&f);
-    if (ok) {
+    if (ok && ram) {
+        pcsim_log("loaded %s into %s RAM", path, chip.board->name);
+    } else if (ok) {
         flash_save();
         pcsim_log("wrote %s to %s flash", path, chip.board->name);
     }
@@ -377,6 +380,30 @@ static void *machine_main(void *arg)
     return NULL;
 }
 
+// The RP2040's boot ROM can't be shipped with the emulator, so it comes from a file: --rom, or
+// rp2040-rom.elf (or .bin) in the data directory.
+static bool load_rp2040_rom(void)
+{
+    char path[4096], err[512];
+    const char *p = pcsim_opts.rom_path;
+    if (!p) {
+        pcsim_data_path(path, sizeof(path), "rp2040-rom.elf", false);
+        FILE *fp = fopen(path, "rb");
+        if (!fp)
+            pcsim_data_path(path, sizeof(path), "rp2040-rom.bin", false);
+        else
+            fclose(fp);
+        p = path;
+    }
+    if (rp2040_load_rom(&chip, p, err, sizeof(err)))
+        return true;
+    pcsim_log("%s", err);
+    pcsim_log("the RP2040 boards run the chip's own boot ROM: download b2.elf from "
+              "https://github.com/raspberrypi/pico-bootrom-rp2040/releases and pass it with --rom, or save it as %s",
+              pcsim_opts.rom_path ? "rp2040-rom.elf in the data directory" : p);
+    return false;
+}
+
 static const board_info_t *pick_board(const uf2_file_t *f)
 {
     if (pcsim_opts.board) {
@@ -386,13 +413,14 @@ static const board_info_t *pick_board(const uf2_file_t *f)
         return b;
     }
     const char *hint = f ? uf2_board_hint(f) : NULL;
+    bool rp2040 = f && f->family == UF2_FAMILY_RP2040;
     if (hint) {
         const board_info_t *b = board_find(hint);
-        if (b)
+        if (b && b->rp2040 == rp2040)
             return b;
-        pcsim_log("image was built for board %s; running it on a pico2", hint);
+        pcsim_log("image was built for board %s; running it on a %s", hint, rp2040 ? "pico" : "pico2");
     }
-    return board_find("pico2");
+    return board_find(rp2040 ? "pico" : "pico2");
 }
 
 bool pcsim_machine_start(void)
@@ -432,6 +460,8 @@ bool pcsim_machine_start(void)
         pcsim_opts.flash_path = NULL;
     }
     flash_load();
+    if (b->rp2040 && !load_rp2040_rom())
+        return false;
     if (!picocalc_board_init())
         return false;
     if (b->wifi && !pcsim_opts.no_wifi) {
@@ -439,7 +469,8 @@ bool pcsim_machine_start(void)
             return false;
         cyw43_init(&chip);
     }
-    if (have_uf2) {
+    bool ram_image = have_uf2 && f.ram;
+    if (have_uf2 && !ram_image) {
         if (!uf2_program(&chip, &f, err, sizeof(err))) {
             pcsim_log("%s", err);
             uf2_free(&f);
@@ -449,7 +480,8 @@ bool pcsim_machine_start(void)
         pcsim_log("wrote %s to %s flash", pcsim_opts.uf2_path, b->name);
         flash_save();
     }
-    pcsim_log("%s: RP2350, %u MB flash%s%s", b->name, b->flash_size >> 20, b->psram_size ? ", 8 MB PSRAM" : "",
+    pcsim_log("%s: %s, %u MB flash%s%s", b->name, b->rp2040 ? "RP2040" : "RP2350", b->flash_size >> 20,
+              b->psram_size ? ", 8 MB PSRAM" : "",
               !b->wifi ? "" : pcsim_opts.no_wifi ? ", CYW43439 left out (--no-wifi)" : ", CYW43439 WiFi");
     if (pcsim_opts.flash_path)
         pcsim_log("flash image: %s", pcsim_opts.flash_path);
@@ -459,6 +491,18 @@ bool pcsim_machine_start(void)
     chip.boot_type = boot_type;
     chip.boot_param[0] = p0;
     chip.boot_param[1] = p1;
+    // A RAM image goes in once power-on has given SRAM its random contents, as BOOTSEL's drive
+    // would put it there, and the board then resets without losing it.
+    if (ram_image) {
+        bool ok = uf2_program(&chip, &f, err, sizeof(err));
+        uf2_free(&f);
+        if (!ok) {
+            pcsim_log("%s", err);
+            return false;
+        }
+        pcsim_log("loaded %s into %s RAM", pcsim_opts.uf2_path, b->name);
+        chip_reset(&chip, true);
+    }
     if (pthread_create(&thread, NULL, machine_main, NULL) != 0) {
         pcsim_log("cannot start the emulation thread");
         return false;

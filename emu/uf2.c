@@ -183,13 +183,36 @@ static bool target_partition(chip_t *m, uint32_t family, uint32_t *start, uint32
 
 bool uf2_program(chip_t *m, const uf2_file_t *f, char *err, size_t errlen)
 {
-    if (f->family == UF2_FAMILY_RP2040) {
+    if (f->family == UF2_FAMILY_RP2040 && !m->rp2040) {
         snprintf(err, errlen, "this UF2 is for the RP2040 (Pico/Pico W), not the RP2350 on a %s", m->board->name);
+        return false;
+    }
+    if (m->rp2040 && f->family != UF2_FAMILY_RP2040 && f->family != UF2_FAMILY_ABSOLUTE &&
+        f->family != UF2_FAMILY_DATA) {
+        snprintf(err, errlen, "this UF2 is not for the RP2040 on a %s", m->board->name);
         return false;
     }
     if (f->family == UF2_FAMILY_RP2350_RISCV) {
         snprintf(err, errlen, "RISC-V images are not supported yet");
         return false;
+    }
+    if (f->ram && m->rp2040) {
+        // As the RP2040's ROM does once BOOTSEL's drive has a RAM image: it reboots through the
+        // watchdog with the scratch registers telling itself to jump to the lowest address.
+        uint32_t lo = UINT32_MAX;
+        for (size_t i = 0; i < f->count; i++) {
+            const uf2_block_t *b = &f->blocks[i];
+            for (uint32_t k = 0; k < b->len; k++)
+                sys_write(m, b->addr + k, b->data[k], 1, NULL);
+            if (b->addr < lo)
+                lo = b->addr;
+        }
+        uint32_t pc = lo | 1;
+        m->wd_scratch[4] = 0xb007c0d3u;
+        m->wd_scratch[5] = pc ^ (uint32_t)-(int32_t)0xb007c0d3u;
+        m->wd_scratch[6] = 0x20042000u;
+        m->wd_scratch[7] = pc;
+        return true;
     }
     if (f->ram) {
         uint32_t lo = UINT32_MAX, hi = 0;
@@ -210,7 +233,8 @@ bool uf2_program(chip_t *m, const uf2_file_t *f, char *err, size_t errlen)
         return true;
     }
     uint32_t pstart = 0, psize = m->flash_size;
-    bool in_partition = target_partition(m, f->family, &pstart, &psize);
+    // The RP2040 has no partition table; images land where their addresses say.
+    bool in_partition = !m->rp2040 && target_partition(m, f->family, &pstart, &psize);
     static uint8_t erased[4096];
     memset(erased, 0, sizeof(erased));
     for (size_t i = 0; i < f->count; i++) {
