@@ -1,0 +1,891 @@
+#include <algorithm>
+#include <cfloat>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <deque>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "imgui.h"
+#include "imgui_impl_sdl3.h"
+#include "imgui_impl_sdlrenderer3.h"
+#include "misc/cpp/imgui_stdlib.h"
+
+#include "pcsim/devices.h"
+#include "pcsim/frontend.h"
+#include "pcsim/sim.h"
+#include "ui.h"
+
+namespace {
+
+SDL_Window *window;
+SDL_Renderer *renderer;
+float content_scale = 1.0f;
+float menu_height;
+Uint32 dialog_event;
+
+bool show_settings, show_log, show_keys, show_about;
+bool ask_erase;
+
+struct access_point {
+    std::string ssid, password;
+    bool operator==(const access_point &o) const { return ssid == o.ssid && password == o.password; }
+};
+
+enum { FLASH_DEFAULT, FLASH_MEMORY, FLASH_FILE };
+
+// The options the machine reads only as it starts.
+struct start_options {
+    std::string board, rom, flash_file;
+    int flash = FLASH_DEFAULT;
+    bool fast = false, trace = false, no_wifi = false;
+    std::vector<access_point> aps;
+    std::vector<std::string> forwards;
+
+    // Rows left empty are not passed on, so they change nothing.
+    bool operator==(const start_options &o) const
+    {
+        return board == o.board && rom == o.rom && flash == o.flash && flash_file == o.flash_file && fast == o.fast &&
+               trace == o.trace && no_wifi == o.no_wifi && named(aps) == named(o.aps) &&
+               filled(forwards) == filled(o.forwards);
+    }
+
+    static std::vector<access_point> named(std::vector<access_point> v)
+    {
+        v.erase(std::remove_if(v.begin(), v.end(), [](const access_point &a) { return a.ssid.empty(); }), v.end());
+        return v;
+    }
+
+    static std::vector<std::string> filled(std::vector<std::string> v)
+    {
+        v.erase(std::remove(v.begin(), v.end(), std::string()), v.end());
+        return v;
+    }
+};
+
+start_options pending, applied;
+
+// What pcsim_opts points at; kept apart from pending, so editing a setting never moves a string
+// that the machine may still read.
+struct {
+    std::string board, rom, flash, card, shots, wav;
+    std::string aps[16], forwards[16];
+} store;
+
+std::deque<std::pair<unsigned, std::string>> log_lines;
+unsigned log_seen, start_mark;
+bool log_scroll;
+
+enum pick_kind { PICK_UF2, PICK_CARD, PICK_WAV, PICK_ROM, PICK_FLASH, PICK_SHOTS };
+int prompt_kind = -1;
+bool ask_path;
+std::string prompt_path;
+
+start_options from_opts()
+{
+    const pcsim_options_t &o = pcsim_opts;
+    start_options s;
+    if (o.board)
+        s.board = o.board;
+    if (o.rom_path)
+        s.rom = o.rom_path;
+    if (o.flash_path && !strcmp(o.flash_path, "none"))
+        s.flash = FLASH_MEMORY;
+    else if (o.flash_path) {
+        s.flash = FLASH_FILE;
+        s.flash_file = o.flash_path;
+    }
+    s.fast = o.fast;
+    s.trace = o.trace;
+    s.no_wifi = o.no_wifi;
+    for (int i = 0; i < o.wifi_ap_count; i++) {
+        const char *ap = o.wifi_aps[i], *colon = strchr(ap, ':');
+        if (colon)
+            s.aps.push_back({std::string(ap, (size_t)(colon - ap)), colon + 1});
+        else
+            s.aps.push_back({ap, ""});
+    }
+    for (int i = 0; i < o.forward_count; i++)
+        s.forwards.push_back(o.forwards[i]);
+    return s;
+}
+
+void to_opts(const start_options &s)
+{
+    pcsim_options_t &o = pcsim_opts;
+    store.board = s.board;
+    o.board = store.board.empty() ? nullptr : store.board.c_str();
+    store.rom = s.rom;
+    o.rom_path = store.rom.empty() ? nullptr : store.rom.c_str();
+    store.flash = s.flash == FLASH_MEMORY ? "none" : s.flash_file;
+    o.flash_path = s.flash == FLASH_DEFAULT || store.flash.empty() ? nullptr : store.flash.c_str();
+    o.fast = s.fast;
+    o.trace = s.trace;
+    o.no_wifi = s.no_wifi;
+    o.wifi_ap_count = 0;
+    for (const access_point &ap : s.aps) {
+        if (ap.ssid.empty() || o.wifi_ap_count == 16)
+            continue;
+        std::string &spec = store.aps[o.wifi_ap_count];
+        spec = ap.password.empty() ? ap.ssid : ap.ssid + ":" + ap.password;
+        o.wifi_aps[o.wifi_ap_count++] = spec.c_str();
+    }
+    o.forward_count = 0;
+    for (const std::string &f : s.forwards) {
+        if (f.empty() || o.forward_count == 16)
+            continue;
+        store.forwards[o.forward_count] = f;
+        o.forwards[o.forward_count] = store.forwards[o.forward_count].c_str();
+        o.forward_count++;
+    }
+}
+
+void restart(bool erase)
+{
+    if (pcsim_machine_starts() > 0) {
+        // The launch's one-off steps have happened, so from now on a restart is the power switch:
+        // the flash keeps what it holds and a recording is not begun again over the old one.
+        pcsim_opts.uf2_path = nullptr;
+        pcsim_opts.wav_path = nullptr;
+    }
+    pcsim_opts.erase_flash = erase;
+    applied = pending;
+    to_opts(applied);
+    pcsim_request_restart();
+}
+
+const char *base_name(const char *path)
+{
+    const char *slash = strrchr(path, '/'), *back = strrchr(path, '\\');
+    if (back > slash)
+        slash = back;
+    return slash ? slash + 1 : path;
+}
+
+void set_battery()
+{
+    if (pcsim_machine_running())
+        southbridge_set_battery(pcsim_picocalc.sb, (uint8_t)pcsim_opts.battery, pcsim_opts.charging);
+}
+
+bool card_in()
+{
+    return pcsim_machine_running() ? sdcard_present(pcsim_picocalc.sd) : pcsim_opts.card_path != nullptr;
+}
+
+void insert_card(const char *path)
+{
+    // A card swapped under the firmware's cached FAT would be written with the old card's tables.
+    if (card_in()) {
+        pcsim_log("eject the SD card before inserting another");
+        return;
+    }
+    if (pcsim_machine_running() && !sdcard_insert(pcsim_picocalc.sd, path))
+        return;
+    store.card = path;
+    pcsim_opts.card_path = store.card.c_str();
+}
+
+void eject_card()
+{
+    if (pcsim_machine_running())
+        sdcard_eject(pcsim_picocalc.sd);
+    pcsim_opts.card_path = nullptr;
+    pcsim_log("SD card ejected");
+}
+
+void flash_uf2(const char *path)
+{
+    if (!pcsim_machine_running()) {
+        pcsim_log("the machine is not running, so %s cannot be flashed", path);
+        return;
+    }
+    char err[256];
+    if (pcsim_flash_uf2(path, err, sizeof(err)))
+        pcsim_log("flashing %s", path);
+    else
+        pcsim_log("%s", err);
+}
+
+void record(const char *path)
+{
+    if (pcsim_machine_running() && picocalc_audio_record(pcsim_picocalc.audio, path)) {
+        store.wav = path;
+        pcsim_log("recording the sound to %s", path);
+    }
+}
+
+void stop_recording()
+{
+    picocalc_audio_close(pcsim_picocalc.audio);
+    pcsim_log("saved %s", store.wav.c_str());
+}
+
+void set_shots(const char *dir)
+{
+    store.shots = dir;
+    pcsim_opts.screenshot_dir = store.shots.c_str();
+}
+
+void chose(int kind, const char *path)
+{
+    switch (kind) {
+    case PICK_UF2: flash_uf2(path); break;
+    case PICK_CARD: insert_card(path); break;
+    case PICK_WAV: record(path); break;
+    case PICK_ROM: pending.rom = path; break;
+    case PICK_FLASH:
+        pending.flash = FLASH_FILE;
+        pending.flash_file = path;
+        break;
+    case PICK_SHOTS: set_shots(path); break;
+    }
+}
+
+// SDL may call this on another thread, so the answer goes back through the event queue.
+void SDLCALL dialog_done(void *kind, const char *const *files, int filter)
+{
+    SDL_Event e;
+    SDL_zero(e);
+    e.type = dialog_event;
+    e.user.code = (Sint32)(intptr_t)kind;
+    if (!files)
+        e.user.data2 = (void *)1;
+    else if (files[0])
+        e.user.data1 = SDL_strdup(files[0]);
+    SDL_PushEvent(&e);
+}
+
+const char *pick_title(int kind)
+{
+    switch (kind) {
+    case PICK_UF2: return "UF2 file to flash";
+    case PICK_CARD: return "SD card image to insert";
+    case PICK_WAV: return "WAV file to record to";
+    case PICK_ROM: return "RP2040 boot ROM (b2.elf or a 16 KB image)";
+    case PICK_FLASH: return "Flash image";
+    case PICK_SHOTS: return "Folder for screenshots";
+    }
+    return "";
+}
+
+void pick(int kind)
+{
+    static const SDL_DialogFileFilter uf2[] = {{"UF2 firmware", "uf2"}, {"All files", "*"}};
+    static const SDL_DialogFileFilter card[] = {{"SD card images", "img;bin"}, {"All files", "*"}};
+    static const SDL_DialogFileFilter wav[] = {{"WAV audio", "wav"}};
+    static const SDL_DialogFileFilter rom[] = {{"RP2040 boot ROM", "elf;bin"}, {"All files", "*"}};
+    static const SDL_DialogFileFilter flash[] = {{"Flash images", "flash;bin"}, {"All files", "*"}};
+    void *ud = (void *)(intptr_t)kind;
+    switch (kind) {
+    case PICK_UF2: SDL_ShowOpenFileDialog(dialog_done, ud, window, uf2, 2, nullptr, false); break;
+    case PICK_CARD: SDL_ShowOpenFileDialog(dialog_done, ud, window, card, 2, pcsim_opts.card_path, false); break;
+    case PICK_WAV: SDL_ShowSaveFileDialog(dialog_done, ud, window, wav, 1, nullptr); break;
+    case PICK_ROM:
+        SDL_ShowOpenFileDialog(dialog_done, ud, window, rom, 2, pending.rom.empty() ? nullptr : pending.rom.c_str(),
+                               false);
+        break;
+    case PICK_FLASH:
+        SDL_ShowSaveFileDialog(dialog_done, ud, window, flash, 2,
+                               pending.flash_file.empty() ? nullptr : pending.flash_file.c_str());
+        break;
+    case PICK_SHOTS: SDL_ShowOpenFolderDialog(dialog_done, ud, window, pcsim_opts.screenshot_dir, false); break;
+    }
+}
+
+void poll_log()
+{
+    char line[512];
+    for (unsigned n = pcsim_log_count(); log_seen != n; log_seen++) {
+        if (!pcsim_log_line(log_seen, line, sizeof(line)))
+            continue;
+        log_lines.emplace_back(log_seen, line);
+        if (log_lines.size() > 1000)
+            log_lines.pop_front();
+        log_scroll = true;
+    }
+}
+
+const char *machine_status()
+{
+    static char text[64];
+    if (!pcsim_machine_running())
+        return "not running";
+    switch (pcsim_state()) {
+    case PCSIM_HALTED: return "halted";
+    case PCSIM_BOOTSEL: return "BOOTSEL";
+    case PCSIM_POWERED_OFF: return "off";
+    case PCSIM_RUNNING: break;
+    }
+    if (pcsim_speed() < 0.95) {
+        snprintf(text, sizeof(text), "%.0f%% speed", pcsim_speed() * 100);
+        return text;
+    }
+    return "";
+}
+
+void menu_bar()
+{
+    if (!ImGui::BeginMainMenuBar())
+        return;
+    menu_height = ImGui::GetWindowSize().y;
+    bool running = pcsim_machine_running();
+    if (ImGui::BeginMenu("Machine")) {
+        if (ImGui::MenuItem("Restart"))
+            restart(false);
+        ImGui::SetItemTooltip("Switch off and on again, with any changed settings");
+        if (ImGui::MenuItem("Reset", "F12", false, running)) {
+            pcsim_bootsel_button(false);
+            pcsim_reboot("reset button");
+        }
+        if (ImGui::MenuItem("Reset into BOOTSEL", "Shift+F12", false, running)) {
+            pcsim_bootsel_button(true);
+            pcsim_reboot("reset button");
+        }
+        if (ImGui::MenuItem("Power button", nullptr, false, running))
+            pcsim_power_button();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Flash UF2...", nullptr, false, running))
+            pick(PICK_UF2);
+        if (ImGui::MenuItem("Erase flash and restart..."))
+            ask_erase = true;
+        ImGui::Separator();
+        ImGui::MenuItem("Settings...", nullptr, &show_settings);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Quit"))
+            pcsim_request_quit(0);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("SD card")) {
+        if (card_in()) {
+            ImGui::TextDisabled("%s", pcsim_opts.card_path ? base_name(pcsim_opts.card_path) : "card inserted");
+            if (ImGui::MenuItem("Eject"))
+                eject_card();
+        } else if (ImGui::MenuItem("Insert image...")) {
+            pick(PICK_CARD);
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Sound")) {
+        ImGui::MenuItem("Mute", nullptr, &pcsim_opts.mute);
+        ImGui::SetNextItemWidth(120 * content_scale);
+        ImGui::SliderInt("Volume", &pcsim_opts.volume, 0, 100, "%d%%");
+        ImGui::Separator();
+        if (running && picocalc_audio_recording(pcsim_picocalc.audio)) {
+            if (ImGui::MenuItem("Stop recording"))
+                stop_recording();
+        } else if (ImGui::MenuItem("Record to WAV...", nullptr, false, running)) {
+            pick(PICK_WAV);
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("View")) {
+        for (int n = 1; n <= 4; n++) {
+            char label[16];
+            snprintf(label, sizeof(label), "%dx", n);
+            if (ImGui::MenuItem(label, nullptr, pcsim_opts.scale == n)) {
+                pcsim_opts.scale = n;
+                ui_fit_window(n);
+            }
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Screenshot", "F11", false, running))
+            pcsim_screenshot_auto();
+        ImGui::MenuItem("Log", nullptr, &show_log);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Help")) {
+        ImGui::MenuItem("Keyboard", nullptr, &show_keys);
+        ImGui::MenuItem("About pcsim", nullptr, &show_about);
+        ImGui::EndMenu();
+    }
+    const char *status = machine_status();
+    float w = ImGui::CalcTextSize(status).x + ImGui::GetStyle().ItemSpacing.x;
+    if (*status && ImGui::GetContentRegionAvail().x > w) {
+        ImGui::SameLine(ImGui::GetWindowWidth() - w);
+        ImGui::TextDisabled("%s", status);
+    }
+    ImGui::EndMainMenuBar();
+}
+
+void note(const char *text)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+}
+
+void place_window(float width)
+{
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    float margin = 8 * content_scale;
+    width = std::min(width * content_scale, vp->Size.x - 2 * margin);
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x / 2, vp->Pos.y + (vp->Size.y + menu_height) / 2),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, vp->Size.y - menu_height - 2 * margin));
+}
+
+bool path_field(const char *label, const char *hint, std::string *path, int kind)
+{
+    ImGui::PushID(label);
+    float button = ImGui::CalcTextSize("Browse...").x + ImGui::GetStyle().FramePadding.x * 2;
+    ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - button - ImGui::GetStyle().ItemInnerSpacing.x);
+    bool changed = ImGui::InputTextWithHint("##path", hint, path);
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+    if (ImGui::Button("Browse..."))
+        pick(kind);
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::TextUnformatted(label);
+    ImGui::PopID();
+    return changed;
+}
+
+std::string board_label(const pcsim_board_desc_t &d)
+{
+    char text[128];
+    snprintf(text, sizeof(text), "%s (%s, %u MB flash%s%s)", d.name, d.rp2040 ? "RP2040" : "RP2350", d.flash_mb,
+             d.psram_mb ? ", PSRAM" : "", d.wifi ? ", WiFi" : "");
+    return text;
+}
+
+void machine_tab()
+{
+    ImGui::SeparatorText("At the next restart");
+    pcsim_board_desc_t d, chosen = {};
+    std::string preview = "(chosen from the UF2)";
+    for (int i = 0; pcsim_board_desc(i, &d); i++)
+        if (pending.board == d.name) {
+            preview = board_label(d);
+            chosen = d;
+        }
+    if (ImGui::BeginCombo("Board", preview.c_str())) {
+        for (int i = 0; pcsim_board_desc(i, &d); i++)
+            if (ImGui::Selectable(board_label(d).c_str(), pending.board == d.name))
+                pending.board = d.name;
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Each board keeps its own flash, as if the Pico in the PicoCalc were swapped");
+
+    char def[4096];
+    pcsim_data_path(def, sizeof(def), "rp2040-rom.elf", false);
+    ImGui::BeginDisabled(!chosen.rp2040 && !pending.board.empty());
+    path_field("Boot ROM", def, &pending.rom, PICK_ROM);
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("The RP2040's own boot ROM, which pcsim cannot include: b2.elf from "
+                          "github.com/raspberrypi/pico-bootrom-rp2040/releases");
+
+    ImGui::TextUnformatted("Flash");
+    ImGui::SameLine();
+    ImGui::RadioButton("In the data folder", &pending.flash, FLASH_DEFAULT);
+    ImGui::SameLine();
+    ImGui::RadioButton("In memory", &pending.flash, FLASH_MEMORY);
+    ImGui::SetItemTooltip("Kept across restarts but not saved, so it is lost when pcsim quits");
+    ImGui::SameLine();
+    ImGui::RadioButton("In a file", &pending.flash, FLASH_FILE);
+    if (pending.flash == FLASH_FILE)
+        path_field("Flash image", "a file that holds the whole flash", &pending.flash_file, PICK_FLASH);
+    else if (pending.flash == FLASH_DEFAULT) {
+        char file[64];
+        snprintf(file, sizeof(file), "%s.flash", pending.board.empty() ? "BOARD" : pending.board.c_str());
+        pcsim_data_path(def, sizeof(def), file, false);
+        ImGui::TextDisabled("%s", def);
+    }
+    ImGui::Checkbox("Instant SPI, I2C and UART transfers", &pending.fast);
+    ImGui::Checkbox("Log faults, unknown ROM calls and bus errors", &pending.trace);
+
+    ImGui::SeparatorText("Now");
+    ImGui::Checkbox("Run as fast as the host allows", &pcsim_opts.unthrottled);
+    ImGui::Checkbox("Print what the firmware sends on UART0", &pcsim_opts.console);
+}
+
+void wifi_tab()
+{
+    ImGui::SeparatorText("At the next restart");
+    ImGui::Checkbox("Leave the radio out, as if it never answered", &pending.no_wifi);
+    ImGui::BeginDisabled(pending.no_wifi);
+    ImGui::TextUnformatted("Access points");
+    int remove = -1;
+    if (!pending.aps.empty() &&
+        ImGui::BeginTable("aps", 3, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableSetupColumn("Network name");
+        ImGui::TableSetupColumn("Password");
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableHeadersRow();
+        for (size_t i = 0; i < pending.aps.size(); i++) {
+            ImGui::PushID((int)i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputText("##ssid", &pending.aps[i].ssid);
+            ImGui::TableNextColumn();
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            ImGui::InputTextWithHint("##password", "none: an open network", &pending.aps[i].password);
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("Remove"))
+                remove = (int)i;
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (remove >= 0)
+        pending.aps.erase(pending.aps.begin() + remove);
+    if (pending.aps.size() < 16 && ImGui::Button("Add access point"))
+        pending.aps.push_back({});
+    if (pending.aps.empty())
+        note("With none listed, any network name and password the firmware tries will join.");
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Port forwards");
+    remove = -1;
+    for (size_t i = 0; i < pending.forwards.size(); i++) {
+        ImGui::PushID((int)i + 100);
+        float button = ImGui::CalcTextSize("Remove").x + ImGui::GetStyle().FramePadding.x * 2;
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - button - ImGui::GetStyle().ItemSpacing.x);
+        ImGui::InputTextWithHint("##forward", "[ADDR:]HOSTPORT:PORT", &pending.forwards[i]);
+        ImGui::SameLine();
+        if (ImGui::Button("Remove"))
+            remove = (int)i;
+        ImGui::PopID();
+    }
+    if (remove >= 0)
+        pending.forwards.erase(pending.forwards.begin() + remove);
+    if (pending.forwards.size() < 16 && ImGui::Button("Add port forward"))
+        pending.forwards.push_back({});
+    note("Connections to HOSTPORT on the host (127.0.0.1 unless ADDR is given, * for every interface) reach "
+         "the firmware's TCP PORT, as in 2121:21.");
+    ImGui::EndDisabled();
+}
+
+void devices_tab()
+{
+    ImGui::SeparatorText("Now");
+    if (ImGui::SliderInt("Battery", &pcsim_opts.battery, 0, 100, "%d%%"))
+        set_battery();
+    if (ImGui::Checkbox("Charging", &pcsim_opts.charging))
+        set_battery();
+    ImGui::SliderInt("Volume", &pcsim_opts.volume, 0, 100, "%d%%");
+    ImGui::Checkbox("Mute", &pcsim_opts.mute);
+    std::string shots = store.shots;
+    if (path_field("Screenshots", "folder for F11's screenshots", &shots, PICK_SHOTS))
+        set_shots(shots.c_str());
+}
+
+void settings_window()
+{
+    place_window(520);
+    if (!ImGui::Begin("Settings", &show_settings, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
+    // Fields fill the window up to their labels, the longest of which is this.
+    ImGui::PushItemWidth(-(ImGui::CalcTextSize("Screenshots").x + ImGui::GetStyle().ItemInnerSpacing.x));
+    if (ImGui::BeginTabBar("tabs")) {
+        if (ImGui::BeginTabItem("Machine")) {
+            machine_tab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("WiFi")) {
+            wifi_tab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Battery and sound")) {
+            devices_tab();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+    ImGui::PopItemWidth();
+    ImGui::Separator();
+    if (pending == applied) {
+        ImGui::TextDisabled("Nothing waits for a restart.");
+    } else {
+        if (ImGui::Button("Restart now"))
+            restart(false);
+        ImGui::SameLine();
+        if (ImGui::Button("Undo"))
+            pending = applied;
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Some changes wait for a restart.");
+    }
+    ImGui::End();
+}
+
+void log_window()
+{
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    float margin = 8 * content_scale;
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x / 2, vp->Pos.y + vp->Size.y - margin), ImGuiCond_Appearing,
+                            ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(560 * content_scale, vp->Size.x - 2 * margin), 200 * content_scale),
+                             ImGuiCond_Appearing);
+    if (!ImGui::Begin("Log", &show_log, ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
+    if (ImGui::Button("Copy")) {
+        std::string all;
+        for (auto &l : log_lines)
+            all += l.second + "\n";
+        ImGui::SetClipboardText(all.c_str());
+    }
+    ImGui::BeginChild("lines", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
+    for (auto &l : log_lines)
+        ImGui::TextUnformatted(l.second.c_str());
+    if (log_scroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - ImGui::GetTextLineHeight() * 2)
+        ImGui::SetScrollHereY(1.0f);
+    log_scroll = false;
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+void keys_window()
+{
+    static const char *const rows[][2] = {
+        {"F1 to F5", "F1 to F5"},
+        {"F6 to F10", "Shift+F1 to Shift+F5"},
+        {"Page Up, Page Down", "Shift+Up, Shift+Down"},
+        {"Home", "Shift+Tab"},
+        {"End", "Shift+Del"},
+        {"Insert", "Shift+Enter"},
+        {"Pause", "Shift+Esc (Brk)"},
+        {"F11", "a screenshot, into the screenshot folder"},
+        {"F12", "the reset button"},
+        {"Shift+F12", "reset into BOOTSEL"},
+    };
+    place_window(480);
+    if (!ImGui::Begin("Keyboard", &show_keys, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
+    note("Keys go to the PicoCalc unless one of pcsim's text fields has them.");
+    if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_BordersInnerH)) {
+        ImGui::TableSetupColumn("Host key");
+        ImGui::TableSetupColumn("PicoCalc");
+        ImGui::TableHeadersRow();
+        for (auto &r : rows) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r[0]);
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(r[1]);
+        }
+        ImGui::EndTable();
+    }
+    note("Dropping a .uf2 file on the window flashes it; dropping a .img file inserts it as the SD card.");
+    ImGui::End();
+}
+
+void about_window()
+{
+    place_window(420);
+    if (!ImGui::Begin("About pcsim", &show_about, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
+    int v = SDL_GetVersion();
+    ImGui::TextWrapped("pcsim emulates a PicoCalc with an RP2350 or RP2040 board.");
+    ImGui::Spacing();
+    ImGui::Text("SDL %d.%d.%d (zlib license)", SDL_VERSIONNUM_MAJOR(v), SDL_VERSIONNUM_MINOR(v),
+                SDL_VERSIONNUM_MICRO(v));
+    ImGui::Text("Dear ImGui %s (MIT license)", IMGUI_VERSION);
+    ImGui::TextUnformatted("lwIP (BSD license)");
+    ImGui::End();
+}
+
+void erase_popup()
+{
+    if (ask_erase) {
+        ImGui::OpenPopup("Erase flash?");
+        ask_erase = false;
+    }
+    if (!ImGui::BeginPopupModal("Erase flash?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+    const char *board = !pending.board.empty() ? pending.board.c_str() : "the board's";
+    ImGui::Text("Everything in %s flash is lost,\nand the machine restarts with it erased.", board);
+    if (ImGui::Button("Erase and restart")) {
+        restart(true);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel"))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+// Where the desktop has no file dialog to offer, the path is typed instead.
+void path_popup()
+{
+    if (ask_path) {
+        ImGui::OpenPopup("Choose a file");
+        ask_path = false;
+    }
+    if (!ImGui::BeginPopupModal("Choose a file", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+    ImGui::TextUnformatted(pick_title(prompt_kind));
+    ImGui::TextDisabled("No file dialog could be opened, so type the path.");
+    ImGui::SetNextItemWidth(420 * content_scale);
+    if (ImGui::IsWindowAppearing())
+        ImGui::SetKeyboardFocusHere();
+    bool enter = ImGui::InputText("##path", &prompt_path, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ImGui::Button("OK") || enter) {
+        if (!prompt_path.empty())
+            chose(prompt_kind, prompt_path.c_str());
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel"))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void stopped_panel()
+{
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y + menu_height));
+    ImGui::SetNextWindowSize(ImVec2(vp->Size.x, vp->Size.y - menu_height));
+    ImGui::Begin("##stopped", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImGui::TextUnformatted("The machine could not start:");
+    ImGui::Spacing();
+    for (auto &l : log_lines)
+        if (l.first >= start_mark)
+            ImGui::TextWrapped("%s", l.second.c_str());
+    ImGui::Spacing();
+    note("Change what it needs in the settings, then try again.");
+    if (ImGui::Button("Settings..."))
+        show_settings = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Try again"))
+        restart(false);
+    ImGui::End();
+}
+
+} // namespace
+
+void ui_init(SDL_Window *w, SDL_Renderer *r)
+{
+    window = w;
+    renderer = r;
+    content_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    if (content_scale < 1.0f)
+        content_scale = 1.0f;
+    dialog_event = SDL_RegisterEvents(1);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.LogFilename = nullptr;
+    ImGui::StyleColorsDark();
+    ImGuiStyle &style = ImGui::GetStyle();
+    // The LCD's text showing through would make the windows hard to read.
+    style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+    style.Colors[ImGuiCol_PopupBg].w = 1.0f;
+    style.ScaleAllSizes(content_scale);
+    style.FontScaleDpi = content_scale;
+    io.Fonts->AddFontDefault();
+    ImGui_ImplSDL3_InitForSDLRenderer(w, r);
+    ImGui_ImplSDLRenderer3_Init(r);
+
+    pending = applied = from_opts();
+    to_opts(applied);
+    set_shots(pcsim_opts.screenshot_dir);
+    if (pcsim_opts.card_path) {
+        store.card = pcsim_opts.card_path;
+        pcsim_opts.card_path = store.card.c_str();
+    }
+    if (pcsim_opts.wav_path)
+        store.wav = pcsim_opts.wav_path;
+
+    // The menu bar's height is only known from a frame laid out with the fonts.
+    ImGui_ImplSDLRenderer3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    menu_height = ImGui::GetFrameHeight();
+    ImGui::EndFrame();
+}
+
+void ui_shutdown(void)
+{
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+}
+
+void ui_fit_window(int scale)
+{
+    float side = PCSIM_LCD_WIDTH * scale * content_scale;
+    SDL_SetWindowSize(window, (int)side, (int)(side + menu_height));
+}
+
+bool ui_event(const SDL_Event *e)
+{
+    if (e->type == dialog_event) {
+        char *path = (char *)e->user.data1;
+        if (path) {
+            chose(e->user.code, path);
+            SDL_free(path);
+        } else if (e->user.data2) {
+            prompt_kind = e->user.code;
+            prompt_path.clear();
+            ask_path = true;
+        }
+        return true;
+    }
+    ImGui_ImplSDL3_ProcessEvent(e);
+    switch (e->type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP:
+    case SDL_EVENT_TEXT_INPUT: return ImGui::GetIO().WantCaptureKeyboard;
+    default: return false;
+    }
+}
+
+void ui_drop_file(const char *path)
+{
+    size_t n = strlen(path);
+    if (n > 4 && SDL_strcasecmp(path + n - 4, ".img") == 0)
+        insert_card(path);
+    else
+        flash_uf2(path);
+}
+
+void ui_restarting(void)
+{
+    start_mark = pcsim_log_count();
+}
+
+float ui_frame(void)
+{
+    ImGui_ImplSDLRenderer3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    poll_log();
+    if (pcsim_machine_running() && applied.board.empty()) {
+        // Pinned, so that a restart without the UF2 that chose the board stays on it.
+        applied.board = pending.board = pcsim_board_name();
+    }
+    menu_bar();
+    if (!pcsim_machine_running())
+        stopped_panel();
+    if (show_settings)
+        settings_window();
+    if (show_log)
+        log_window();
+    if (show_keys)
+        keys_window();
+    if (show_about)
+        about_window();
+    erase_popup();
+    path_popup();
+    ImGui::Render();
+    return menu_height * SDL_GetWindowPixelDensity(window);
+}
+
+void ui_render(void)
+{
+    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
+}

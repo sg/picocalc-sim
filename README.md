@@ -14,7 +14,8 @@ emulator (see [WiFi](#wifi)).
 
 ## Building
 
-You need CMake 3.16+ and a C compiler. Nothing from the Pico SDK or an ARM toolchain is needed.
+You need CMake 3.16+ and a C and C++ compiler. Nothing from the Pico SDK or an ARM toolchain is
+needed.
 
 ```sh
 cmake -S . -B build
@@ -25,9 +26,12 @@ If SDL3 is not installed the build downloads SDL 3.4.18 (hash-pinned) and links 
 Linux that needs the X11 and Wayland development headers, plus the audio ones for sound; the
 packages are listed in `ci/build-linux.sh`, and SDL's configure step names any X11 one that is
 missing. Installing the system package (`libsdl3-dev`, `brew install sdl3`) skips the download;
-`-DPCSIM_SDL=OFF` builds a headless-only binary. FatFs, used by the card-image tool, comes from a
-sibling `ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and lwIP, used by
-the emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is fetched otherwise.
+`-DPCSIM_SDL=OFF` builds a headless-only binary. The window's menus are drawn with Dear ImGui
+1.92.9b, downloaded (hash-pinned) with SDL unless `IMGUI_DIR` names a copy; its C++ runtime is
+linked in, so the binary still needs only the C library. FatFs, used by the card-image tool,
+comes from a sibling `ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and
+lwIP, used by the emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is
+fetched otherwise.
 
 The build produces `build/pcsim`, the emulator, and `build/tools/mkcard/pcsim-mkcard`, which makes
 SD card images.
@@ -58,8 +62,8 @@ SRAM. Unthrottled headless runs are deterministic, so a change that should not a
 PCSIM_STOP_AT_MS=3000 build/pcsim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
 ```
 
-`PCSIM_RESTART_AT_MS=MS` restarts the machine once at that emulated time, as a frontend does
-when its settings change, and the run then starts again from power-on. Nothing of the first run
+`PCSIM_RESTART_AT_MS=MS` restarts the machine once at that emulated time, as the script command
+`restart` does, and the run then starts again from power-on. Nothing of the first run
 may survive it, so with `PCSIM_STOP_AT_MS` the second run's digest must match a fresh launch's
 (`ci/restart-test.sh` checks this for each firmware).
 
@@ -100,8 +104,8 @@ on. The board is taken from the image's binary info (`pico2`, `pico2_w`,
 `pimoroni_pico_plus2_w_rp2350`, `pico`, `pico_w`); `--board` overrides it.
 
 Each board's flash persists in `~/.local/share/pcsim/BOARD.flash` (`--flash FILE` to choose,
-`--flash none` to discard it on exit, `--erase-flash` to start blank). The SD card is
-`~/.local/share/pcsim/sd.img` if it exists, or `--card IMAGE`:
+`--flash none` to keep it only in memory until pcsim exits, `--erase-flash` to start blank). The
+SD card is `~/.local/share/pcsim/sd.img` if it exists, or `--card IMAGE`:
 
 ```sh
 build/tools/mkcard/pcsim-mkcard ~/.local/share/pcsim/sd.img ../pcsh/sd_files
@@ -221,9 +225,31 @@ chords its keyboard controller uses for them:
 | **F11** | screenshot (emulator only) |
 | **F12** | the Pico's reset; **Shift+F12** resets into BOOTSEL |
 
-In BOOTSEL, drop a UF2 file on the window to flash it. Holding a key does not auto-repeat, as on
-the real keyboard. Key mapping assumes a US layout. When the firmware powers the PicoCalc off,
-any key powers it back on.
+Drop a UF2 file on the window to flash it, or a `.img` file to insert it as the SD card. Holding a
+key does not auto-repeat, as on the real keyboard. Key mapping assumes a US layout. When the
+firmware powers the PicoCalc off, any key powers it back on. Keys go to the PicoCalc except while
+one of pcsim's own text fields has them.
+
+### Menus and settings
+
+The window's menu bar covers what the options below set at launch, so most of them can be changed
+without quitting:
+
+- **Machine**: Restart, the reset button (F12), reset into BOOTSEL (Shift+F12), the power button,
+  Flash UF2 (as BOOTSEL's drive would), Erase flash and restart, Settings, and Quit.
+- **SD card**: insert an image, or eject the one in the slot. A card has to be ejected before
+  another goes in, as the firmware may still hold the old card's tables.
+- **Sound**: mute, volume, and recording to a WAV file from now on.
+- **View**: window scale, screenshot (F11), and a log of pcsim's messages.
+
+Settings has the board, the RP2040 boot ROM, where the flash is kept, fast transfers, tracing, the
+radio, access points and port forwards, which take effect at the next restart, and throttling, the
+UART0 console, battery, sound and the screenshot folder, which take effect at once. Restart is the
+PicoCalc's power switch: each board's flash keeps what it holds (one board's flash is not
+another's, as if the Pico were swapped), and the UF2, `--erase-flash` and `--wav` from the command
+line apply only to the first start. If the machine cannot start, say for a missing boot ROM or a
+port already in use, the window shows why and waits for the settings to be fixed. Changed settings
+last until pcsim exits.
 
 ### Options
 
@@ -263,7 +289,7 @@ quit 0
 `type` takes the rest of the line with C escapes and holds Shift wherever the PicoCalc needs it.
 `key` takes chords such as `ctrl+alt+del`, `shift+up`, `brk` or `f6`. `restart` stops the
 machine and starts it again as a fresh launch with the same options would, so the UF2 given on
-the command line is written again and the card stays in the slot. `quit N` sets the exit code.
+the command line is written again and the card stays in the slot (unlike the menu's Restart). `quit N` sets the exit code.
 
 ## How it works
 
@@ -279,7 +305,7 @@ the command line is written again and the card stays in the slot. `quit N` sets 
  sim/devices/   SD card (SPI mode)   ST7365P LCD controller   STM32 keyboard/battery controller
                 audio filters on GP26/GP27 ─> SDL sound, WAV file
                 ESP-PSRAM64H PSRAM on GP2-5 and GP20/21
- frontend/      SDL3 window | headless + scripts + PNG
+ frontend/      SDL3 window with Dear ImGui menus | headless + scripts + PNG
 ```
 
 - **CPU.** Both Cortex-M33 cores are interpreted: ARMv8-M Mainline Thumb-2 with the DSP

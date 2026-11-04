@@ -1,4 +1,4 @@
-# SDL3 for the window, FatFs for building card images.
+# SDL3 and Dear ImGui for the window, FatFs for building card images.
 
 include(FetchContent)
 
@@ -33,6 +33,31 @@ if(PCSIM_SDL)
     else()
         message(STATUS "pcsim: SDL3 not found; building headless only")
     endif()
+endif()
+
+if(PCSIM_HAVE_SDL)
+    enable_language(CXX)
+    if(NOT IMGUI_DIR)
+        FetchContent_Declare(imgui
+            URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b.tar.gz
+            URL_HASH SHA256=${PCSIM_IMGUI_SHA256}
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_MakeAvailable(imgui)
+        set(IMGUI_DIR ${imgui_SOURCE_DIR})
+    endif()
+    message(STATUS "pcsim: Dear ImGui from ${IMGUI_DIR}")
+    add_library(pcsim_imgui STATIC
+        ${IMGUI_DIR}/imgui.cpp
+        ${IMGUI_DIR}/imgui_draw.cpp
+        ${IMGUI_DIR}/imgui_tables.cpp
+        ${IMGUI_DIR}/imgui_widgets.cpp
+        ${IMGUI_DIR}/misc/cpp/imgui_stdlib.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
+        ${IMGUI_DIR}/backends/imgui_impl_sdlrenderer3.cpp)
+    target_include_directories(pcsim_imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+    target_compile_definitions(pcsim_imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+    target_compile_features(pcsim_imgui PUBLIC cxx_std_17)
+    target_link_libraries(pcsim_imgui PUBLIC ${PCSIM_SDL_TARGET})
 endif()
 
 # Prefer a FatFs already checked out next to the firmware projects; fetch it otherwise.

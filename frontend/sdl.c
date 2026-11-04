@@ -17,10 +17,13 @@ int pcsim_frontend_sdl_run(void)
 
 #else
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
+
+#include "ui.h"
 
 bool pcsim_frontend_sdl_available(void)
 {
@@ -131,7 +134,7 @@ static void SDLCALL audio_cb(void *ctx, SDL_AudioStream *stream, int additional,
 
 static SDL_AudioStream *open_audio(void)
 {
-    if (pcsim_opts.mute)
+    if (pcsim_opts.mute || !pcsim_machine_running())
         return NULL;
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         pcsim_log("no sound: %s", SDL_GetError());
@@ -153,24 +156,30 @@ static SDL_AudioStream *open_audio(void)
     return stream;
 }
 
-static SDL_Window *create_window(int scale)
+static SDL_Window *create_window(void)
 {
-    // Windows and X11 size windows in physical pixels, so the desktop's own scale is applied to
-    // make --scale open the same size of window everywhere.
-    float content = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-    if (content < 1.0f)
-        content = 1.0f;
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, pcsim_window_title());
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, (int)(PCSIM_LCD_WIDTH * scale * content));
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, (int)(PCSIM_LCD_HEIGHT * scale * content));
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, PCSIM_LCD_WIDTH);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, PCSIM_LCD_HEIGHT);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
+    // shown once the UI has worked out its size
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, true);
     SDL_Window *window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
     return window;
+}
+
+static SDL_FRect lcd_rect(SDL_Renderer *renderer, float top)
+{
+    int w, h;
+    SDL_GetCurrentRenderOutputSize(renderer, &w, &h);
+    float aw = (float)w, ah = (float)h - top;
+    float fit = fminf(aw / PCSIM_LCD_WIDTH, ah / PCSIM_LCD_HEIGHT);
+    float scale = fit >= 1.0f ? floorf(fit) : fmaxf(fit, 0.0f);
+    float lw = PCSIM_LCD_WIDTH * scale, lh = PCSIM_LCD_HEIGHT * scale;
+    return (SDL_FRect){floorf((aw - lw) / 2), top + floorf((ah - lh) / 2), lw, lh};
 }
 
 int pcsim_frontend_sdl_run(void)
@@ -179,7 +188,7 @@ int pcsim_frontend_sdl_run(void)
         pcsim_log("SDL could not start (%s); running headless", SDL_GetError());
         return pcsim_frontend_headless_run();
     }
-    SDL_Window *window = create_window(pcsim_opts.scale);
+    SDL_Window *window = create_window();
     if (!window) {
         pcsim_log("SDL window failed (%s); running headless", SDL_GetError());
         SDL_Quit();
@@ -189,13 +198,16 @@ int pcsim_frontend_sdl_run(void)
     if (!renderer)
         renderer = SDL_CreateRenderer(window, SDL_SOFTWARE_RENDERER);
     SDL_SetRenderVSync(renderer, 1);
-    SDL_SetRenderLogicalPresentation(renderer, PCSIM_LCD_WIDTH, PCSIM_LCD_HEIGHT,
-                                     SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                              PCSIM_LCD_WIDTH, PCSIM_LCD_HEIGHT);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
     static uint32_t pixels[PCSIM_LCD_WIDTH * PCSIM_LCD_HEIGHT];
+    ui_init(window, renderer);
+    ui_fit_window(pcsim_opts.scale);
+    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    SDL_ShowWindow(window);
     SDL_AudioStream *audio = open_audio();
+    bool muted = pcsim_opts.mute;
 
     uint64_t start = pcsim_mono_ns();
     uint32_t last_lcd = ~0u, last_sb = ~0u;
@@ -205,12 +217,13 @@ int pcsim_frontend_sdl_run(void)
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            bool ui_took = ui_event(&e);
             switch (e.type) {
             case SDL_EVENT_QUIT:
                 running = false;
                 break;
             case SDL_EVENT_KEY_DOWN:
-                if (e.key.repeat)
+                if (e.key.repeat || ui_took || !pcsim_machine_running())
                     break;
                 if (e.key.key == SDLK_F11)
                     pcsim_screenshot_auto();
@@ -222,16 +235,12 @@ int pcsim_frontend_sdl_run(void)
                     key_down(e.key.key);
                 break;
             case SDL_EVENT_KEY_UP:
+                // even when the UI has the keyboard, a key the PicoCalc saw go down must come up
                 key_up(e.key.key);
                 break;
-            case SDL_EVENT_DROP_FILE: {
-                char err[256];
-                if (pcsim_flash_uf2(e.drop.data, err, sizeof(err)))
-                    pcsim_log("flashing %s", e.drop.data);
-                else
-                    pcsim_log("%s", err);
+            case SDL_EVENT_DROP_FILE:
+                ui_drop_file(e.drop.data);
                 break;
-            }
             case SDL_EVENT_WINDOW_FOCUS_LOST:
                 release_all();
                 break;
@@ -246,22 +255,29 @@ int pcsim_frontend_sdl_run(void)
             if (audio)
                 SDL_DestroyAudioStream(audio);
             audio = NULL;
-            if (!pcsim_machine_restart()) {
-                code = 1;
-                break;
-            }
-            audio = open_audio();
+            ui_restarting();
+            // A machine that fails to start stays stopped, and the UI says why.
+            if (pcsim_machine_restart())
+                audio = open_audio();
             last_lcd = last_sb = ~0u;
         }
-        southbridge_tick(pcsim_picocalc.sb);
+        if (pcsim_opts.mute != muted) {
+            muted = pcsim_opts.mute;
+            if (audio)
+                SDL_DestroyAudioStream(audio);
+            audio = open_audio();
+        }
+        if (pcsim_machine_running())
+            southbridge_tick(pcsim_picocalc.sb);
         if (pcsim_quit_requested(&code))
             break;
         if (pcsim_opts.timeout_s > 0 && (pcsim_mono_ns() - start) / 1e9 >= pcsim_opts.timeout_s)
             break;
 
-        uint32_t lcd_gen = st7365p_generation(pcsim_picocalc.lcd);
-        uint32_t sb_gen = southbridge_generation(pcsim_picocalc.sb);
-        if (lcd_gen != last_lcd || sb_gen != last_sb) {
+        bool on = pcsim_machine_running();
+        uint32_t lcd_gen = on ? st7365p_generation(pcsim_picocalc.lcd) : 0;
+        uint32_t sb_gen = on ? southbridge_generation(pcsim_picocalc.sb) : 0;
+        if (on && (lcd_gen != last_lcd || sb_gen != last_sb)) {
             last_lcd = lcd_gen;
             last_sb = sb_gen;
             st7365p_render(pcsim_picocalc.lcd, pixels, southbridge_lcd_backlight(pcsim_picocalc.sb));
@@ -272,15 +288,21 @@ int pcsim_frontend_sdl_run(void)
             snprintf(last_title, sizeof(last_title), "%s", title);
             SDL_SetWindowTitle(window, title);
         }
+        float top = ui_frame();
         SDL_SetRenderDrawColor(renderer, 24, 24, 24, 255);
         SDL_RenderClear(renderer);
-        SDL_RenderTexture(renderer, texture, NULL, NULL);
+        if (on) {
+            SDL_FRect dst = lcd_rect(renderer, top);
+            SDL_RenderTexture(renderer, texture, NULL, &dst);
+        }
+        ui_render();
         SDL_RenderPresent(renderer);
         SDL_Delay(8);
     }
 
     if (audio)
         SDL_DestroyAudioStream(audio);
+    ui_shutdown();
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

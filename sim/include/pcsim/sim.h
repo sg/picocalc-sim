@@ -48,6 +48,10 @@ typedef struct pcsim_options {
 extern pcsim_options_t pcsim_opts;
 
 void pcsim_log(const char *fmt, ...) __attribute__((format(PCSIM_PRINTF_FORMAT, 1, 2)));
+// The most recent pcsim_log lines, for a frontend to show: line i (counting from the first ever
+// logged) is copied out if it is still kept.
+unsigned pcsim_log_count(void);
+bool pcsim_log_line(unsigned i, char *buf, size_t cap);
 
 uint64_t pcsim_mono_ns(void);
 // Time since power-on on the emulated chip, which device models use for their own timing.
@@ -83,11 +87,12 @@ void pcsim_machine_lock(void);
 void pcsim_machine_unlock(void);
 
 bool pcsim_machine_start(void);
+bool pcsim_machine_running(void);
 // Takes down everything pcsim_machine_start set up, saving flash and finishing any recording.
 void pcsim_machine_stop(void);
-// Stops the machine and starts it as a fresh launch with the current pcsim_opts would. Call it
-// from the frontend's thread while nothing else touches pcsim_picocalc; false if the machine
-// could not start, which leaves it stopped.
+// Stops the machine and starts it as a fresh launch with the current pcsim_opts would, except that
+// a flash of "none" keeps what it held. Call it from the frontend's thread while nothing else
+// touches pcsim_picocalc; false if the machine could not start, which leaves it stopped.
 bool pcsim_machine_restart(void);
 // Asks the frontend to restart the machine when it next can; safe from any thread.
 void pcsim_request_restart(void);
@@ -95,6 +100,14 @@ bool pcsim_restart_requested(void);
 // How many times the machine has started, so a thread that asked for a restart can wait for it.
 unsigned pcsim_machine_starts(void);
 const char *pcsim_board_name(void);
+
+typedef struct {
+    const char *name;
+    bool rp2040, wifi;
+    unsigned flash_mb, psram_mb;
+} pcsim_board_desc_t;
+// The boards --board accepts; false once i is past the last.
+bool pcsim_board_desc(int i, pcsim_board_desc_t *d);
 double pcsim_speed(void);
 
 void pcsim_console_out(int uart, uint8_t byte);

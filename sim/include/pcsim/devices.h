@@ -48,8 +48,9 @@ void sdcard_destroy(sdcard_t *sd);
 // recorded or played.
 typedef struct picocalc_audio picocalc_audio_t;
 picocalc_audio_t *picocalc_audio_create(unsigned left_pin, unsigned right_pin);
-// Writes everything from now on to a WAV file, in emulated time.
+// Writes everything from now on to a WAV file, in emulated time, ending any earlier recording.
 bool picocalc_audio_record(picocalc_audio_t *a, const char *wav_path);
+bool picocalc_audio_recording(picocalc_audio_t *a);
 void picocalc_audio_close(picocalc_audio_t *a);
 // Starts filling the playback buffer that picocalc_audio_pull empties, from the host's audio thread.
 bool picocalc_audio_play(picocalc_audio_t *a);

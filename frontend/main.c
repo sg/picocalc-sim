@@ -23,7 +23,7 @@ static void usage(const char *argv0)
            "                         pico-bootrom-rp2040 or a 16 KB image (default\n"
            "                         ~/.local/share/pcsim/rp2040-rom.elf or .bin); pico and pico_w need it\n"
            "  -f, --flash FILE       flash image to use and keep (default ~/.local/share/pcsim/BOARD.flash;\n"
-           "                         'none' for a flash that is discarded on exit)\n"
+           "                         'none' for one kept in memory until pcsim exits)\n"
            "      --erase-flash      start with erased flash\n"
            "  -c, --card IMAGE       SD card image (default ~/.local/share/pcsim/sd.img if it exists)\n"
            "      --no-card          start with the card slot empty\n"
@@ -49,14 +49,17 @@ static void usage(const char *argv0)
            "      --no-wifi          leave the W boards' radio out, as if it never answered\n"
            "      --trace            log faults, unknown ROM calls and bus errors\n"
            "\n"
-           "In the window: F11 saves a screenshot, F12 is the reset button, Shift+F12 resets into BOOTSEL,\n"
-           "and dropping a UF2 file on the window flashes it. PgUp, PgDn, Home, End, Insert and Pause are\n"
-           "sent as the Shift chords the PicoCalc keyboard uses.\n",
+           "In the window, the menus change these settings and restart the machine. F11 saves a\n"
+           "screenshot, F12 is the reset button, Shift+F12 resets into BOOTSEL, and dropping a UF2 file on\n"
+           "the window flashes it (a .img file goes in as the SD card). PgUp, PgDn, Home, End, Insert and\n"
+           "Pause are sent as the Shift chords the PicoCalc keyboard uses.\n",
            argv0);
 }
 
 int pcsim_frontend_headless_run(void)
 {
+    if (!pcsim_machine_running())
+        return 1;
     uint64_t start = pcsim_mono_ns();
     int code = 0;
     for (;;) {
@@ -181,7 +184,9 @@ int main(int argc, char **argv)
         card = default_card();
     pcsim_opts.card_path = no_card ? NULL : card;
 
-    if (!pcsim_machine_start())
+    // The window can show why the machine did not start, and has the settings to fix it.
+    bool window = !pcsim_opts.headless && pcsim_frontend_sdl_available();
+    if (!pcsim_machine_start() && !window)
         return 1;
     if (!card && !no_card)
         pcsim_log("no SD card (make one with pcsim-mkcard and pass it with --card)");
@@ -190,10 +195,10 @@ int main(int argc, char **argv)
         pcsim_script_start(pcsim_opts.script_path);
 
     int code;
-    if (pcsim_opts.headless || !pcsim_frontend_sdl_available())
-        code = pcsim_frontend_headless_run();
-    else
+    if (window)
         code = pcsim_frontend_sdl_run();
+    else
+        code = pcsim_frontend_headless_run();
 
     pcsim_machine_stop();
     fflush(NULL);

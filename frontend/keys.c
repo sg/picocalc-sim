@@ -223,6 +223,8 @@ const char *pcsim_screenshot_auto(void)
 const char *pcsim_window_title(void)
 {
     static char title[256];
+    if (!pcsim_machine_running())
+        return "PicoCalc - not running";
     const char *state = "";
     switch (pcsim_state()) {
     case PCSIM_RUNNING:

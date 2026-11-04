@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <errno.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -25,14 +26,42 @@ pcsim_options_t pcsim_opts = {
 static atomic_bool quit_flag;
 static atomic_int quit_code;
 
+#define LOG_KEEP 256
+static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
+static char log_lines[LOG_KEEP][512];
+static unsigned log_total;
+
 void pcsim_log(const char *fmt, ...)
 {
-    va_list ap;
+    va_list ap, kept;
     va_start(ap, fmt);
+    va_copy(kept, ap);
+    pthread_mutex_lock(&log_lock);
     fputs("[pcsim] ", stderr);
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
+    vsnprintf(log_lines[log_total++ % LOG_KEEP], sizeof(log_lines[0]), fmt, kept);
+    pthread_mutex_unlock(&log_lock);
+    va_end(kept);
     va_end(ap);
+}
+
+unsigned pcsim_log_count(void)
+{
+    pthread_mutex_lock(&log_lock);
+    unsigned n = log_total;
+    pthread_mutex_unlock(&log_lock);
+    return n;
+}
+
+bool pcsim_log_line(unsigned i, char *buf, size_t cap)
+{
+    pthread_mutex_lock(&log_lock);
+    bool kept = i < log_total && log_total - i <= LOG_KEEP;
+    if (kept)
+        snprintf(buf, cap, "%s", log_lines[i % LOG_KEEP]);
+    pthread_mutex_unlock(&log_lock);
+    return kept;
 }
 
 uint64_t pcsim_mono_ns(void)

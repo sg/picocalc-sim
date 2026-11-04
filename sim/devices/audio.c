@@ -179,18 +179,29 @@ static bool listen(picocalc_audio_t *a)
 
 bool picocalc_audio_record(picocalc_audio_t *a, const char *wav_path)
 {
-    a->wav = fopen(wav_path, "wb");
-    if (!a->wav) {
+    picocalc_audio_close(a);
+    FILE *wav = fopen(wav_path, "wb");
+    if (!wav) {
         pcsim_log("cannot write %s", wav_path);
         return false;
     }
+    // The emulation thread writes to the file once it is set.
+    pcsim_machine_lock();
+    a->wav = wav;
+    a->wav_frames = 0;
     wav_header(a);
-    if (!listen(a)) {
+    bool ok = listen(a);
+    if (!ok) {
         fclose(a->wav);
         a->wav = NULL;
-        return false;
     }
-    return true;
+    pcsim_machine_unlock();
+    return ok;
+}
+
+bool picocalc_audio_recording(picocalc_audio_t *a)
+{
+    return a && a->wav;
 }
 
 bool picocalc_audio_play(picocalc_audio_t *a)

@@ -45,6 +45,9 @@ static atomic_bool restart_flag;
 // The flash image this run keeps, once "none" and the default are worked out from pcsim_opts.
 static char flash_file[4096];
 static const char *flash_path;
+// With --flash none, each board's flash lasts from one restart to the next, as a power cycle
+// would leave it, until pcsim exits.
+static uint8_t *kept_flash[8];
 
 void pcsim_machine_lock(void)
 {
@@ -74,6 +77,16 @@ const char *pcsim_state_reason(void)
 const char *pcsim_board_name(void)
 {
     return chip.board ? chip.board->name : "?";
+}
+
+bool pcsim_board_desc(int i, pcsim_board_desc_t *d)
+{
+    for (int n = 0; n <= i; n++)
+        if (!board_table[n].name)
+            return false;
+    const board_info_t *b = &board_table[i];
+    *d = (pcsim_board_desc_t){b->name, b->rp2040, b->wifi, b->flash_size >> 20, b->psram_size >> 20};
+    return true;
 }
 
 double pcsim_speed(void)
@@ -139,8 +152,20 @@ static void flash_save(void)
 
 static void flash_load(void)
 {
-    if (!flash_path || pcsim_opts.erase_flash)
+    uint8_t **kept = &kept_flash[chip.board - board_table];
+    if (pcsim_opts.erase_flash) {
+        free(*kept);
+        *kept = NULL;
         return;
+    }
+    if (!flash_path) {
+        if (*kept) {
+            free(chip.flash);
+            chip.flash = *kept;
+            *kept = NULL;
+        }
+        return;
+    }
     FILE *f = fopen(flash_path, "rb");
     if (!f)
         return;
@@ -442,6 +467,13 @@ static void teardown(void)
     if (net_up)
         pcsim_net_shutdown();
     net_up = false;
+    // Also after a failed start, which would otherwise lose what flash_load took out.
+    if (chip_ready && !flash_path) {
+        uint8_t **kept = &kept_flash[chip.board - board_table];
+        free(*kept);
+        *kept = chip.flash;
+        chip.flash = NULL;
+    }
     if (chip_ready)
         chip_free(&chip);
     chip_ready = false;
@@ -541,6 +573,11 @@ static bool start(uf2_file_t *f)
         return false;
     }
     return true;
+}
+
+bool pcsim_machine_running(void)
+{
+    return running;
 }
 
 bool pcsim_machine_start(void)

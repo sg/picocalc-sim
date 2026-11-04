@@ -7,9 +7,10 @@ set -u
 pcsim=$1
 shift
 
-# --trace prints a digest each time the machine stops, so a restarted run prints two.
+# --trace prints a digest each time the machine stops, so a restarted run prints two. A flash of
+# "none" outlives a restart, so --erase-flash starts both runs from the same blank one.
 digests() {
-    timeout 120 env "$@" "$pcsim" --headless --unthrottled --trace --flash none --no-card \
+    timeout 120 env "$@" "$pcsim" --headless --unthrottled --trace --flash none --erase-flash --no-card \
         ${PCSIM_ROM:+--rom "$PCSIM_ROM"} "$uf2" 2>&1 | tr -d '\r' | sed -n 's/.*state digest //p' | tr '\n' ' ' |
         sed 's/ $//'
 }

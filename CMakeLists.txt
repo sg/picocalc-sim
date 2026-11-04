@@ -13,15 +13,18 @@ set(LWIP_DIR "" CACHE PATH "lwIP sources (src/core/tcp.c); found or fetched when
 option(PCSIM_SDL "Build the SDL3 window frontend" ON)
 option(PCSIM_FETCH_SDL "Download and build SDL3 when it is not installed" ON)
 set(PCSIM_SDL3_SHA256 "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3" CACHE STRING "SHA-256 of the SDL3 release tarball")
+set(IMGUI_DIR "" CACHE PATH "Dear ImGui sources (imgui.cpp); fetched when empty")
+set(PCSIM_IMGUI_SHA256 "21d8a0a565e85dce943e375db00812c2f3f0ab21f3f0f7964e364a63422d7f99" CACHE STRING "SHA-256 of the Dear ImGui release tarball")
 
 find_package(Threads REQUIRED)
 include(cmake/Dependencies.cmake)
 
 if(WIN32)
     # Windows 10 for WSAPoll and high-resolution timers, MinGW's own printf for C99 formats,
-    # 64-bit file offsets for card images over 2 GB, and POSIX's localtime_r
+    # 64-bit file offsets for card images over 2 GB, and POSIX's localtime_r (in C only, as Dear
+    # ImGui brings its own)
     add_compile_definitions(_WIN32_WINNT=0x0A00 __USE_MINGW_ANSI_STDIO=1 _FILE_OFFSET_BITS=64
-                            _POSIX_THREAD_SAFE_FUNCTIONS=200112L)
+                            $<$<COMPILE_LANGUAGE:C>:_POSIX_THREAD_SAFE_FUNCTIONS=200112L>)
     # each .exe then stands alone, without MinGW's runtime DLLs beside it
     add_link_options(-static)
 endif()
@@ -93,8 +96,13 @@ if(WIN32)
     target_link_libraries(pcsim PRIVATE ws2_32 iphlpapi winmm)
 endif()
 if(PCSIM_HAVE_SDL)
+    target_sources(pcsim PRIVATE frontend/ui.cpp)
     target_compile_definitions(pcsim PRIVATE PCSIM_HAVE_SDL=1)
-    target_link_libraries(pcsim PRIVATE ${PCSIM_SDL_TARGET})
+    target_link_libraries(pcsim PRIVATE pcsim_imgui)
+    # the C++ runtime goes into the binary, which then still needs nothing beyond the C library
+    if(NOT WIN32 AND NOT APPLE)
+        target_link_options(pcsim PRIVATE -static-libstdc++ -static-libgcc)
+    endif()
 endif()
 
 add_subdirectory(tools/mkcard)
