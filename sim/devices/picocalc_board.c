@@ -14,5 +14,6 @@ bool picocalc_board_init(void)
     pcsim_picocalc.sd = sdcard_create((pcsim_spi_pins_t){.sck = 18, .mosi = 19, .miso = 16, .cs = 17}, 22);
     southbridge_set_battery(pcsim_picocalc.sb, (uint8_t)pcsim_opts.battery, pcsim_opts.charging);
     pcsim_picocalc.audio = picocalc_audio_create(26, 27);
+    pcsim_picocalc.psram = esp_psram_create(20, 21, (const unsigned[4]){2, 3, 4, 5});
     return !pcsim_opts.wav_path || picocalc_audio_record(pcsim_picocalc.audio, pcsim_opts.wav_path);
 }

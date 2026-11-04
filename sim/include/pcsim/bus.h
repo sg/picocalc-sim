@@ -23,6 +23,15 @@ bool pcsim_pin_wave(const unsigned *pins, int npins, unsigned rate_hz, pcsim_pin
 // Drives an input pin from outside the chip: 0 or 1, or -1 to let it float to its pull.
 void pcsim_gpio_drive_input(unsigned pin, int level);
 bool pcsim_gpio_level(unsigned pin);
+// The same from a device's own watch callback, which runs with the machine already locked.
+void pcsim_gpio_drive_input_locked(unsigned pin, int level);
+// In a watch callback: when the change being reported reached the pin, in picoseconds of emulated
+// time, so a device can answer it as late as the real part would.
+uint64_t pcsim_gpio_edge_time(void);
+// From a watch callback: drives an input pin whose level changes at the pin at time t.
+void pcsim_gpio_drive_input_at(unsigned pin, int level, uint64_t t);
+// How sharp the pin's output edges are: 0 for the default 4 mA slow slew pad to 4 for 12 mA fast.
+int pcsim_gpio_pad_speed(unsigned pin);
 
 typedef struct pcsim_spi_device {
     const char *name;

@@ -3,8 +3,8 @@
 A PicoCalc emulator for Linux and Windows that runs firmware as it ships: the same UF2 file you
 would drop on the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps` folder. macOS should
 build but is untested. It emulates the RP2350 instruction by instruction, with the PicoCalc's LCD,
-keyboard controller, SD card and audio circuit attached to its pins, so nothing has to be rebuilt
-for the simulator.
+keyboard controller, SD card, audio circuit and PSRAM attached to its pins, so nothing has to be
+rebuilt for the simulator.
 
 Boards: **Raspberry Pi Pico 2**, **Pico 2 W** and **Pimoroni Pico Plus 2 / 2 W** (16 MB flash,
 8 MB PSRAM). On the W boards the CYW43439 radio is emulated too: firmware scans, joins a virtual
@@ -53,6 +53,15 @@ SRAM. Unthrottled headless runs are deterministic, so a change that should not a
 ```sh
 PCSIM_STOP_AT_MS=3000 build/pcsim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
 ```
+
+### Measuring the hardware
+
+`tools/psramprobe` is firmware for a real PicoCalc, built on its own with the Pico SDK (the first
+line of its `CMakeLists.txt` says how). Started from uf2loader, it measures in PIO cycles how long
+SCK and the mainboard PSRAM's output take to reach the PIO at 96 to 252 MHz, runs rp2040-psram's
+read and write programs at several clocks and dividers, and writes the results to `PSPROBE.TXT` on
+the card. The emulator's pin timing comes from one such report, and running the probe in the
+emulator should give the same one.
 
 ### Continuous integration and releases
 
@@ -232,6 +241,7 @@ quit 0
  sim/net/       DHCP, DNS, UDP and ping NAT; TCP ends at lwIP, relayed to host sockets
  sim/devices/   SD card (SPI mode)   ST7365P LCD controller   STM32 keyboard/battery controller
                 audio filters on GP26/GP27 ─> SDL sound, WAV file
+                ESP-PSRAM64H PSRAM on GP2-5 and GP20/21
  frontend/      SDL2 window | headless + scripts + PNG
 ```
 
@@ -255,14 +265,23 @@ quit 0
 - **Peripherals.** Register-level models of what the PicoCalc firmware uses: SIO (FIFOs,
   spinlocks, interpolators), IO bank and pads, TIMER0/1, watchdog, POWMAN's always-on timer,
   clocks/PLLs/tick generators, PL022 SPI, DesignWare I2C, PL011 UART, PIO (all three blocks,
-  stepped instruction by instruction, except that the counting loop of pico-examples' PWM
-  program, which PIO audio drivers use, skips ahead to its next edge), 16-channel DMA, PWM, QMI
+  stepped instruction by instruction on whole system clock cycles, so a fractional divider gives
+  uneven ones as on the chip, except that the counting loop of pico-examples' PWM program, which
+  PIO audio drivers use, skips ahead to its next edge), 16-channel DMA, PWM, QMI
   direct mode with a W25Q flash and an APS6404 PSRAM, TRNG, OTP chip ID, boot RAM and boot locks.
 - **Timing.** Emulated time is paced against the host clock. Buses move data at the rate the
   firmware programmed (a 10 kHz I2C poll of the keyboard takes as long as it does on the board).
+- **Pin timing.** A pin's change reaches the PIO's inputs a cycle plus the pads' delays later
+  (6.2 to 6.8 ns there and back with the default 4 mA slow-slew pad on a PicoCalc, less at higher
+  drive or fast slew), then through the 2-cycle input synchroniser unless it is bypassed, and a
+  device answers an edge as late as the real part would. A PIO driver that samples too early or
+  too late therefore reads the same wrong bits here as on the board.
 - **Devices.** The LCD, SD card and keyboard controller answer whatever drives their pins: a
   PL022, a PIO program, or bit-banging. A PIO program that shifts one bit out per clock (the
-  common LCD driver) is recognised and run in bulk.
+  common LCD driver) is recognised and run in bulk. The mainboard's ESP-PSRAM64H is modelled at its
+  pins, SPI and QPI, answering 3.8 ns (rising) or 5.5 ns (falling) after the clock edge as a
+  PicoCalc's did, and it logs a warning when firmware goes past the datasheet's clock limits
+  (33 MHz for `0x03`, 133 MHz, 84 MHz across a 1 KB page) or holds CE# low beyond 8 µs.
 - **WiFi.** The SDK drives the CYW43439 over a half-duplex SPI from a PIO program, which is
   recognised and exchanges bits with the chip model directly. The model implements the gSPI bus
   registers and the backplane the radio firmware is downloaded into (the firmware in the UF2 is
@@ -286,7 +305,7 @@ Tested here with UF2s built from `../pcsh`, `../picocalc_lua`, `../picocalc-z80`
 | Firmware | Pico 2 | Pico 2 W | Pimoroni Plus 2 W |
 | --- | --- | --- | --- |
 | pcsh | shell, SD, Lua | WiFi scan and join, DHCP, DNS, NTP, HTTP, ping to the gateway | boots with an 8 MB PSRAM heap |
-| picocalc_lua | boots, SD mounted, `sound` notes | WiFi scan and join | boots |
+| picocalc_lua | boots, SD mounted, `sound` notes, `psram` on the mainboard PSRAM | WiFi scan and join, `psram` | boots |
 | picocalc-z80 | boots to its menu | boots to its menu | boots, finds and benchmarks the PSRAM |
 | ftpserver | (no Pico 2 build) | FTP through a forward: login, list, transfers | same |
 | uf2loader 2.4.1 | menu, flashing and chaining apps | not tried | not tried |
@@ -304,7 +323,10 @@ Not emulated yet, or not faithfully:
 - **Speed.** On a 2.9 GHz i7, firmware that keeps both cores busy (picocalc_lua, picocalc-z80)
   runs at 1.7 to 2 times real time, and a Lua loop at about 2.3 times. Hosts other than x86-64 use
   the block handlers, at about 80% of real time for the same firmware.
-- **The PicoCalc mainboard's PSRAM**, which picocalc_lua reaches through PIO, is not attached.
+- **Mainboard PSRAM timing** was measured on one PicoCalc, with the default 4 mA slow-slew pads and
+  at 12 mA fast slew; other pad settings are interpolated, and quad mode is unmeasured. A read
+  that lands within a fraction of a nanosecond of a change, which varies from read to read on the
+  board, gives the same answer every time here.
 - **USB** enumerates nothing: the controller's registers exist but no host is connected.
 - **RP2040 boards** (Pico, Pico W) and RISC-V images are not supported.
 - **Windows:** `pcsim-mkcard.exe` reads host file names in the system code page, so files whose
@@ -316,6 +338,5 @@ Not emulated yet, or not faithfully:
 
 ## Roadmap
 
-1. The PicoCalc mainboard's PIO-attached PSRAM, and the RP2040 boards (Pico W with the same
-   radio model).
+1. The RP2040 boards (Pico, and Pico W with the same radio model).
 2. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.

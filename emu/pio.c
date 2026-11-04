@@ -42,6 +42,19 @@ static int fifo_depth_rx(pio_sm_t *sm)
     return 4;
 }
 
+static void update_dreqs(chip_t *m, pio_t *p, int i)
+{
+    pio_sm_t *sm = &p->sm[i];
+    unsigned tx = DREQ_PIO0_TX0 + 8u * (unsigned)p->idx + (unsigned)i;
+    unsigned rx = DREQ_PIO0_RX0 + 8u * (unsigned)p->idx + (unsigned)i;
+    bool tx_level = sm->txn < fifo_depth_tx(sm);
+    if (m->dreq[tx] != tx_level)
+        chip_dreq(m, tx, tx_level);
+    bool rx_level = sm->rxn > 0;
+    if (m->dreq[rx] != rx_level)
+        chip_dreq(m, rx, rx_level);
+}
+
 static void update_irqs(chip_t *m, pio_t *p)
 {
     uint32_t intr = p->irq & 0xff;
@@ -62,17 +75,8 @@ static void update_irqs(chip_t *m, pio_t *p)
         if (((m->irq_lines >> irq) & 1) != level)
             chip_irq(m, irq, level);
     }
-    for (int i = 0; i < 4; i++) {
-        pio_sm_t *sm = &p->sm[i];
-        unsigned tx = DREQ_PIO0_TX0 + 8u * (unsigned)p->idx + (unsigned)i;
-        unsigned rx = DREQ_PIO0_RX0 + 8u * (unsigned)p->idx + (unsigned)i;
-        bool tx_level = sm->txn < fifo_depth_tx(sm);
-        if (m->dreq[tx] != tx_level)
-            chip_dreq(m, tx, tx_level);
-        bool rx_level = sm->rxn > 0;
-        if (m->dreq[rx] != rx_level)
-            chip_dreq(m, rx, rx_level);
-    }
+    for (int i = 0; i < 4; i++)
+        update_dreqs(m, p, i);
 }
 
 static unsigned base_pin(pio_t *p, unsigned rel)
@@ -98,16 +102,26 @@ static void write_pins(chip_t *m, pio_t *p, unsigned base, unsigned count, uint3
         gpio_refresh_mask(m, diff);
 }
 
-static uint32_t read_pins(chip_t *m, pio_t *p, unsigned base)
+static uint32_t rotr32(uint32_t x, unsigned n)
 {
-    uint64_t all = gpio_in_all(m);
-    uint32_t v = 0;
-    for (unsigned i = 0; i < 32; i++) {
-        unsigned pin = base_pin(p, (base + i) & 31);
-        if ((all >> pin) & 1)
-            v |= 1u << i;
-    }
-    return v;
+    n &= 31;
+    return n ? (x >> n) | (x << (32 - n)) : x;
+}
+
+// The inputs an instruction sees at the time it executes, through the synchronisers.
+static uint64_t pins_at(chip_t *m, pio_t *p, uint64_t pins)
+{
+    uint64_t bypass = (uint64_t)p->input_sync_bypass << ((p->gpiobase & 0x10) ? 16 : 0);
+    return gpio_in_at(m, pins, bypass, m->edge_t ? m->edge_t : m->now);
+}
+
+// n pins from `base`, lowest in bit 0.
+static uint32_t read_pins(chip_t *m, pio_t *p, unsigned base, unsigned n)
+{
+    unsigned off = (p->gpiobase & 0x10) ? 16 : 0;
+    uint32_t span = n >= 32 ? ~0u : rotr32((1u << n) - 1, 32 - (base & 31));
+    uint64_t all = pins_at(m, p, (uint64_t)span << off);
+    return rotr32((uint32_t)(all >> off), base);
 }
 
 bool pio_drives(chip_t *m, int idx, unsigned pin, bool *level)
@@ -193,7 +207,7 @@ static ex_t execute(chip_t *m, pio_t *p, int smi, uint16_t ins, bool *jumped)
         case 3: take = sm->y == 0; break;
         case 4: take = sm->y != 0; sm->y--; break;
         case 5: take = sm->x != sm->y; break;
-        case 6: take = (read_pins(m, p, (execctrl >> 24) & 31) & 1) != 0; break;
+        case 6: take = (read_pins(m, p, (execctrl >> 24) & 31, 1) & 1) != 0; break;
         default: take = sm->osr_count < (int)pull_thresh; break;
         }
         if (take) {
@@ -207,9 +221,10 @@ static ex_t execute(chip_t *m, pio_t *p, int smi, uint16_t ins, bool *jumped)
         unsigned src = (ins >> 5) & 3;
         bool v;
         if (src == 0) {
-            v = gpio_in(m, base_pin(p, arg2));
+            unsigned pin = base_pin(p, arg2);
+            v = (pins_at(m, p, 1ull << pin) >> pin) & 1;
         } else if (src == 1) {
-            v = (read_pins(m, p, ((pinctrl >> 15) & 31) + arg2) & 1) != 0;
+            v = (read_pins(m, p, ((pinctrl >> 15) & 31) + arg2, 1) & 1) != 0;
         } else if (src == 2) {
             int tp;
             unsigned idx = irq_index(p, smi, arg2, &tp);
@@ -220,7 +235,7 @@ static ex_t execute(chip_t *m, pio_t *p, int smi, uint16_t ins, bool *jumped)
                 return EX_DONE;
             }
         } else {
-            v = (read_pins(m, p, ((execctrl >> 24) & 31) + (arg2 & 3)) & 1) != 0;
+            v = (read_pins(m, p, ((execctrl >> 24) & 31) + (arg2 & 3), 1) & 1) != 0;
         }
         return v == pol ? EX_DONE : EX_STALL;
     }
@@ -238,7 +253,7 @@ static ex_t execute(chip_t *m, pio_t *p, int smi, uint16_t ins, bool *jumped)
         }
         uint32_t data;
         switch (arg1) {
-        case 0: data = read_pins(m, p, (pinctrl >> 15) & 31); break;
+        case 0: data = read_pins(m, p, (pinctrl >> 15) & 31, n); break;
         case 1: data = sm->x; break;
         case 2: data = sm->y; break;
         case 6: data = sm->isr; break;
@@ -363,7 +378,7 @@ static ex_t execute(chip_t *m, pio_t *p, int smi, uint16_t ins, bool *jumped)
         unsigned dst = arg1, mop = (ins >> 3) & 3, src = ins & 7;
         uint32_t v;
         switch (src) {
-        case 0: v = read_pins(m, p, (pinctrl >> 15) & 31); break;
+        case 0: v = read_pins(m, p, (pinctrl >> 15) & 31, 32); break;
         case 1: v = sm->x; break;
         case 2: v = sm->y; break;
         case 5: {
@@ -522,12 +537,57 @@ static bool sm_blocked_on_cpu(pio_t *p, int smi)
     return blocked;
 }
 
+// The longest a state machine cycle can last, for counting how many surely fit in a span.
 static uint64_t sm_period(chip_t *m, pio_sm_t *sm)
 {
     uint32_t i = sm->clkdiv >> 16, f = (sm->clkdiv >> 8) & 0xff;
     if (!i)
         i = 65536;
-    return (uint64_t)m->sys_ps * (i * 256 + f) / 256;
+    return (uint64_t)m->sys_ps * (i + (f != 0));
+}
+
+// The time n state machine cycles take. The divider runs a state machine on whole system clock
+// cycles, INT of them each time and one more whenever the fraction carries, so a fractional
+// divider gives uneven cycles, which timing read back from other devices can depend on.
+static inline uint64_t sm_ticks(chip_t *m, pio_sm_t *sm, uint64_t n)
+{
+    uint32_t i = sm->clkdiv >> 16, f = (sm->clkdiv >> 8) & 0xff;
+    if (!i)
+        i = 65536;
+    if (!f)
+        return n * i * m->sys_ps;
+    uint64_t acc = sm->div_acc + n * f;
+    sm->div_acc = (uint32_t)(acc & 0xff);
+    return (n * i + (acc >> 8)) * m->sys_ps;
+}
+
+// Moves a state machine that can do nothing until after time t on to its first cycle after t; the
+// divider keeps counting through the wait, as the hardware's does through a stall.
+static void sm_skip_past(chip_t *m, pio_sm_t *sm, uint64_t t)
+{
+    if (sm->next_t > t)
+        return;
+    uint32_t i = sm->clkdiv >> 16, f = (sm->clkdiv >> 8) & 0xff;
+    if (!i)
+        i = 65536;
+    uint64_t gap = t - sm->next_t;
+    // Most waits are a few cycles long, which stepping covers sooner than dividing does.
+    if (gap < 8 * (uint64_t)i * m->sys_ps) {
+        do
+            sm->next_t += sm_ticks(m, sm, 1);
+        while (sm->next_t <= t);
+        return;
+    }
+    uint64_t n;
+    if (!f) {
+        n = gap / ((uint64_t)i * m->sys_ps) + 1;
+    } else {
+        uint64_t span = gap / m->sys_ps + 1;
+        n = span * 256 / (i * 256 + f);
+        while (n * i + ((sm->div_acc + n * f) >> 8) < span)
+            n++;
+    }
+    sm->next_t += sm_ticks(m, sm, n);
 }
 
 // "out pins, 1 side 0" followed by "nop side 1", wrapping, with autopull: the serial transmitter
@@ -563,7 +623,6 @@ static bool run_spi_out(chip_t *m, pio_t *p, int smi)
     unsigned sck, mosi;
     if (sm->delay || sm->pc != ((sm->execctrl >> 7) & 31) || !spi_out_program(p, sm, &sck, &mosi))
         return false;
-    uint64_t period = sm_period(m, sm);
     unsigned thresh = ((sm->shiftctrl >> 25) & 31) ? ((sm->shiftctrl >> 25) & 31) : 32;
     bool right = sm->shiftctrl & (1u << 19);
     int last = -1;
@@ -574,7 +633,7 @@ static bool run_spi_out(chip_t *m, pio_t *p, int smi)
                 p->fdebug |= 1u << (24 + smi);
                 sm->stalled = true;
                 set_pin_quiet(m, p, sck, false);
-                sm->next_t = m->now + 1;
+                sm_skip_past(m, sm, m->now);
                 break;
             }
             sm->osr = v;
@@ -586,7 +645,7 @@ static bool run_spi_out(chip_t *m, pio_t *p, int smi)
         sm->osr_count++;
         devices_spi_bit(m, sck, mosi, bit);
         last = bit;
-        sm->next_t += 2 * period;
+        sm->next_t += sm_ticks(m, sm, 2);
     }
     if (last >= 0) {
         set_pin_quiet(m, p, mosi, last);
@@ -617,7 +676,7 @@ static bool skip_count_loop(chip_t *m, pio_t *p, int smi)
     if (!k)
         return false;
     sm->y -= k;
-    sm->next_t += 3 * (uint64_t)k * period;
+    sm->next_t += sm_ticks(m, sm, 3 * (uint64_t)k);
     return true;
 }
 
@@ -670,7 +729,6 @@ static bool run_gspi(chip_t *m, pio_t *p, int smi)
     if (((pc - g.out_pc) & 31) > ((g.end_pc - g.out_pc) & 31))
         return false;
     unsigned top = (sm->execctrl >> 12) & 31;
-    uint64_t period = sm_period(m, sm);
     while (sm->next_t <= m->now) {
         uint16_t ins = p->instr[pc];
         unsigned next = pc == top ? g.out_pc : (pc + 1) & 31;
@@ -681,7 +739,7 @@ static bool run_gspi(chip_t *m, pio_t *p, int smi)
                 if (!tx_pop(sm, &v)) {
                     p->fdebug |= 1u << (24 + smi);
                     sm->stalled = true;
-                    sm->next_t = m->now + 1;
+                    sm_skip_past(m, sm, m->now);
                     break;
                 }
                 sm->osr = v;
@@ -710,7 +768,7 @@ static bool run_gspi(chip_t *m, pio_t *p, int smi)
                 if (!rx_push(sm, sm->isr)) {
                     p->fdebug |= 1u << smi;
                     sm->stalled = true;
-                    sm->next_t = m->now + 1;
+                    sm_skip_past(m, sm, m->now);
                     break;
                 }
                 sm->isr = 0;
@@ -726,7 +784,7 @@ static bool run_gspi(chip_t *m, pio_t *p, int smi)
             pc = next;
         }
         sm->stalled = false;
-        sm->next_t += period;
+        sm->next_t += sm_ticks(m, sm, 1);
     }
     sm->pc = pc;
     return true;
@@ -734,11 +792,14 @@ static bool run_gspi(chip_t *m, pio_t *p, int smi)
 
 void pio_sync(chip_t *m, pio_t *p)
 {
+    if (p->syncing)
+        return;
     uint32_t en = p->ctrl & 0xf;
     if (!en) {
         p->t = m->now;
         return;
     }
+    p->syncing = true;
     while (true) {
         uint64_t next = UINT64_MAX;
         int which = -1;
@@ -756,7 +817,7 @@ void pio_sync(chip_t *m, pio_t *p)
         if (run_gspi(m, p, which) || run_spi_out(m, p, which) || skip_count_loop(m, p, which))
             continue;
         if (sm_blocked_on_cpu(p, which)) {
-            sm->next_t = m->now + 1;
+            sm_skip_past(m, sm, m->now);
             continue;
         }
         uint64_t period = sm_period(m, sm);
@@ -765,20 +826,32 @@ void pio_sync(chip_t *m, pio_t *p)
             if (skip > (uint64_t)(sm->delay - 1))
                 skip = (uint64_t)(sm->delay - 1);
             sm->delay -= (int)skip;
-            sm->next_t += skip * period;
+            sm->next_t += sm_ticks(m, sm, skip);
         }
         uint64_t edge_t = m->edge_t;
         m->edge_t = sm->next_t;
+        int txn = sm->txn, rxn = sm->rxn;
         sm_step(m, p, which);
+        // DMA keeps up with a FIFO as the state machine fills or drains it, not only at the end.
+        if (sm->txn != txn || sm->rxn != rxn)
+            update_dreqs(m, p, which);
         m->edge_t = edge_t;
-        sm->next_t += period;
+        sm->next_t += sm_ticks(m, sm, 1);
     }
+    p->syncing = false;
     p->t = m->now;
     update_irqs(m, p);
     ev_cancel(m, &p->ev);
-    p->ev.fn = pio_event;
-    p->ev.ctx = p;
-    ev_schedule(m, &p->ev, m->now + PIO_POLL_PS);
+    // A state machine waiting on a FIFO only the CPU or DMA can serve does nothing anyone can see
+    // until they reach the block, which brings it up to date first; only the others need polling.
+    for (int i = 0; i < 4; i++) {
+        if ((en & (1u << i)) && !sm_blocked_on_cpu(p, i)) {
+            p->ev.fn = pio_event;
+            p->ev.ctx = p;
+            ev_schedule(m, &p->ev, m->now + PIO_POLL_PS);
+            break;
+        }
+    }
 }
 
 static void pio_event(chip_t *m, emu_event_t *ev)

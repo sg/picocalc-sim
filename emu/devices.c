@@ -48,6 +48,43 @@ void pcsim_gpio_drive_input(unsigned pin, int level)
     pcsim_machine_unlock();
 }
 
+void pcsim_gpio_drive_input_locked(unsigned pin, int level)
+{
+    chip_t *m = g_chip;
+    if (!m || pin >= NUM_GPIO_MAX)
+        return;
+    gpio_pin_t *g = &m->gpio[pin];
+    bool drive = level >= 0, lvl = level > 0;
+    if (g->ext_driven == drive && g->ext_level == lvl)
+        return;
+    g->ext_driven = drive;
+    g->ext_level = lvl;
+    gpio_refresh_mask(m, 1ull << pin);
+}
+
+uint64_t pcsim_gpio_edge_time(void)
+{
+    chip_t *m = g_chip;
+    return m->pin_t ? m->pin_t : m->edge_t ? m->edge_t : m->now;
+}
+
+void pcsim_gpio_drive_input_at(unsigned pin, int level, uint64_t t)
+{
+    chip_t *m = g_chip;
+    if (!m)
+        return;
+    uint64_t at = m->ext_at;
+    m->ext_at = t;
+    pcsim_gpio_drive_input_locked(pin, level);
+    m->ext_at = at;
+}
+
+int pcsim_gpio_pad_speed(unsigned pin)
+{
+    chip_t *m = g_chip;
+    return m && pin < NUM_GPIO_MAX ? gpio_pad_speed(m, pin) : 0;
+}
+
 bool pcsim_gpio_level(unsigned pin)
 {
     chip_t *m = g_chip;

@@ -75,6 +75,7 @@ add_executable(pcsim
     sim/net/net.c
     sim/net/tcp.c
     sim/devices/audio.c
+    sim/devices/esp_psram.c
     sim/devices/picocalc_board.c
     sim/devices/sdcard.c
     sim/devices/southbridge.c

@@ -184,10 +184,27 @@ static void timers_arm(chip_t *m)
     }
 }
 
+// A channel paced by a PIO state machine moves only as the state machine catches up, which a CPU
+// waiting on the channel would otherwise not cause, so the PIO catches up before it looks.
+static void sync_pacers(chip_t *m)
+{
+    unsigned pios = 0;
+    for (int ch = 0; ch < 16; ch++) {
+        uint32_t ctrl = m->dma.ch[ch].ctrl;
+        unsigned sel = (ctrl >> 17) & 0x3f;
+        if ((ctrl & CH_BUSY) && sel < DREQ_SPI0_TX)
+            pios |= 1u << (sel >> 3);
+    }
+    for (int i = 0; i < 3; i++)
+        if (pios & (1u << i))
+            pio_sync(m, &m->pio[i]);
+}
+
 uint32_t dma_read(chip_t *m, uint32_t off, bool peek)
 {
-    (void)peek;
     dma_t *d = &m->dma;
+    if (!peek)
+        sync_pacers(m);
     if (off < 0x400) {
         dma_ch_t *c = &d->ch[off >> 6];
         switch (off & 0x3f) {

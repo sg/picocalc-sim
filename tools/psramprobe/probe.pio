@@ -1,0 +1,20 @@
+; Takes one sample of a pin every cycle, so the cycle at which a change reaches the PIO can be read back.
+.program probe_sample
+    in pins, 1
+
+; A slow SPI master whose clock phases all last the same number of cycles (the [7]s are replaced
+; at load time). X holds the bits to write less one and Y the bits to read.
+.program probe_spi
+.side_set 2
+public wr:
+    out pins, 1      side 0b00 [7]
+    jmp x-- wr       side 0b10 [7]
+    jmp !y done      side 0b10
+    jmp y-- rd       side 0b10
+rd:
+    nop              side 0b00 [7]
+    jmp y-- rd       side 0b10 [7]
+done:
+    nop              side 0b01 [7]
+public end:
+    jmp end          side 0b01

@@ -53,11 +53,16 @@ bool picocalc_audio_play(picocalc_audio_t *a);
 // came from the device.
 size_t picocalc_audio_pull(picocalc_audio_t *a, int16_t *frames, size_t n);
 
+// The mainboard's PSRAM, an ESP-PSRAM64H on GPIOs; sio_pins are SIO0 (SI) to SIO3.
+typedef struct esp_psram esp_psram_t;
+esp_psram_t *esp_psram_create(unsigned cs_pin, unsigned sck_pin, const unsigned sio_pins[4]);
+
 typedef struct picocalc {
     st7365p_t *lcd;
     southbridge_t *sb;
     sdcard_t *sd;
     picocalc_audio_t *audio;
+    esp_psram_t *psram;
 } picocalc_t;
 
 extern picocalc_t pcsim_picocalc;

@@ -12,6 +12,25 @@
 #define PAD_OD (1u << 7)
 #define PAD_ISO (1u << 8)
 
+// A pin's change takes a cycle to leave the chip and then the pad's delay to reach the board, and
+// IN_DELAY_PS more to come back in. Measured on a PicoCalc's GP21, which clocks the mainboard PSRAM
+// and was read back on its own input: 6.8 ns falling and 6.2 ns rising round trip with the default
+// 4 mA slow-slew pad, 6.0 and 5.55 ns at 12 mA fast slew. Other settings are interpolated.
+#define IN_DELAY_PS 1000
+
+// Edge speed in quarters of the way from 4 mA slow slew (0) to 12 mA fast (4).
+int gpio_pad_speed(chip_t *m, unsigned pin)
+{
+    uint32_t pad = m->pads[pin];
+    return (int)((pad >> 4) & 3) - 1 + ((pad & 1) ? 2 : 0);
+}
+
+static uint32_t out_delay_ps(chip_t *m, unsigned pin, bool rising)
+{
+    int q = gpio_pad_speed(m, pin);
+    return (uint32_t)(rising ? 5200 - 650 * q / 4 : 5800 - 800 * q / 4);
+}
+
 void gpio_reset(chip_t *m)
 {
     for (int i = 0; i < NUM_GPIO_MAX; i++) {
@@ -28,6 +47,8 @@ void gpio_reset(chip_t *m)
     memset(m->gpio_edge, 0, sizeof(m->gpio_edge));
     memset(m->pads_qspi, 0, sizeof(m->pads_qspi));
     m->gpio_irq_pins = 0;
+    m->in_late = 0;
+    m->in_settle_t = 0;
     for (int i = 0; i < NUM_GPIO_MAX; i++)
         m->gpio[i].level = m->gpio[i].ext_driven ? m->gpio[i].ext_level : false;
     m->gpio_in_valid = false;
@@ -77,7 +98,7 @@ static bool periph_out(chip_t *m, unsigned pin, bool *oe)
     }
 }
 
-static bool compute_level(chip_t *m, unsigned pin)
+static bool compute_level(chip_t *m, unsigned pin, bool *own)
 {
     gpio_pin_t *g = &m->gpio[pin];
     uint32_t pad = m->pads[pin];
@@ -95,10 +116,13 @@ static bool compute_level(chip_t *m, unsigned pin)
     case 3: oe = true; break;
     default: break;
     }
+    *own = false;
     if (pad & PAD_ISO)
         return g->level;
-    if (oe && !(pad & PAD_OD))
+    if (oe && !(pad & PAD_OD)) {
+        *own = true;
         return out;
+    }
     if (g->ext_driven)
         return g->ext_level;
     if (pad & PAD_PUE)
@@ -147,24 +171,55 @@ static bool irq_enabled(chip_t *m)
     return m->gpio_irq_pins != 0;
 }
 
+static void hist_push(chip_t *m, unsigned pin, uint64_t t, bool lvl)
+{
+    gpio_pin_t *g = &m->gpio[pin];
+    if (!g->hist_n) {
+        g->hist_base = g->level;
+    } else {
+        // A wire's changes arrive in the order they were made.
+        if (t < g->hist_t[g->hist_new])
+            t = g->hist_t[g->hist_new];
+        if (g->hist_n == PIN_HIST) {
+            unsigned old = (g->hist_new + 1) & (PIN_HIST - 1);
+            g->hist_base = (g->hist_lvl >> old) & 1;
+            g->hist_n--;
+        }
+    }
+    g->hist_new = (g->hist_new + 1) & (PIN_HIST - 1);
+    g->hist_t[g->hist_new] = t;
+    g->hist_lvl = (uint8_t)((g->hist_lvl & ~(1u << g->hist_new)) | ((unsigned)lvl << g->hist_new));
+    g->hist_n++;
+    m->in_late |= 1ull << pin;
+    if (t > m->in_settle_t)
+        m->in_settle_t = t;
+}
+
 void gpio_refresh_mask(chip_t *m, uint64_t mask)
 {
     unsigned n = m->board->num_gpio;
     uint64_t changed_pins = 0;
     mask &= n >= 64 ? ~0ull : ((1ull << n) - 1);
     uint64_t waves = mask & g_wave_pins;
+    uint64_t edge = m->edge_t ? m->edge_t : m->now;
     while (mask) {
         unsigned pin = (unsigned)__builtin_ctzll(mask);
         mask &= mask - 1;
-        bool lvl = compute_level(m, pin);
+        bool own;
+        bool lvl = compute_level(m, pin, &own);
         gpio_pin_t *g = &m->gpio[pin];
         if (lvl == g->level)
             continue;
+        uint64_t at = own ? edge + m->sys_ps + out_delay_ps(m, pin, lvl) : m->ext_at ? m->ext_at : edge;
+        hist_push(m, pin, at + IN_DELAY_PS, lvl);
         g->level = lvl;
         m->gpio_in_valid = false;
         changed_pins |= 1ull << pin;
         m->gpio_edge[pin >> 3] |= (lvl ? 8u : 4u) << (4 * (pin & 7));
+        uint64_t pin_t = m->pin_t;
+        m->pin_t = at;
         devices_gpio_changed(m, pin, lvl);
+        m->pin_t = pin_t;
     }
     if (changed_pins & m->gpio_irq_pins)
         irq_update(m);
@@ -199,20 +254,23 @@ void gpio_wave(chip_t *m, unsigned pin, pin_wave_t *w)
     w->level = g->level;
 }
 
-bool gpio_in(chip_t *m, unsigned pin)
+static bool pad_input(chip_t *m, unsigned pin, bool v)
 {
-    if (pin >= NUM_GPIO_MAX)
-        return false;
-    gpio_pin_t *g = &m->gpio[pin];
     if (!(m->pads[pin] & PAD_IE))
         return false;
-    bool v = g->level;
-    switch ((g->ctrl >> 16) & 3) {
+    switch ((m->gpio[pin].ctrl >> 16) & 3) {
     case 1: return !v;
     case 2: return false;
     case 3: return true;
     default: return v;
     }
+}
+
+bool gpio_in(chip_t *m, unsigned pin)
+{
+    if (pin >= NUM_GPIO_MAX)
+        return false;
+    return pad_input(m, pin, m->gpio[pin].level);
 }
 
 uint64_t gpio_in_all(chip_t *m)
@@ -227,6 +285,38 @@ uint64_t gpio_in_all(chip_t *m)
     v |= 0xfull << 60 | 1ull << 59;
     m->gpio_in_cache = v;
     m->gpio_in_valid = true;
+    return v;
+}
+
+static bool level_at(const gpio_pin_t *g, uint64_t t)
+{
+    unsigned i = g->hist_new;
+    for (unsigned k = 0; k < g->hist_n; k++, i = (i - 1) & (PIN_HIST - 1))
+        if (g->hist_t[i] <= t)
+            return (g->hist_lvl >> i) & 1;
+    return g->hist_base;
+}
+
+// The inputs as the PIO samples them at time t: each of `pins` as it was once its changes had
+// arrived, and two cycles before that through the synchroniser unless `bypass` has the pin. The
+// synchroniser's first flop catches a change about 0.1 ns sooner than the bypass path does.
+uint64_t gpio_in_at(chip_t *m, uint64_t pins, uint64_t bypass, uint64_t t)
+{
+    uint64_t v = gpio_in_all(m);
+    uint64_t late = pins & m->in_late;
+    uint64_t sync = 2 * (uint64_t)m->sys_ps - 100;
+    if (!late || t >= m->in_settle_t + sync)
+        return v;
+    while (late) {
+        unsigned pin = (unsigned)__builtin_ctzll(late);
+        late &= late - 1;
+        const gpio_pin_t *g = &m->gpio[pin];
+        uint64_t ts = ((bypass >> pin) & 1) ? t : t > sync ? t - sync : 0;
+        if (g->hist_t[g->hist_new] <= ts)
+            continue;
+        uint64_t bit = 1ull << pin;
+        v = pad_input(m, pin, level_at(g, ts)) ? v | bit : v & ~bit;
+    }
     return v;
 }
 

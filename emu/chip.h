@@ -91,11 +91,19 @@ enum {
     FUNC_NULL = 0x1f,
 };
 
+#define PIN_HIST 8
+
 typedef struct {
     uint32_t ctrl;
     bool ext_driven;
     bool ext_level;
     bool level;
+    // `level` reaches the PIO's inputs a few nanoseconds after it changes at the pad, so its recent
+    // changes are kept with the time each arrives: a ring, newest at hist_new, and the level
+    // before the oldest one kept.
+    uint8_t hist_new, hist_n, hist_lvl;
+    bool hist_base;
+    uint64_t hist_t[PIN_HIST];
 } gpio_pin_t;
 
 enum { WAVE_LEVEL, WAVE_PWM };
@@ -178,6 +186,8 @@ typedef struct {
     uint64_t out_val, out_en, pin_owned;
     uint64_t t;
     int idx;
+    // Set while the state machines catch up, during which DMA they wake may read or write the FIFOs.
+    bool syncing;
     emu_event_t ev;
 } pio_t;
 
@@ -344,6 +354,12 @@ struct chip {
     // override or pad.
     uint64_t gpio_in_cache;
     bool gpio_in_valid;
+    // Pins with changes in their history, and the latest time any of them reaches the inputs.
+    uint64_t in_late, in_settle_t;
+    // While a pin change is handled: when it reached the pad, as watching devices see it. A device
+    // driving a pin from its watch callback sets ext_at to when its own output changes, or leaves
+    // it 0 for at once.
+    uint64_t pin_t, ext_at;
     uint32_t qspi_ctrl[6];
     gpio_watch_t *watch[NUM_GPIO_MAX];
 
@@ -483,6 +499,8 @@ void gpio_refresh_mask(chip_t *m, uint64_t mask);
 bool gpio_in(chip_t *m, unsigned pin);
 int gpio_func(chip_t *m, unsigned pin);
 uint64_t gpio_in_all(chip_t *m);
+uint64_t gpio_in_at(chip_t *m, uint64_t pins, uint64_t bypass, uint64_t t);
+int gpio_pad_speed(chip_t *m, unsigned pin);
 bool qspi_ss_override(chip_t *m, bool *level);
 void gpio_wave(chip_t *m, unsigned pin, pin_wave_t *w);
 
