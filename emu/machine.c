@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -49,9 +50,15 @@ static const char *flash_path;
 // would leave it, until pcsim exits.
 static uint8_t *kept_flash[8];
 
+// Threads waiting for the lock, which the emulation thread hands over between slices. Running
+// behind real time it never sleeps, and would otherwise take the lock back before a waiter woke.
+static atomic_int lock_waiters;
+
 void pcsim_machine_lock(void)
 {
+    atomic_fetch_add(&lock_waiters, 1);
     pthread_mutex_lock(&lock);
+    atomic_fetch_sub(&lock_waiters, 1);
 }
 
 void pcsim_machine_unlock(void)
@@ -400,6 +407,8 @@ static void *machine_main(void *arg)
             speed_host = host;
             speed_emu = chip.now;
         }
+        for (int spins = 0; atomic_load(&lock_waiters) && spins < 1000; spins++)
+            sched_yield();
         pthread_mutex_lock(&lock);
         if (host - last_save > 2000000000ull) {
             flash_save();
