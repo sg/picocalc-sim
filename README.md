@@ -159,9 +159,15 @@ build/pcsim --board pico2 bootloader_pico2.uf2
 ```
 
 With no app in flash the loader opens its menu; choosing a UF2 flashes it into the app partition
-and boots it. Later runs (`build/pcsim` with no UF2) boot the app directly; hold F1 (or Up) and
-press F12 to reset into the menu instead. The RP2040 build works the same way, with
-`BOOT2040.UF2`, a `pico1-apps` folder and `--board pico bootloader_pico.uf2`.
+and boots it. Later runs (`build/pcsim` with no UF2) boot the app directly. For the menu instead,
+hold F1 (or Up) while choosing Machine › Restart, as when switching the PicoCalc on with it held,
+or press F12 and hold F1 straight after; held before F12, the key reaches the running app, not the
+loader. The RP2040 build works the same way, with `BOOT2040.UF2`, a `pico1-apps` folder and
+`--board pico bootloader_pico.uf2`.
+
+BlairLeduc's [PicoCalc shell](https://github.com/BlairLeduc/picocalc-shell) takes the menu's place
+on RP2350 boards: rename the card's `BOOT2350.UF2` to `BOOT2350.ORG`, copy the shell there as
+`BOOT2350.UF2`, and type an app's name at its prompt to flash it from `pico2-apps` and boot it.
 
 A UF2 for RAM rather than flash (such as `BOOT2350.UF2` itself) is loaded into SRAM after
 power-on, as BOOTSEL's drive would, and the board resets into it.
@@ -233,8 +239,9 @@ chords its keyboard controller uses for them:
 
 Drop a UF2 file on the window to flash it, or a `.img` file to insert it as the SD card. Holding a
 key does not auto-repeat, as on the real keyboard. Key mapping assumes a US layout. When the
-firmware powers the PicoCalc off, any key powers it back on. Keys go to the PicoCalc except while
-one of pcsim's own text fields has them.
+firmware powers the PicoCalc off, any key powers it back on. A key held while the machine restarts
+is still down as it powers on. Keys go to the PicoCalc except while one of pcsim's own text fields
+has them.
 
 ### Menus and settings
 
@@ -409,6 +416,7 @@ Tested here with UF2s built from `../pcsh`, `../picocalc_lua`, `../picocalc-z80`
 | picocalc-z80 | boots to its menu | boots to its menu | boots, finds and benchmarks the PSRAM | boots to its menu | boots to its menu |
 | ftpserver | (no Pico 2 build) | FTP through a forward: login, list, transfers | same | (no Pico build) | same as Pico 2 W |
 | uf2loader 2.4.1 | menu, flashing and chaining apps | not tried | not tried | menu, flashing and booting apps | not tried |
+| PicoCalc shell 1.2 | running apps by name, `menu`, `bootsel`, its patched loader | not tried | not tried | RP2350 only | RP2350 only |
 | PicoMite 6.00.02RC23 | MMBasic prompt after its first-boot flash format (about 20 s), `PLAY TONE` | not tried | same, on the non-W Plus 2 | not tried | not tried |
 
 Not emulated yet, or not faithfully:

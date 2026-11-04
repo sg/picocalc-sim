@@ -117,6 +117,16 @@ static void release_all(void)
         key_up(held[nheld - 1].sym);
 }
 
+// A key held through the power switch is down as the PicoCalc starts, which is how uf2loader is
+// asked for its menu, so keys still held on the host are pressed again on the new machine.
+static void press_held(const SDL_Keycode *syms, int n)
+{
+    const bool *down = SDL_GetKeyboardState(NULL);
+    for (int i = 0; i < n; i++)
+        if (down[SDL_GetScancodeFromKey(syms[i], NULL)])
+            key_down(syms[i]);
+}
+
 static void SDLCALL audio_cb(void *ctx, SDL_AudioStream *stream, int additional, int total)
 {
     static int16_t buf[2 * 1024];
@@ -250,6 +260,10 @@ int pcsim_frontend_sdl_run(void)
         }
 
         if (pcsim_restart_requested()) {
+            SDL_Keycode carried[sizeof(held) / sizeof(held[0])];
+            int ncarried = nheld;
+            for (int i = 0; i < nheld; i++)
+                carried[i] = held[i].sym;
             // The devices are about to be freed, so nothing may hold a key or pull sound from them.
             release_all();
             if (audio)
@@ -257,8 +271,10 @@ int pcsim_frontend_sdl_run(void)
             audio = NULL;
             ui_restarting();
             // A machine that fails to start stays stopped, and the UI says why.
-            if (pcsim_machine_restart())
+            if (pcsim_machine_restart()) {
+                press_held(carried, ncarried);
                 audio = open_audio();
+            }
             last_lcd = last_sb = ~0u;
         }
         if (pcsim_opts.mute != muted) {
