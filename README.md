@@ -46,9 +46,9 @@ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
 cmake --build build-win -j
 ```
 
-That gives `build-win/pcsim.exe` and `build-win/tools/mkcard/pcsim-mkcard.exe`. Each is a single
-file that needs only DLLs Windows ships with, so it can be copied to any 64-bit Windows 10 or 11
-machine. MSYS2's MinGW-w64 should build it natively on Windows the same way, but that is untested.
+That gives `build-win/pcsim.exe`, `build-win/pcsim-console.exe` and
+`build-win/tools/mkcard/pcsim-mkcard.exe`. Each is a single file that needs only DLLs Windows
+ships with, so it can be copied to any 64-bit Windows 10 or 11 machine. MSYS2's MinGW-w64 should build it natively on Windows the same way, but that is untested.
 
 ### Checking a change to the emulator
 
@@ -82,8 +82,9 @@ Pushing a `v*` tag runs `.forgejo/workflows/release.yml` in the shared `picocalc
 It builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on
 each board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-test.sh`) and
 transfers files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`), then
-cross-compiles the Windows build (`ci/build-windows.sh`) and runs the same tests on it under Wine
-(`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads the RP2040 boot ROM from Raspberry
+cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `pcsim.exe` is
+windowed and the other two are console programs) and runs the same tests on `pcsim-console.exe`
+under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads the RP2040 boot ROM from Raspberry
 Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`); the ROM is used only for the tests
 and is not packed into the release. If they pass, it stages a draft release with
 `pcsim-TAG-linux-x86_64.tar.gz` and `pcsim-TAG-windows-x86_64.zip`. Pushing a commit runs nothing;
@@ -113,13 +114,16 @@ SD card is `~/.local/share/pcsim/sd.img` if it exists, or `--card IMAGE`:
 build/tools/mkcard/pcsim-mkcard ~/.local/share/pcsim/sd.img ../pcsh/sd_files
 ```
 
-On Windows that folder is `%LOCALAPPDATA%\pcsim`. Both programs are console programs, so run them
-from a Command Prompt or PowerShell (or drop a UF2 onto `pcsim.exe`):
+On Windows that folder is `%LOCALAPPDATA%\pcsim`. `pcsim.exe` is a windowed program: open it, or
+drop a UF2 onto it, and only its window appears. A Command Prompt or PowerShell neither waits for
+a windowed program nor shows what it prints, so `pcsim-console.exe` is the same program built for
+a console, for headless runs, `--console` and pcsim's messages. `pcsim-mkcard.exe` is a console
+program too:
 
 ```bat
 mkdir %LOCALAPPDATA%\pcsim
 pcsim-mkcard.exe %LOCALAPPDATA%\pcsim\sd.img sd_files
-pcsim.exe pcsh-pico2w-v0.1.2.uf2
+pcsim-console.exe pcsh-pico2w-v0.1.2.uf2
 ```
 
 `pcsim-mkcard IMAGE [-s MB] [-l LABEL] [DIR...]` formats an MBR/FAT32 card (512 MB by default)

@@ -52,7 +52,8 @@ add_library(pcsim_lwip STATIC
 target_include_directories(pcsim_lwip PUBLIC sim/net ${LWIP_DIR}/src/include)
 target_compile_options(pcsim_lwip PRIVATE -w)
 
-add_executable(pcsim
+# Everything but main(), so the Windows build can link two programs without compiling twice.
+add_library(pcsim_objs OBJECT
     emu/chip.c
     emu/cpu.c
     emu/cyw43.c
@@ -85,25 +86,35 @@ add_executable(pcsim
     sim/devices/southbridge.c
     sim/devices/st7365p.c
     frontend/keys.c
-    frontend/main.c
     frontend/png.c
     frontend/script.c
     frontend/sdl.c
     frontend/settings.c)
-target_include_directories(pcsim PRIVATE emu sim/include)
-target_compile_options(pcsim PRIVATE -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(pcsim PRIVATE pcsim_lwip Threads::Threads m)
+target_include_directories(pcsim_objs PUBLIC emu sim/include)
+target_compile_options(pcsim_objs PUBLIC -Wall -Wextra -Wno-unused-parameter)
+target_link_libraries(pcsim_objs PUBLIC pcsim_lwip Threads::Threads m)
 if(WIN32)
-    target_link_libraries(pcsim PRIVATE ws2_32 iphlpapi winmm)
+    target_link_libraries(pcsim_objs PUBLIC ws2_32 iphlpapi winmm)
 endif()
 if(PCSIM_HAVE_SDL)
-    target_sources(pcsim PRIVATE frontend/ui.cpp)
-    target_compile_definitions(pcsim PRIVATE PCSIM_HAVE_SDL=1)
-    target_link_libraries(pcsim PRIVATE pcsim_imgui)
+    target_sources(pcsim_objs PRIVATE frontend/ui.cpp)
+    target_compile_definitions(pcsim_objs PRIVATE PCSIM_HAVE_SDL=1)
+    target_link_libraries(pcsim_objs PUBLIC pcsim_imgui)
     # the C++ runtime goes into the binary, which then still needs nothing beyond the C library
     if(NOT WIN32 AND NOT APPLE)
-        target_link_options(pcsim PRIVATE -static-libstdc++ -static-libgcc)
+        target_link_options(pcsim_objs PUBLIC -static-libstdc++ -static-libgcc)
     endif()
+endif()
+
+add_executable(pcsim frontend/main.c)
+target_link_libraries(pcsim PRIVATE pcsim_objs)
+if(WIN32)
+    # Started from Explorer, pcsim.exe then opens no console window beside its own. A command line
+    # neither waits for such a program nor shows its output, so pcsim-console.exe is the same
+    # program built for one.
+    target_link_options(pcsim PRIVATE -Wl,--subsystem,windows)
+    add_executable(pcsim-console frontend/main.c)
+    target_link_libraries(pcsim-console PRIVATE pcsim_objs)
 endif()
 
 add_subdirectory(tools/mkcard)

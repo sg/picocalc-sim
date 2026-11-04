@@ -17,9 +17,10 @@ export WINEDEBUG=-all
 # Creating the Wine prefix takes a while, so do it once here rather than inside a test's timeout.
 wineboot -i >/dev/null 2>&1 || true
 
-for exe in pcsim tools/mkcard/pcsim-mkcard; do
-    wrapper="$build/$(basename "$exe")-wine"
-    printf '#!/bin/sh\nWINEDEBUG=-all exec wine "%s" "$@"\n' "$build/$exe.exe" >"$wrapper"
+# pcsim-wine runs pcsim-console.exe, the build a command line on Windows uses.
+for exe in pcsim:pcsim-console pcsim-mkcard:tools/mkcard/pcsim-mkcard; do
+    wrapper="$build/${exe%%:*}-wine"
+    printf '#!/bin/sh\nWINEDEBUG=-all exec wine "%s" "$@"\n' "$build/${exe#*:}.exe" >"$wrapper"
     chmod +x "$wrapper"
 done
 wine --version

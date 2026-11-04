@@ -77,6 +77,7 @@ jobs:
           name="pcsim-$TAG-windows-x86_64"
           mkdir -p "pkg/$name"
           x86_64-w64-mingw32-strip -o "pkg/$name/pcsim.exe" build-win/pcsim.exe
+          x86_64-w64-mingw32-strip -o "pkg/$name/pcsim-console.exe" build-win/pcsim-console.exe
           x86_64-w64-mingw32-strip -o "pkg/$name/pcsim-mkcard.exe" build-win/tools/mkcard/pcsim-mkcard.exe
           cp src/README.md "pkg/$name/"
           (cd pkg && python3 -m zipfile -c "../dist/$name.zip" "$name")
@@ -97,7 +98,7 @@ jobs:
           prev=$(git -C src describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
           {
             echo "- Linux x86-64: needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39)."
-            echo "- Windows x86-64: for Windows 10 and 11; run pcsim.exe from a Command Prompt or PowerShell."
+            echo "- Windows x86-64: for Windows 10 and 11; open pcsim.exe, or run pcsim-console.exe from a Command Prompt or PowerShell for headless runs and pcsim's messages."
             echo
             echo "Changes since ${prev:-the first commit}:"
             echo
