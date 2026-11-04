@@ -10,9 +10,9 @@ endif()
 
 set(FATFS_DIR "" CACHE PATH "FatFs sources (ff.c); found or fetched when empty")
 set(LWIP_DIR "" CACHE PATH "lwIP sources (src/core/tcp.c); found or fetched when empty")
-option(PCSIM_SDL "Build the SDL2 window frontend" ON)
-option(PCSIM_FETCH_SDL "Download and build SDL2 when it is not installed" ON)
-set(PCSIM_SDL_SHA256 "24b574f71c87a763f50704bbb630cbe38298d544a1f890f099a4696b1d6beba4" CACHE STRING "SHA-256 of the SDL2 release tarball")
+option(PCSIM_SDL "Build the SDL3 window frontend" ON)
+option(PCSIM_FETCH_SDL "Download and build SDL3 when it is not installed" ON)
+set(PCSIM_SDL3_SHA256 "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3" CACHE STRING "SHA-256 of the SDL3 release tarball")
 
 find_package(Threads REQUIRED)
 include(cmake/Dependencies.cmake)

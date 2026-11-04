@@ -17,10 +17,10 @@ int pcsim_frontend_sdl_run(void)
 
 #else
 
+#include <stdio.h>
 #include <string.h>
 
-#define SDL_MAIN_HANDLED
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 bool pcsim_frontend_sdl_available(void)
 {
@@ -114,65 +114,88 @@ static void release_all(void)
         key_up(held[nheld - 1].sym);
 }
 
-static void audio_cb(void *ctx, Uint8 *stream, int len)
+static void SDLCALL audio_cb(void *ctx, SDL_AudioStream *stream, int additional, int total)
 {
-    int16_t *s = (int16_t *)stream;
-    size_t frames = (size_t)len / 4;
-    picocalc_audio_pull(pcsim_picocalc.audio, s, frames);
+    static int16_t buf[2 * 1024];
+    int frames = (additional + 3) / 4;
     int gain = pcsim_opts.volume * 256 / 100;
-    for (size_t i = 0; i < 2 * frames; i++)
-        s[i] = (int16_t)(s[i] * gain / 256);
+    while (frames > 0) {
+        int n = frames < 1024 ? frames : 1024;
+        picocalc_audio_pull(pcsim_picocalc.audio, buf, (size_t)n);
+        for (int i = 0; i < 2 * n; i++)
+            buf[i] = (int16_t)(buf[i] * gain / 256);
+        SDL_PutAudioStreamData(stream, buf, n * 4);
+        frames -= n;
+    }
 }
 
-static SDL_AudioDeviceID open_audio(void)
+static SDL_AudioStream *open_audio(void)
 {
     if (pcsim_opts.mute)
-        return 0;
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+        return NULL;
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
         pcsim_log("no sound: %s", SDL_GetError());
-        return 0;
+        return NULL;
     }
-    SDL_AudioSpec want = {.freq = 48000, .format = AUDIO_S16SYS, .channels = 2, .samples = 512, .callback = audio_cb};
-    SDL_AudioDeviceID dev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
-    if (!dev) {
+    // SDL3 would pick 1024 frames at 48 kHz; 512 keeps the sound closer behind the picture.
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+    SDL_AudioSpec spec = {.format = SDL_AUDIO_S16, .channels = 2, .freq = 48000};
+    SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_cb, NULL);
+    if (!stream) {
         pcsim_log("no sound: %s", SDL_GetError());
-        return 0;
+        return NULL;
     }
     if (!picocalc_audio_play(pcsim_picocalc.audio)) {
-        SDL_CloseAudioDevice(dev);
-        return 0;
+        SDL_DestroyAudioStream(stream);
+        return NULL;
     }
-    SDL_PauseAudioDevice(dev, 0);
-    return dev;
+    SDL_ResumeAudioStreamDevice(stream);
+    return stream;
+}
+
+static SDL_Window *create_window(int scale)
+{
+    // Windows and X11 size windows in physical pixels, so the desktop's own scale is applied to
+    // make --scale open the same size of window everywhere.
+    float content = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    if (content < 1.0f)
+        content = 1.0f;
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, pcsim_window_title());
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, (int)(PCSIM_LCD_WIDTH * scale * content));
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, (int)(PCSIM_LCD_HEIGHT * scale * content));
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
+    SDL_Window *window = SDL_CreateWindowWithProperties(props);
+    SDL_DestroyProperties(props);
+    return window;
 }
 
 int pcsim_frontend_sdl_run(void)
 {
-    SDL_SetMainReady();
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         pcsim_log("SDL could not start (%s); running headless", SDL_GetError());
         return pcsim_frontend_headless_run();
     }
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
-    int scale = pcsim_opts.scale;
-    SDL_Window *window = SDL_CreateWindow(pcsim_window_title(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                          PCSIM_LCD_WIDTH * scale, PCSIM_LCD_HEIGHT * scale,
-                                          SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_Window *window = create_window(pcsim_opts.scale);
     if (!window) {
         pcsim_log("SDL window failed (%s); running headless", SDL_GetError());
         SDL_Quit();
         return pcsim_frontend_headless_run();
     }
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, NULL);
     if (!renderer)
-        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-    SDL_RenderSetLogicalSize(renderer, PCSIM_LCD_WIDTH, PCSIM_LCD_HEIGHT);
-    SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
+        renderer = SDL_CreateRenderer(window, SDL_SOFTWARE_RENDERER);
+    SDL_SetRenderVSync(renderer, 1);
+    SDL_SetRenderLogicalPresentation(renderer, PCSIM_LCD_WIDTH, PCSIM_LCD_HEIGHT,
+                                     SDL_LOGICAL_PRESENTATION_INTEGER_SCALE);
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                              PCSIM_LCD_WIDTH, PCSIM_LCD_HEIGHT);
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
     static uint32_t pixels[PCSIM_LCD_WIDTH * PCSIM_LCD_HEIGHT];
-    SDL_AudioDeviceID audio = open_audio();
+    SDL_AudioStream *audio = open_audio();
 
     uint64_t start = pcsim_mono_ns();
     uint32_t last_lcd = ~0u, last_sb = ~0u;
@@ -183,52 +206,34 @@ int pcsim_frontend_sdl_run(void)
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             switch (e.type) {
-            case SDL_QUIT:
+            case SDL_EVENT_QUIT:
                 running = false;
                 break;
-            case SDL_KEYDOWN:
+            case SDL_EVENT_KEY_DOWN:
                 if (e.key.repeat)
                     break;
-                if (e.key.keysym.sym == SDLK_F11)
+                if (e.key.key == SDLK_F11)
                     pcsim_screenshot_auto();
-                else if (e.key.keysym.sym == SDLK_F12) {
+                else if (e.key.key == SDLK_F12) {
                     // The BOOTSEL button on the Pico, held while the reset button is pressed.
-                    pcsim_bootsel_button((e.key.keysym.mod & KMOD_SHIFT) != 0);
+                    pcsim_bootsel_button((e.key.mod & SDL_KMOD_SHIFT) != 0);
                     pcsim_reboot("reset button");
-                }
-#ifdef __APPLE__
-                else if (e.key.keysym.sym == SDLK_CAPSLOCK) {
-                    pcsim_keys_press(PC_KEY_CAPS_LOCK);
-                    pcsim_keys_release(PC_KEY_CAPS_LOCK);
-                }
-#endif
-                else
-                    key_down(e.key.keysym.sym);
+                } else
+                    key_down(e.key.key);
                 break;
-            case SDL_KEYUP:
-#ifdef __APPLE__
-                // macOS reports Caps Lock as down when it latches and up when it unlatches, so
-                // each report is one press of the PicoCalc's key.
-                if (e.key.keysym.sym == SDLK_CAPSLOCK) {
-                    pcsim_keys_press(PC_KEY_CAPS_LOCK);
-                    pcsim_keys_release(PC_KEY_CAPS_LOCK);
-                    break;
-                }
-#endif
-                key_up(e.key.keysym.sym);
+            case SDL_EVENT_KEY_UP:
+                key_up(e.key.key);
                 break;
-            case SDL_DROPFILE: {
+            case SDL_EVENT_DROP_FILE: {
                 char err[256];
-                if (pcsim_flash_uf2(e.drop.file, err, sizeof(err)))
-                    pcsim_log("flashing %s", e.drop.file);
+                if (pcsim_flash_uf2(e.drop.data, err, sizeof(err)))
+                    pcsim_log("flashing %s", e.drop.data);
                 else
                     pcsim_log("%s", err);
-                SDL_free(e.drop.file);
                 break;
             }
-            case SDL_WINDOWEVENT:
-                if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
-                    release_all();
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
+                release_all();
                 break;
             default:
                 break;
@@ -256,13 +261,13 @@ int pcsim_frontend_sdl_run(void)
         }
         SDL_SetRenderDrawColor(renderer, 24, 24, 24, 255);
         SDL_RenderClear(renderer);
-        SDL_RenderCopy(renderer, texture, NULL, NULL);
+        SDL_RenderTexture(renderer, texture, NULL, NULL);
         SDL_RenderPresent(renderer);
         SDL_Delay(8);
     }
 
     if (audio)
-        SDL_CloseAudioDevice(audio);
+        SDL_DestroyAudioStream(audio);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

@@ -1,35 +1,37 @@
-# SDL2 for the window, FatFs for building card images.
+# SDL3 for the window, FatFs for building card images.
 
 include(FetchContent)
 
 set(PCSIM_HAVE_SDL OFF)
 if(PCSIM_SDL)
-    find_package(SDL2 CONFIG QUIET)
-    if(TARGET SDL2::SDL2)
-        set(PCSIM_SDL_TARGET SDL2::SDL2)
+    find_package(SDL3 CONFIG QUIET)
+    if(TARGET SDL3::SDL3)
+        set(PCSIM_SDL_TARGET SDL3::SDL3)
         set(PCSIM_HAVE_SDL ON)
-        message(STATUS "pcsim: using installed SDL2 ${SDL2_VERSION}")
-    elseif(TARGET SDL2::SDL2-static)
-        set(PCSIM_SDL_TARGET SDL2::SDL2-static)
+        message(STATUS "pcsim: using installed SDL3 ${SDL3_VERSION}")
+    elseif(TARGET SDL3::SDL3-static)
+        set(PCSIM_SDL_TARGET SDL3::SDL3-static)
         set(PCSIM_HAVE_SDL ON)
-        message(STATUS "pcsim: using installed static SDL2 ${SDL2_VERSION}")
+        message(STATUS "pcsim: using installed static SDL3 ${SDL3_VERSION}")
     elseif(PCSIM_FETCH_SDL)
-        message(STATUS "pcsim: SDL2 not installed; building SDL 2.30.9 from source")
+        message(STATUS "pcsim: SDL3 not installed; building SDL 3.4.18 from source")
         set(SDL_SHARED OFF CACHE BOOL "" FORCE)
         set(SDL_STATIC ON CACHE BOOL "" FORCE)
-        set(SDL_TEST OFF CACHE BOOL "" FORCE)
-        set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-        set(SDL2_DISABLE_UNINSTALL ON CACHE BOOL "" FORCE)
-        set(SDL2_DISABLE_SDL2MAIN ON CACHE BOOL "" FORCE)
-        FetchContent_Declare(SDL2
-            URL https://github.com/libsdl-org/SDL/releases/download/release-2.30.9/SDL2-2.30.9.tar.gz
-            URL_HASH SHA256=${PCSIM_SDL_SHA256}
+        set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+        set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+        # nothing in pcsim uses these, and leaving them out saves building them
+        foreach(subsystem CAMERA HAPTIC HIDAPI JOYSTICK SENSOR)
+            set(SDL_${subsystem} OFF CACHE BOOL "" FORCE)
+        endforeach()
+        FetchContent_Declare(SDL3
+            URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz
+            URL_HASH SHA256=${PCSIM_SDL3_SHA256}
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_MakeAvailable(SDL2)
-        set(PCSIM_SDL_TARGET SDL2::SDL2-static)
+        FetchContent_MakeAvailable(SDL3)
+        set(PCSIM_SDL_TARGET SDL3::SDL3-static)
         set(PCSIM_HAVE_SDL ON)
     else()
-        message(STATUS "pcsim: SDL2 not found; building headless only")
+        message(STATUS "pcsim: SDL3 not found; building headless only")
     endif()
 endif()
 

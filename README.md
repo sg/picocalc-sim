@@ -21,11 +21,13 @@ cmake -S . -B build
 cmake --build build -j
 ```
 
-If SDL2 is not installed the build downloads SDL 2.30.9 (hash-pinned) and links it statically.
-Installing the system package (`libsdl2-dev`, `brew install sdl2`) skips that; `-DPCSIM_SDL=OFF`
-builds a headless-only binary. FatFs, used by the card-image tool, comes from a sibling
-`ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and lwIP, used by the
-emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is fetched otherwise.
+If SDL3 is not installed the build downloads SDL 3.4.18 (hash-pinned) and links it statically. On
+Linux that needs the X11 and Wayland development headers, plus the audio ones for sound; the
+packages are listed in `ci/build-linux.sh`, and SDL's configure step names any X11 one that is
+missing. Installing the system package (`libsdl3-dev`, `brew install sdl3`) skips the download;
+`-DPCSIM_SDL=OFF` builds a headless-only binary. FatFs, used by the card-image tool, comes from a
+sibling `ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and lwIP, used by
+the emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is fetched otherwise.
 
 The build produces `build/pcsim`, the emulator, and `build/tools/mkcard/pcsim-mkcard`, which makes
 SD card images.
@@ -269,7 +271,7 @@ quit 0
  sim/devices/   SD card (SPI mode)   ST7365P LCD controller   STM32 keyboard/battery controller
                 audio filters on GP26/GP27 ─> SDL sound, WAV file
                 ESP-PSRAM64H PSRAM on GP2-5 and GP20/21
- frontend/      SDL2 window | headless + scripts + PNG
+ frontend/      SDL3 window | headless + scripts + PNG
 ```
 
 - **CPU.** Both Cortex-M33 cores are interpreted: ARMv8-M Mainline Thumb-2 with the DSP
