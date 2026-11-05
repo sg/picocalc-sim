@@ -55,6 +55,9 @@ jobs:
       - name: Serve FTP over the emulated WiFi
         run: src/ci/wifi-test.sh build/picocalc-sim build/tools/mkcard/picocalc-sim-mkcard fw/picocalc-ftpserver-*.uf2
 
+      - name: Check the security extension with the TrustZone test
+        run: src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
+
       - name: Boot and restart the RP2350 firmware on Raspberry Pi's A2 and A4 boot ROMs
         run: |
           for rev in A2 A4; do
@@ -62,6 +65,7 @@ jobs:
             export PICOCALC_SIM_RP2350_ROM=rom/rp2350-$rev.bin
             src/ci/boot-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
+            src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
           done
 
       - name: Build for Windows
@@ -73,6 +77,7 @@ jobs:
           src/ci/boot-test.sh build-win/picocalc-sim-wine fw/*.uf2
           src/ci/restart-test.sh build-win/picocalc-sim-wine fw/*.uf2
           src/ci/wifi-test.sh build-win/picocalc-sim-wine build-win/picocalc-sim-mkcard-wine fw/picocalc-ftpserver-*.uf2
+          src/ci/trustzone-test.sh build-win/picocalc-sim-wine src/tests/trustzone/trustzone.uf2
 
       - name: Pack the binaries
         run: |

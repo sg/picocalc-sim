@@ -1,8 +1,8 @@
 # Builds the Linux and Windows binaries of a branch, boots the latest pcsh, picocalc_lua,
 # picocalc-z80 and ftpserver releases on the Pico 2, Pico 2 W, Pimoroni Plus 2 W, Pico and
-# Pico W, and transfers files to and from ftpserver over the emulated WiFi. The Windows build is
-# tested under Wine. It runs only when started by hand, since release.yml does the same for every
-# version tag.
+# Pico W, transfers files to and from ftpserver over the emulated WiFi, and runs the TrustZone
+# test. The Windows build is tested under Wine. It runs only when started by hand, since
+# release.yml does the same for every version tag.
 name: Build
 
 on:
@@ -44,6 +44,9 @@ jobs:
       - name: Serve FTP over the emulated WiFi
         run: src/ci/wifi-test.sh build/picocalc-sim build/tools/mkcard/picocalc-sim-mkcard fw/picocalc-ftpserver-*.uf2
 
+      - name: Check the security extension with the TrustZone test
+        run: src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
+
       - name: Boot and restart the RP2350 firmware on Raspberry Pi's A2 and A4 boot ROMs
         run: |
           for rev in A2 A4; do
@@ -51,6 +54,7 @@ jobs:
             export PICOCALC_SIM_RP2350_ROM=rom/rp2350-$rev.bin
             src/ci/boot-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
+            src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
           done
 
   windows:
@@ -85,3 +89,6 @@ jobs:
 
       - name: Serve FTP over the emulated WiFi
         run: src/ci/wifi-test.sh build-win/picocalc-sim-wine build-win/picocalc-sim-mkcard-wine fw/picocalc-ftpserver-*.uf2
+
+      - name: Check the security extension with the TrustZone test
+        run: src/ci/trustzone-test.sh build-win/picocalc-sim-wine src/tests/trustzone/trustzone.uf2

@@ -81,19 +81,22 @@ emulator should give the same one.
 
 Pushing a `v*` tag runs `.forgejo/workflows/release.yml` in the shared `picocalc-builder` image. It
 builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on each
-board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-test.sh`) and
-transfers files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`), then
+board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-test.sh`), transfers
+files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`), and runs `tests/trustzone`,
+a bare-metal check of the security extension, which none of that firmware uses
+(`ci/trustzone-test.sh`; `tests/trustzone/build.sh` rebuilds its UF2 with `arm-none-eabi-gcc`), then
 cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `picocalc-sim.exe`
 is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
 the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`), and
-it boots and restarts the RP2350 firmware again on Raspberry Pi's A2 and A4 RP2350 ROMs
-(`ci/fetch-rp2350-rom.sh`); the ROMs are used only for the tests and are not packed into the
-release. If they pass, it stages a draft release with `picocalc-sim-TAG-linux-x86_64.tar.gz` and
-`picocalc-sim-TAG-windows-x86_64.zip`. Pushing a commit runs nothing; `build.yml` runs the same
-tests on a branch when started by hand from the Actions page. `ci/build-linux.sh` installs the X11,
-Wayland and audio headers SDL needs, so the Linux binaries depend only on glibc 2.38 or newer
-(Ubuntu 24.04, Debian 13, Fedora 39) and can be built on a headless machine and copied to a desktop.
+it boots and restarts the RP2350 firmware and runs the TrustZone test again on Raspberry Pi's A2 and
+A4 RP2350 ROMs (`ci/fetch-rp2350-rom.sh`); the ROMs are used only for the tests and are not packed
+into the release. If they pass, it stages a draft release with
+`picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`. Pushing a commit
+runs nothing; `build.yml` runs the same tests on a branch when started by hand from the Actions
+page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux
+binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be built on
+a headless machine and copied to a desktop.
 
 ## Running firmware
 
@@ -389,6 +392,7 @@ the command line is written again and the card stays in the slot (unlike the men
   one state to the other, which stack and clear the Secure registers before a Non-secure handler
   runs. Non-secure code is always stepped one instruction at a time, as each access it makes is
   checked against the SAU and IDAU; Secure code keeps the blocks and native code.
+  `tests/trustzone` checks all this from both states.
 - **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP), whose
   Secure and Non-secure instances are coprocessors 4 and 5, is modelled by what each canned
   operation computes rather than its internal datapath: operands are captured as doubles and the
