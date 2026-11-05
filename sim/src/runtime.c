@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -13,10 +14,10 @@
 #include <timeapi.h>
 #endif
 
-#include "pcsim/port.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/port.h"
+#include "picocalc-sim/sim.h"
 
-pcsim_options_t pcsim_opts = {
+picocalc_sim_options_t picocalc_sim_opts = {
     .screenshot_dir = ".",
     .scale = 2,
     .battery = 85,
@@ -31,13 +32,13 @@ static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
 static char log_lines[LOG_KEEP][512];
 static unsigned log_total;
 
-void pcsim_log(const char *fmt, ...)
+void picocalc_sim_log(const char *fmt, ...)
 {
     va_list ap, kept;
     va_start(ap, fmt);
     va_copy(kept, ap);
     pthread_mutex_lock(&log_lock);
-    fputs("[pcsim] ", stderr);
+    fputs("[picocalc-sim] ", stderr);
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     vsnprintf(log_lines[log_total++ % LOG_KEEP], sizeof(log_lines[0]), fmt, kept);
@@ -46,7 +47,7 @@ void pcsim_log(const char *fmt, ...)
     va_end(ap);
 }
 
-unsigned pcsim_log_count(void)
+unsigned picocalc_sim_log_count(void)
 {
     pthread_mutex_lock(&log_lock);
     unsigned n = log_total;
@@ -54,7 +55,7 @@ unsigned pcsim_log_count(void)
     return n;
 }
 
-bool pcsim_log_line(unsigned i, char *buf, size_t cap)
+bool picocalc_sim_log_line(unsigned i, char *buf, size_t cap)
 {
     pthread_mutex_lock(&log_lock);
     bool kept = i < log_total && log_total - i <= LOG_KEEP;
@@ -64,7 +65,7 @@ bool pcsim_log_line(unsigned i, char *buf, size_t cap)
     return kept;
 }
 
-uint64_t pcsim_mono_ns(void)
+uint64_t picocalc_sim_mono_ns(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -78,7 +79,7 @@ uint64_t pcsim_mono_ns(void)
 
 // Sleep() rounds up to the scheduler tick, 15.6 ms unless raised, which is far coarser than the
 // throttle's sub-millisecond waits; Windows 10 1803 and later have timers that are not.
-void pcsim_sleep_ns(uint64_t ns)
+void picocalc_sim_sleep_ns(uint64_t ns)
 {
     static _Thread_local HANDLE timer;
     static _Thread_local bool tried;
@@ -115,7 +116,7 @@ ssize_t pwrite(int fd, const void *buf, size_t len, int64_t off)
     return WriteFile((HANDLE)_get_osfhandle(fd), buf, (DWORD)len, &put, &o) ? (ssize_t)put : -1;
 }
 #else
-void pcsim_sleep_ns(uint64_t ns)
+void picocalc_sim_sleep_ns(uint64_t ns)
 {
     if (ns == 0)
         return;
@@ -125,42 +126,59 @@ void pcsim_sleep_ns(uint64_t ns)
 }
 #endif
 
-void pcsim_data_path(char *path, size_t cap, const char *file, bool create_dir)
+// pcsim was this program's name before, and its data directory's; the first run under the new
+// name moves that directory over, so the flash images, card and settings in it carry on.
+static void adopt_old_data_dir(const char *old, const char *dir)
 {
-    char dir[3600];
+    static bool checked;
+    struct stat st;
+    if (checked)
+        return;
+    checked = true;
+    if (stat(dir, &st) == 0 || stat(old, &st) != 0)
+        return;
+    if (rename(old, dir) == 0)
+        picocalc_sim_log("moved the data directory %s to %s", old, dir);
+    else
+        picocalc_sim_log("cannot move the data directory %s to %s: %s", old, dir, strerror(errno));
+}
+
+void picocalc_sim_data_path(char *path, size_t cap, const char *file, bool create_dir)
+{
+    char base[3500], dir[3600], old[3600];
 #ifdef _WIN32
-    const char *base = getenv("LOCALAPPDATA");
-    snprintf(dir, sizeof(dir), "%s\\pcsim", base && *base ? base : ".");
+    const char *app = getenv("LOCALAPPDATA");
+    snprintf(base, sizeof(base), "%s", app && *app ? app : ".");
+    snprintf(dir, sizeof(dir), "%s\\picocalc-sim", base);
+    snprintf(old, sizeof(old), "%s\\pcsim", base);
+    adopt_old_data_dir(old, dir);
     if (create_dir)
-        pcsim_mkdir(dir);
+        picocalc_sim_mkdir(dir);
     snprintf(path, cap, "%s\\%s", dir, file);
 #else
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
     if (xdg && *xdg)
-        snprintf(dir, sizeof(dir), "%s/pcsim", xdg);
+        snprintf(base, sizeof(base), "%s", xdg);
     else
-        snprintf(dir, sizeof(dir), "%s/.local/share/pcsim", home ? home : ".");
+        snprintf(base, sizeof(base), "%s/.local/share", home ? home : ".");
+    snprintf(dir, sizeof(dir), "%s/picocalc-sim", base);
+    snprintf(old, sizeof(old), "%s/pcsim", base);
+    adopt_old_data_dir(old, dir);
     if (create_dir) {
-        char parent[sizeof(dir)];
-        snprintf(parent, sizeof(parent), "%s", dir);
-        char *slash = strrchr(parent, '/');
-        if (slash) {
-            *slash = 0;
-            pcsim_mkdir(parent);
-        }
-        pcsim_mkdir(dir);
+        picocalc_sim_mkdir(base);
+        picocalc_sim_mkdir(dir);
     }
     snprintf(path, cap, "%s/%s", dir, file);
 #endif
 }
 
-void pcsim_request_quit(int code)
+void picocalc_sim_request_quit(int code)
 {
     atomic_store(&quit_code, code);
     atomic_store(&quit_flag, true);
 }
 
-bool pcsim_quit_requested(int *code)
+bool picocalc_sim_quit_requested(int *code)
 {
     if (!atomic_load(&quit_flag))
         return false;
@@ -170,9 +188,9 @@ bool pcsim_quit_requested(int *code)
 }
 
 // UART output is what a USB-serial adapter on the PicoCalc's UART header would show.
-void pcsim_console_out(int uart, uint8_t byte)
+void picocalc_sim_console_out(int uart, uint8_t byte)
 {
-    if (!pcsim_opts.console || uart != 0)
+    if (!picocalc_sim_opts.console || uart != 0)
         return;
     if (byte == '\r')
         return;

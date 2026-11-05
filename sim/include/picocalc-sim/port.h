@@ -13,11 +13,11 @@
 ssize_t pread(int fd, void *buf, size_t len, int64_t off);
 ssize_t pwrite(int fd, const void *buf, size_t len, int64_t off);
 #define fsync _commit
-#define pcsim_mkdir(path) _mkdir(path)
+#define picocalc_sim_mkdir(path) _mkdir(path)
 #else
 #include <sys/stat.h>
 #include <unistd.h>
 
 #define O_BINARY 0
-#define pcsim_mkdir(path) mkdir(path, 0755)
+#define picocalc_sim_mkdir(path) mkdir(path, 0755)
 #endif

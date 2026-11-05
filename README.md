@@ -26,15 +26,15 @@ If SDL3 is not installed the build downloads SDL 3.4.18 (hash-pinned) and links 
 Linux that needs the X11 and Wayland development headers, plus the audio ones for sound; the
 packages are listed in `ci/build-linux.sh`, and SDL's configure step names any X11 one that is
 missing. Installing the system package (`libsdl3-dev`, `brew install sdl3`) skips the download;
-`-DPCSIM_SDL=OFF` builds a headless-only binary. The window's menus are drawn with Dear ImGui
+`-DPICOCALC_SIM_SDL=OFF` builds a headless-only binary. The window's menus are drawn with Dear ImGui
 1.92.9b, downloaded (hash-pinned) with SDL unless `IMGUI_DIR` names a copy; its C++ runtime is
 linked in, so the binary still needs only the C library. FatFs, used by the card-image tool,
 comes from a sibling `ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and
 lwIP, used by the emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is
 fetched otherwise.
 
-The build produces `build/pcsim`, the emulator, and `build/tools/mkcard/pcsim-mkcard`, which makes
-SD card images.
+The build produces `build/picocalc-sim`, the emulator, and `build/tools/mkcard/picocalc-sim-mkcard`,
+which makes SD card images.
 
 ### Windows
 
@@ -46,25 +46,26 @@ cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
 cmake --build build-win -j
 ```
 
-That gives `build-win/pcsim.exe`, `build-win/pcsim-console.exe` and
-`build-win/tools/mkcard/pcsim-mkcard.exe`. Each is a single file that needs only DLLs Windows
-ships with, so it can be copied to any 64-bit Windows 10 or 11 machine. MSYS2's MinGW-w64 should build it natively on Windows the same way, but that is untested.
+That gives `build-win/picocalc-sim.exe`, `build-win/picocalc-sim-console.exe` and
+`build-win/tools/mkcard/picocalc-sim-mkcard.exe`. Each is a single file that needs only DLLs Windows
+ships with, so it can be copied to any 64-bit Windows 10 or 11 machine. MSYS2's MinGW-w64 should
+build it natively on Windows the same way, but that is untested.
 
 ### Checking a change to the emulator
 
-`PCSIM_STOP_AT_MS=MS` stops a run at exactly that much emulated time, and with `--trace` the exit
-report ends with a digest of both cores' registers, cycle time and instruction counts and all of
-SRAM. Unthrottled headless runs are deterministic, so a change that should not alter behaviour
+`PICOCALC_SIM_STOP_AT_MS=MS` stops a run at exactly that much emulated time, and with `--trace` the
+exit report ends with a digest of both cores' registers, cycle time and instruction counts and all
+of SRAM. Unthrottled headless runs are deterministic, so a change that should not alter behaviour
 (such as a faster CPU path) must leave every digest as it was, and the three ways the CPU can run
-(native code, `PCSIM_NO_JIT=1` and `PCSIM_NO_BLOCKS=1`) must give the same one:
+(native code, `PICOCALC_SIM_NO_JIT=1` and `PICOCALC_SIM_NO_BLOCKS=1`) must give the same one:
 
 ```sh
-PCSIM_STOP_AT_MS=3000 build/pcsim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
+PICOCALC_SIM_STOP_AT_MS=3000 build/picocalc-sim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
 ```
 
-`PCSIM_RESTART_AT_MS=MS` restarts the machine once at that emulated time, as the script command
-`restart` does, and the run then starts again from power-on. Nothing of the first run
-may survive it, so with `PCSIM_STOP_AT_MS` the second run's digest must match a fresh launch's
+`PICOCALC_SIM_RESTART_AT_MS=MS` restarts the machine once at that emulated time, as the script
+command `restart` does, and the run then starts again from power-on. Nothing of the first run may
+survive it, so with `PICOCALC_SIM_STOP_AT_MS` the second run's digest must match a fresh launch's
 (`ci/restart-test.sh` checks this for each firmware).
 
 ### Measuring the hardware
@@ -78,25 +79,25 @@ emulator should give the same one.
 
 ### Continuous integration and releases
 
-Pushing a `v*` tag runs `.forgejo/workflows/release.yml` in the shared `picocalc-builder` image.
-It builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on
-each board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-test.sh`) and
+Pushing a `v*` tag runs `.forgejo/workflows/release.yml` in the shared `picocalc-builder` image. It
+builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on each
+board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-test.sh`) and
 transfers files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`), then
-cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `pcsim.exe` is
-windowed and the other two are console programs) and runs the same tests on `pcsim-console.exe`
-under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads the RP2040 boot ROM from Raspberry
-Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`); the ROM is used only for the tests
-and is not packed into the release. If they pass, it stages a draft release with
-`pcsim-TAG-linux-x86_64.tar.gz` and `pcsim-TAG-windows-x86_64.zip`. Pushing a commit runs nothing;
-`build.yml` runs the same tests on a branch when started by hand from the Actions page.
-`ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux binaries
-depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be built on a
-headless machine and copied to a desktop.
+cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `picocalc-sim.exe`
+is windowed and the other two are console programs) and runs the same tests on
+`picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
+the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`); the
+ROM is used only for the tests and is not packed into the release. If they pass, it stages a draft
+release with `picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`.
+Pushing a commit runs nothing; `build.yml` runs the same tests on a branch when started by hand from
+the Actions page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the
+Linux binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be
+built on a headless machine and copied to a desktop.
 
 ## Running firmware
 
 ```sh
-build/pcsim ../pcsh/build-pico2/pcsh.uf2
+build/picocalc-sim ../pcsh/build-pico2/pcsh.uf2
 ```
 
 A UF2 on the command line is written into flash as BOOTSEL's drive would write it, then the board
@@ -106,28 +107,33 @@ on. The board is taken from the image's binary info (`pico2`, `pico2_w`,
 one, the window uses the board it last ran (see [Settings file](#settings-file)), and otherwise
 `pico2`.
 
-Each board's flash persists in `~/.local/share/pcsim/BOARD.flash` (`--flash FILE` to choose,
-`--flash none` to keep it only in memory until pcsim exits, `--erase-flash` to start blank). The
-SD card is `~/.local/share/pcsim/sd.img` if it exists, or `--card IMAGE`:
+Each board's flash persists in `~/.local/share/picocalc-sim/BOARD.flash` (`--flash FILE` to choose,
+`--flash none` to keep it only in memory until picocalc-sim exits, `--erase-flash` to start blank).
+The SD card is `~/.local/share/picocalc-sim/sd.img` if it exists, or `--card IMAGE`:
 
 ```sh
-build/tools/mkcard/pcsim-mkcard ~/.local/share/pcsim/sd.img ../pcsh/sd_files
+build/tools/mkcard/picocalc-sim-mkcard ~/.local/share/picocalc-sim/sd.img ../pcsh/sd_files
 ```
 
-On Windows that folder is `%LOCALAPPDATA%\pcsim`. `pcsim.exe` is a windowed program: open it, or
-drop a UF2 onto it, and only its window appears. A Command Prompt or PowerShell neither waits for
-a windowed program nor shows what it prints, so `pcsim-console.exe` is the same program built for
-a console, for headless runs, `--console` and pcsim's messages. `pcsim-mkcard.exe` is a console
-program too:
+On Windows that folder is `%LOCALAPPDATA%\picocalc-sim`. `picocalc-sim.exe` is a windowed program:
+open it, or drop a UF2 onto it, and only its window appears. A Command Prompt or PowerShell neither
+waits for a windowed program nor shows what it prints, so `picocalc-sim-console.exe` is the same
+program built for a console, for headless runs, `--console` and picocalc-sim's messages.
+`picocalc-sim-mkcard.exe` is a console program too:
 
 ```bat
-mkdir %LOCALAPPDATA%\pcsim
-pcsim-mkcard.exe %LOCALAPPDATA%\pcsim\sd.img sd_files
-pcsim-console.exe pcsh-pico2w-v0.1.2.uf2
+mkdir %LOCALAPPDATA%\picocalc-sim
+picocalc-sim-mkcard.exe %LOCALAPPDATA%\picocalc-sim\sd.img sd_files
+picocalc-sim-console.exe pcsh-pico2w-v0.1.2.uf2
 ```
 
-`pcsim-mkcard IMAGE [-s MB] [-l LABEL] [DIR...]` formats an MBR/FAT32 card (512 MB by default)
-and copies each directory's contents to the root. Files the firmware writes persist in the image.
+Up to v0.8.1 the program was called pcsim, and its folder was `~/.local/share/pcsim` (or
+`%LOCALAPPDATA%\pcsim`). The first run of picocalc-sim moves that folder to the new name, so the
+flash images, card and settings in it carry on.
+
+`picocalc-sim-mkcard IMAGE [-s MB] [-l LABEL] [DIR...]` formats an MBR/FAT32 card (512 MB by
+default) and copies each directory's contents to the root. Files the firmware writes persist in the
+image.
 
 ### RP2040 boards
 
@@ -137,10 +143,10 @@ all of its floating-point maths. Raspberry Pi publishes the exact ROM of each ch
 its floating-point code is licensed only for use on an RP2040, so it is not included here.
 Download `b2.elf` (the revision in current Picos) from
 [the pico-bootrom-rp2040 releases](https://github.com/raspberrypi/pico-bootrom-rp2040/releases)
-and either save it as `~/.local/share/pcsim/rp2040-rom.elf` or pass it each time:
+and either save it as `~/.local/share/picocalc-sim/rp2040-rom.elf` or pass it each time:
 
 ```sh
-build/pcsim --rom b2.elf ../pcsh/build-pico/pcsh.uf2
+build/picocalc-sim --rom b2.elf ../pcsh/build-pico/pcsh.uf2
 ```
 
 A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
@@ -154,16 +160,16 @@ pelrun's [uf2loader](https://github.com/pelrun/uf2loader) works as it does on a 
 mkdir -p card/pico2-apps
 cp BOOT2350.uf2 card/BOOT2350.UF2
 cp ../pcsh/build-pico2/pcsh.uf2 ../picocalc_lua/build-pico2/picolua.uf2 card/pico2-apps/
-build/tools/mkcard/pcsim-mkcard ~/.local/share/pcsim/sd.img card
-build/pcsim --board pico2 bootloader_pico2.uf2
+build/tools/mkcard/picocalc-sim-mkcard ~/.local/share/picocalc-sim/sd.img card
+build/picocalc-sim --board pico2 bootloader_pico2.uf2
 ```
 
-With no app in flash the loader opens its menu; choosing a UF2 flashes it into the app partition
-and boots it. Later runs (`build/pcsim` with no UF2) boot the app directly. For the menu instead,
-hold F1 (or Up) while choosing Machine › Restart, as when switching the PicoCalc on with it held,
-or press F12 and hold F1 straight after; held before F12, the key reaches the running app, not the
-loader. The RP2040 build works the same way, with `BOOT2040.UF2`, a `pico1-apps` folder and
-`--board pico bootloader_pico.uf2`.
+With no app in flash the loader opens its menu; choosing a UF2 flashes it into the app partition and
+boots it. Later runs (`build/picocalc-sim` with no UF2) boot the app directly. For the menu instead,
+hold F1 (or Up) while choosing Machine › Restart, as when switching the PicoCalc on with it held, or
+press F12 and hold F1 straight after; held before F12, the key reaches the running app, not the
+loader. The RP2040 build works the same way, with `BOOT2040.UF2`, a `pico1-apps` folder and `--board
+pico bootloader_pico.uf2`.
 
 BlairLeduc's [PicoCalc shell](https://github.com/BlairLeduc/picocalc-shell) takes the menu's place
 on RP2350 boards: rename the card's `BOOT2350.UF2` to `BOOT2350.ORG`, copy the shell there as
@@ -201,12 +207,12 @@ opens it to other machines too (Windows Defender Firewall asks first). Forwardin
 handles FTP's passive mode, so ftpserver works from an ordinary client:
 
 ```sh
-build/pcsim --forward 2121:21 ../ftpserver/build-pico2w/picocalc-ftpserver.uf2
+build/picocalc-sim --forward 2121:21 ../ftpserver/build-pico2w/picocalc-ftpserver.uf2
 ftp -p 127.0.0.1 2121
 ```
 
-`--no-wifi` leaves the radio out, as if it never answered. `PCSIM_WIFI_DEBUG=1` logs the driver's
-ioctls, the chip's events and every bus command.
+`--no-wifi` leaves the radio out, as if it never answered. `PICOCALC_SIM_WIFI_DEBUG=1` logs the
+driver's ioctls, the chip's events and every bus command.
 
 ### Sound
 
@@ -219,7 +225,7 @@ leaves it out. `--wav FILE` records it in emulated time as 48 kHz stereo, so an 
 writes the same file every time:
 
 ```sh
-PCSIM_STOP_AT_MS=5000 build/pcsim --headless --unthrottled --flash none --wav out.wav fw.uf2
+PICOCALC_SIM_STOP_AT_MS=5000 build/picocalc-sim --headless --unthrottled --flash none --wav out.wav fw.uf2
 ```
 
 ### Keys
@@ -240,8 +246,8 @@ chords its keyboard controller uses for them:
 Drop a UF2 file on the window to flash it, or a `.img` file to insert it as the SD card. Holding a
 key does not auto-repeat, as on the real keyboard. Key mapping assumes a US layout. When the
 firmware powers the PicoCalc off, any key powers it back on. A key held while the machine restarts
-is still down as it powers on. Keys go to the PicoCalc except while one of pcsim's own text fields
-has them.
+is still down as it powers on. Keys go to the PicoCalc except while one of picocalc-sim's own text
+fields has them.
 
 ### Menus and settings
 
@@ -253,7 +259,7 @@ without quitting:
 - **SD card**: insert an image, or eject the one in the slot. A card has to be ejected before
   another goes in, as the firmware may still hold the old card's tables.
 - **Sound**: mute, volume, and recording to a WAV file from now on.
-- **View**: window scale, screenshot (F11), and a log of pcsim's messages.
+- **View**: window scale, screenshot (F11), and a log of picocalc-sim's messages.
 
 Settings has the board, the RP2040 boot ROM, where the flash is kept, fast transfers, tracing, the
 radio, access points and port forwards, which take effect at the next restart, and throttling, the
@@ -266,9 +272,9 @@ port already in use, the window shows why and waits for the settings to be fixed
 ### Settings file
 
 What is changed in the window is saved to `settings.ini` in the data folder
-(`~/.local/share/pcsim`, or `%LOCALAPPDATA%\pcsim` on Windows) and used at its next launch, along
-with the board it last ran and the card last inserted or ejected. Each line is a long option
-without its dashes, so the file can be edited by hand:
+(`~/.local/share/picocalc-sim`, or `%LOCALAPPDATA%\picocalc-sim` on Windows) and used at its next
+launch, along with the board it last ran and the card last inserted or ejected. Each line is a long
+option without its dashes, so the file can be edited by hand:
 
 ```ini
 board = pico2_w
@@ -285,7 +291,7 @@ The keys are `board`, `rom`, `flash` (a file, `none` or `default`), `card` (an i
 `battery`, `charging`, `volume`, `mute`, `scale` and `screenshot-dir`; switches take `on` or `off`.
 An option given on the command line wins for that run and is not written to the file unless it
 is then changed in the window; the board is the exception, as the one last run is always kept.
-pcsim rewrites the file as settings change, keeping keys it does not know but not comments.
+picocalc-sim rewrites the file as settings change, keeping keys it does not know but not comments.
 Headless runs ignore it, so scripts and CI see only their own options.
 
 ### Options
@@ -345,16 +351,16 @@ the command line is written again and the card stays in the slot (unlike the men
  frontend/      SDL3 window with Dear ImGui menus | headless + scripts + PNG
 ```
 
-- **CPU.** Both Cortex-M33 cores are interpreted: ARMv8-M Mainline Thumb-2 with the DSP
-  extension, the single-precision FPU, IT blocks, exclusive monitors shared between cores, and
-  the full exception model (NVIC, priorities, BASEPRI, fault escalation, lazy FP stacking done
-  eagerly). Each instruction is charged an approximate cycle count, and flash fetches go through
-  a model of the 16 KB XIP cache, so code runs at about the speed it does on the chip. Runs of
-  straight-line code are decoded once into blocks of small handlers (`emu/block.inc`) and reused
-  while the code they came from is unchanged, and on x86-64 hosts each block is then translated
-  to native code (`emu/jit.inc`). Both behave exactly as stepping one instruction at a time:
-  `PCSIM_NO_JIT=1` keeps to the block handlers and `PCSIM_NO_BLOCKS=1` steps. The RP2040's
-  Cortex-M0+ cores run the ARMv6-M subset the same way, faulting on what the M0+ lacks
+- **CPU.** Both Cortex-M33 cores are interpreted: ARMv8-M Mainline Thumb-2 with the DSP extension,
+  the single-precision FPU, IT blocks, exclusive monitors shared between cores, and the full
+  exception model (NVIC, priorities, BASEPRI, fault escalation, lazy FP stacking done eagerly). Each
+  instruction is charged an approximate cycle count, and flash fetches go through a model of the 16
+  KB XIP cache, so code runs at about the speed it does on the chip. Runs of straight-line code are
+  decoded once into blocks of small handlers (`emu/block.inc`) and reused while the code they came
+  from is unchanged, and on x86-64 hosts each block is then translated to native code
+  (`emu/jit.inc`). Both behave exactly as stepping one instruction at a time:
+  `PICOCALC_SIM_NO_JIT=1` keeps to the block handlers and `PICOCALC_SIM_NO_BLOCKS=1` steps. The
+  RP2040's Cortex-M0+ cores run the ARMv6-M subset the same way, faulting on what the M0+ lacks
   (unaligned accesses, Thumb-2 instructions other than BL, MSR, MRS and the barriers).
 - **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP) is
   modelled by what each canned operation computes rather than its internal datapath: operands are
@@ -441,8 +447,8 @@ Not emulated yet, or not faithfully:
   plugged in. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
   flash reads give zeros; what a real RP2040 returns there is unverified.
 - **RISC-V** images for the RP2350 are not supported.
-- **Windows:** `pcsim-mkcard.exe` reads host file names in the system code page, so files whose
-  names are not plain ASCII may not copy.
+- **Windows:** `picocalc-sim-mkcard.exe` reads host file names in the system code page, so files
+  whose names are not plain ASCII may not copy.
 - Secure state only: TrustZone, the MPU and the redundancy coprocessor accept their
   configuration but don't enforce it. OTP reads as unprogrammed apart from the chip ID.
 - Assumptions about the keyboard controller I could not check against hardware are marked in

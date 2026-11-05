@@ -1,5 +1,5 @@
-// pcsim-mkcard: builds an SD card image for the simulator, laid out the way a PC formats a real
-// card (MBR, one FAT32 partition) and filled from host directories.
+// picocalc-sim-mkcard: builds an SD card image for the simulator, laid out the way a PC formats a
+// real card (MBR, one FAT32 partition) and filled from host directories.
 
 #define _FILE_OFFSET_BITS 64
 #include <errno.h>
@@ -150,7 +150,7 @@ static int copy_entry(void *ctx, walk_event_t event, const char *host_path, cons
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: pcsim-mkcard IMAGE [-s MB] [-l LABEL] [DIR...]\n"
+            "usage: picocalc-sim-mkcard IMAGE [-s MB] [-l LABEL] [DIR...]\n"
             "\n"
             "Creates IMAGE as an MBR-partitioned FAT32 card of MB megabytes (default 512)\n"
             "and copies the contents of each DIR into its root. An existing IMAGE is replaced.\n");

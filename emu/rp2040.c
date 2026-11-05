@@ -3,7 +3,7 @@
 #include <string.h>
 
 #include "chip.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/sim.h"
 
 // The RP2040 (Pico, Pico W): its own boot ROM, run as it is, and the register layout it puts
 // over the same peripherals the RP2350 has. Most blocks are the RP2350's models reached through
@@ -76,7 +76,7 @@ bool rp2040_load_rom(chip_t *m, const char *path, char *err, size_t errlen)
     for (uint32_t i = 0; i < sizeof(m->rom); i += ROM_BYTES)
         memcpy(m->rom + i, rom, ROM_BYTES);
     if (rom[0x13] != 3)
-        pcsim_log("%s is the RP2040-B%d boot ROM; current Picos have B2", path, rom[0x13] - 1);
+        picocalc_sim_log("%s is the RP2040-B%d boot ROM; current Picos have B2", path, rom[0x13] - 1);
     return true;
 }
 

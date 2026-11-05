@@ -6,11 +6,11 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#include "pcsim/port.h"
+#include "picocalc-sim/port.h"
 
-#include "pcsim/bus.h"
-#include "pcsim/devices.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/devices.h"
+#include "picocalc-sim/sim.h"
 
 // An SDHC card in SPI mode, backed by a disk image. Commands arrive as six-byte frames; every
 // response, data token and busy period goes out one byte per clocked byte, so the firmware's
@@ -331,13 +331,13 @@ static void sd_select(void *ctx, bool selected)
     pthread_mutex_unlock(&sd->lock);
 }
 
-sdcard_t *sdcard_create(pcsim_spi_pins_t pins, int detect_pin)
+sdcard_t *sdcard_create(picocalc_sim_spi_pins_t pins, int detect_pin)
 {
     sdcard_t *sd = calloc(1, sizeof(*sd));
     pthread_mutex_init(&sd->lock, NULL);
     sd->fd = -1;
     sd->detect_pin = detect_pin;
-    pcsim_spi_device_t *dev = calloc(1, sizeof(*dev));
+    picocalc_sim_spi_device_t *dev = calloc(1, sizeof(*dev));
     dev->name = "SD card";
     dev->sck_pin = pins.sck;
     dev->mosi_pin = pins.mosi;
@@ -346,7 +346,7 @@ sdcard_t *sdcard_create(pcsim_spi_pins_t pins, int detect_pin)
     dev->select = sd_select;
     dev->xfer = sd_xfer;
     dev->ctx = sd;
-    pcsim_spi_attach(dev);
+    picocalc_sim_spi_attach(dev);
     return sd;
 }
 
@@ -364,12 +364,12 @@ bool sdcard_insert(sdcard_t *sd, const char *image_path)
 {
     int fd = open(image_path, O_RDWR | O_BINARY);
     if (fd < 0) {
-        pcsim_log("cannot open card image %s: %s", image_path, strerror(errno));
+        picocalc_sim_log("cannot open card image %s: %s", image_path, strerror(errno));
         return false;
     }
     struct stat st;
     if (fstat(fd, &st) != 0 || st.st_size < 64 * BLOCK) {
-        pcsim_log("card image %s is too small", image_path);
+        picocalc_sim_log("card image %s is too small", image_path);
         close(fd);
         return false;
     }
@@ -384,8 +384,8 @@ bool sdcard_insert(sdcard_t *sd, const char *image_path)
     out_reset(sd);
     pthread_mutex_unlock(&sd->lock);
     if (sd->detect_pin >= 0)
-        pcsim_gpio_drive_input((unsigned)sd->detect_pin, 0);
-    pcsim_log("SD card: %s (%u MB)", image_path, (unsigned)(sd->blocks / 2048));
+        picocalc_sim_gpio_drive_input((unsigned)sd->detect_pin, 0);
+    picocalc_sim_log("SD card: %s (%u MB)", image_path, (unsigned)(sd->blocks / 2048));
     return true;
 }
 
@@ -399,7 +399,7 @@ void sdcard_eject(sdcard_t *sd)
     sd->fd = -1;
     pthread_mutex_unlock(&sd->lock);
     if (sd->detect_pin >= 0)
-        pcsim_gpio_drive_input((unsigned)sd->detect_pin, -1);
+        picocalc_sim_gpio_drive_input((unsigned)sd->detect_pin, -1);
 }
 
 void sdcard_flush(sdcard_t *sd)

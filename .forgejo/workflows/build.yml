@@ -10,13 +10,13 @@ on:
 
 env:
   # the RP2040 boot ROM the Pico and Pico W tests need, fetched for the run
-  PCSIM_ROM: rom/b2.elf
+  PICOCALC_SIM_ROM: rom/b2.elf
 
 jobs:
   linux:
     runs-on: docker
     container:
-      # the Pico SDK builder from picocalc-z80's ci/builder; pcsim uses only its compiler and
+      # the Pico SDK builder from picocalc-z80's ci/builder; picocalc-sim uses only its compiler and
       # cmake, and ci/build-linux.sh adds the SDL headers it lacks
       image: picocalc-builder:2.3.1
     steps:
@@ -31,18 +31,18 @@ jobs:
         run: src/ci/build-linux.sh src build
 
       - name: Fetch the RP2040 boot ROM
-        run: src/ci/fetch-rp2040-rom.sh "$PCSIM_ROM"
+        run: src/ci/fetch-rp2040-rom.sh "$PICOCALC_SIM_ROM"
 
       - name: Boot the latest firmware releases
         run: |
           src/ci/fetch-firmware.sh "$GITHUB_API_URL" "${GITHUB_REPOSITORY%%/*}" fw
-          src/ci/boot-test.sh build/pcsim fw/*.uf2
+          src/ci/boot-test.sh build/picocalc-sim fw/*.uf2
 
       - name: Restart each firmware mid-boot
-        run: src/ci/restart-test.sh build/pcsim fw/*.uf2
+        run: src/ci/restart-test.sh build/picocalc-sim fw/*.uf2
 
       - name: Serve FTP over the emulated WiFi
-        run: src/ci/wifi-test.sh build/pcsim build/tools/mkcard/pcsim-mkcard fw/picocalc-ftpserver-*.uf2
+        run: src/ci/wifi-test.sh build/picocalc-sim build/tools/mkcard/picocalc-sim-mkcard fw/picocalc-ftpserver-*.uf2
 
   windows:
     runs-on: docker
@@ -64,15 +64,15 @@ jobs:
         run: src/ci/wine-wrap.sh build-win
 
       - name: Fetch the RP2040 boot ROM
-        run: src/ci/fetch-rp2040-rom.sh "$PCSIM_ROM"
+        run: src/ci/fetch-rp2040-rom.sh "$PICOCALC_SIM_ROM"
 
       - name: Boot the latest firmware releases
         run: |
           src/ci/fetch-firmware.sh "$GITHUB_API_URL" "${GITHUB_REPOSITORY%%/*}" fw
-          src/ci/boot-test.sh build-win/pcsim-wine fw/*.uf2
+          src/ci/boot-test.sh build-win/picocalc-sim-wine fw/*.uf2
 
       - name: Restart each firmware mid-boot
-        run: src/ci/restart-test.sh build-win/pcsim-wine fw/*.uf2
+        run: src/ci/restart-test.sh build-win/picocalc-sim-wine fw/*.uf2
 
       - name: Serve FTP over the emulated WiFi
-        run: src/ci/wifi-test.sh build-win/pcsim-wine build-win/pcsim-mkcard-wine fw/picocalc-ftpserver-*.uf2
+        run: src/ci/wifi-test.sh build-win/picocalc-sim-wine build-win/picocalc-sim-mkcard-wine fw/picocalc-ftpserver-*.uf2

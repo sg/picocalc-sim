@@ -1,5 +1,5 @@
 /*
- * FatFs configuration for pcsim-mkcard, derived from picocalc-ftpserver's.
+ * FatFs configuration for picocalc-sim-mkcard, derived from picocalc-ftpserver's.
  *
  * Deltas from upstream pico_fatfs:
  *   FF_USE_MKFS    0 -> 1    the tool formats the image

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Installs Wine and writes BUILD_DIR/pcsim-wine and BUILD_DIR/pcsim-mkcard-wine, which run the
-# Windows build's .exe files so the same test scripts can drive them as the Linux binaries.
+# Installs Wine and writes BUILD_DIR/picocalc-sim-wine and BUILD_DIR/picocalc-sim-mkcard-wine, which
+# run the Windows build's .exe files so the same test scripts can drive them as the Linux binaries.
 #   ci/wine-wrap.sh BUILD_DIR
 set -eu
 build=$(cd "$1" && pwd)
@@ -17,8 +17,8 @@ export WINEDEBUG=-all
 # Creating the Wine prefix takes a while, so do it once here rather than inside a test's timeout.
 wineboot -i >/dev/null 2>&1 || true
 
-# pcsim-wine runs pcsim-console.exe, the build a command line on Windows uses.
-for exe in pcsim:pcsim-console pcsim-mkcard:tools/mkcard/pcsim-mkcard; do
+# picocalc-sim-wine runs picocalc-sim-console.exe, the build a command line on Windows uses.
+for exe in picocalc-sim:picocalc-sim-console picocalc-sim-mkcard:tools/mkcard/picocalc-sim-mkcard; do
     wrapper="$build/${exe%%:*}-wine"
     printf '#!/bin/sh\nWINEDEBUG=-all exec wine "%s" "$@"\n' "$build/${exe#*:}.exe" >"$wrapper"
     chmod +x "$wrapper"

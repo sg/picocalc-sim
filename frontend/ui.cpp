@@ -13,9 +13,9 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "misc/cpp/imgui_stdlib.h"
 
-#include "pcsim/devices.h"
-#include "pcsim/frontend.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/devices.h"
+#include "picocalc-sim/frontend.h"
+#include "picocalc-sim/sim.h"
 #include "ui.h"
 
 namespace {
@@ -67,8 +67,8 @@ struct start_options {
 
 start_options pending, applied;
 
-// What pcsim_opts points at; kept apart from pending, so editing a setting never moves a string
-// that the machine may still read.
+// What picocalc_sim_opts points at; kept apart from pending, so editing a setting never moves a
+// string that the machine may still read.
 struct {
     std::string board, rom, flash, card, shots, wav;
     std::string aps[16], forwards[16];
@@ -88,7 +88,7 @@ std::string prompt_path;
 
 start_options from_opts()
 {
-    const pcsim_options_t &o = pcsim_opts;
+    const picocalc_sim_options_t &o = picocalc_sim_opts;
     start_options s;
     if (o.board)
         s.board = o.board;
@@ -128,10 +128,10 @@ void save_soon()
 
 void remember(const char *key, const char *value)
 {
-    const char *old = pcsim_settings_get(key);
+    const char *old = picocalc_sim_settings_get(key);
     if (value ? old && !strcmp(old, value) : !old)
         return;
-    pcsim_settings_set(key, value);
+    picocalc_sim_settings_set(key, value);
     save_soon();
 }
 
@@ -152,7 +152,7 @@ void remember_list(const char *key, const std::vector<std::string> &values)
     std::vector<const char *> v;
     for (const std::string &s : values)
         v.push_back(s.c_str());
-    pcsim_settings_set_list(key, v.data(), (int)v.size());
+    picocalc_sim_settings_set_list(key, v.data(), (int)v.size());
     save_soon();
 }
 
@@ -183,7 +183,7 @@ void remember_start_options(const start_options &was, const start_options &now)
 
 void to_opts(const start_options &s)
 {
-    pcsim_options_t &o = pcsim_opts;
+    picocalc_sim_options_t &o = picocalc_sim_opts;
     store.board = s.board;
     o.board = store.board.empty() ? nullptr : store.board.c_str();
     store.rom = s.rom;
@@ -213,17 +213,17 @@ void to_opts(const start_options &s)
 
 void restart(bool erase)
 {
-    if (pcsim_machine_starts() > 0) {
+    if (picocalc_sim_machine_starts() > 0) {
         // The launch's one-off steps have happened, so from now on a restart is the power switch:
         // the flash keeps what it holds and a recording is not begun again over the old one.
-        pcsim_opts.uf2_path = nullptr;
-        pcsim_opts.wav_path = nullptr;
+        picocalc_sim_opts.uf2_path = nullptr;
+        picocalc_sim_opts.wav_path = nullptr;
     }
-    pcsim_opts.erase_flash = erase;
+    picocalc_sim_opts.erase_flash = erase;
     remember_start_options(applied, pending);
     applied = pending;
     to_opts(applied);
-    pcsim_request_restart();
+    picocalc_sim_request_restart();
 }
 
 const char *base_name(const char *path)
@@ -236,69 +236,69 @@ const char *base_name(const char *path)
 
 void set_battery()
 {
-    if (pcsim_machine_running())
-        southbridge_set_battery(pcsim_picocalc.sb, (uint8_t)pcsim_opts.battery, pcsim_opts.charging);
+    if (picocalc_sim_machine_running())
+        southbridge_set_battery(picocalc_sim_picocalc.sb, (uint8_t)picocalc_sim_opts.battery, picocalc_sim_opts.charging);
 }
 
 bool card_in()
 {
-    return pcsim_machine_running() ? sdcard_present(pcsim_picocalc.sd) : pcsim_opts.card_path != nullptr;
+    return picocalc_sim_machine_running() ? sdcard_present(picocalc_sim_picocalc.sd) : picocalc_sim_opts.card_path != nullptr;
 }
 
 void insert_card(const char *path)
 {
     // A card swapped under the firmware's cached FAT would be written with the old card's tables.
     if (card_in()) {
-        pcsim_log("eject the SD card before inserting another");
+        picocalc_sim_log("eject the SD card before inserting another");
         return;
     }
-    if (pcsim_machine_running() && !sdcard_insert(pcsim_picocalc.sd, path))
+    if (picocalc_sim_machine_running() && !sdcard_insert(picocalc_sim_picocalc.sd, path))
         return;
     store.card = path;
-    pcsim_opts.card_path = store.card.c_str();
+    picocalc_sim_opts.card_path = store.card.c_str();
     remember("card", path);
 }
 
 void eject_card()
 {
-    if (pcsim_machine_running())
-        sdcard_eject(pcsim_picocalc.sd);
-    pcsim_opts.card_path = nullptr;
+    if (picocalc_sim_machine_running())
+        sdcard_eject(picocalc_sim_picocalc.sd);
+    picocalc_sim_opts.card_path = nullptr;
     remember("card", "none");
-    pcsim_log("SD card ejected");
+    picocalc_sim_log("SD card ejected");
 }
 
 void flash_uf2(const char *path)
 {
-    if (!pcsim_machine_running()) {
-        pcsim_log("the machine is not running, so %s cannot be flashed", path);
+    if (!picocalc_sim_machine_running()) {
+        picocalc_sim_log("the machine is not running, so %s cannot be flashed", path);
         return;
     }
     char err[256];
-    if (pcsim_flash_uf2(path, err, sizeof(err)))
-        pcsim_log("flashing %s", path);
+    if (picocalc_sim_flash_uf2(path, err, sizeof(err)))
+        picocalc_sim_log("flashing %s", path);
     else
-        pcsim_log("%s", err);
+        picocalc_sim_log("%s", err);
 }
 
 void record(const char *path)
 {
-    if (pcsim_machine_running() && picocalc_audio_record(pcsim_picocalc.audio, path)) {
+    if (picocalc_sim_machine_running() && picocalc_audio_record(picocalc_sim_picocalc.audio, path)) {
         store.wav = path;
-        pcsim_log("recording the sound to %s", path);
+        picocalc_sim_log("recording the sound to %s", path);
     }
 }
 
 void stop_recording()
 {
-    picocalc_audio_close(pcsim_picocalc.audio);
-    pcsim_log("saved %s", store.wav.c_str());
+    picocalc_audio_close(picocalc_sim_picocalc.audio);
+    picocalc_sim_log("saved %s", store.wav.c_str());
 }
 
 void set_shots(const char *dir)
 {
     store.shots = dir;
-    pcsim_opts.screenshot_dir = store.shots.c_str();
+    picocalc_sim_opts.screenshot_dir = store.shots.c_str();
 }
 
 void choose_shots(const char *dir)
@@ -359,7 +359,7 @@ void pick(int kind)
     void *ud = (void *)(intptr_t)kind;
     switch (kind) {
     case PICK_UF2: SDL_ShowOpenFileDialog(dialog_done, ud, window, uf2, 2, nullptr, false); break;
-    case PICK_CARD: SDL_ShowOpenFileDialog(dialog_done, ud, window, card, 2, pcsim_opts.card_path, false); break;
+    case PICK_CARD: SDL_ShowOpenFileDialog(dialog_done, ud, window, card, 2, picocalc_sim_opts.card_path, false); break;
     case PICK_WAV: SDL_ShowSaveFileDialog(dialog_done, ud, window, wav, 1, nullptr); break;
     case PICK_ROM:
         SDL_ShowOpenFileDialog(dialog_done, ud, window, rom, 2, pending.rom.empty() ? nullptr : pending.rom.c_str(),
@@ -369,15 +369,15 @@ void pick(int kind)
         SDL_ShowSaveFileDialog(dialog_done, ud, window, flash, 2,
                                pending.flash_file.empty() ? nullptr : pending.flash_file.c_str());
         break;
-    case PICK_SHOTS: SDL_ShowOpenFolderDialog(dialog_done, ud, window, pcsim_opts.screenshot_dir, false); break;
+    case PICK_SHOTS: SDL_ShowOpenFolderDialog(dialog_done, ud, window, picocalc_sim_opts.screenshot_dir, false); break;
     }
 }
 
 void poll_log()
 {
     char line[512];
-    for (unsigned n = pcsim_log_count(); log_seen != n; log_seen++) {
-        if (!pcsim_log_line(log_seen, line, sizeof(line)))
+    for (unsigned n = picocalc_sim_log_count(); log_seen != n; log_seen++) {
+        if (!picocalc_sim_log_line(log_seen, line, sizeof(line)))
             continue;
         log_lines.emplace_back(log_seen, line);
         if (log_lines.size() > 1000)
@@ -389,16 +389,16 @@ void poll_log()
 const char *machine_status()
 {
     static char text[64];
-    if (!pcsim_machine_running())
+    if (!picocalc_sim_machine_running())
         return "not running";
-    switch (pcsim_state()) {
-    case PCSIM_HALTED: return "halted";
-    case PCSIM_BOOTSEL: return "BOOTSEL";
-    case PCSIM_POWERED_OFF: return "off";
-    case PCSIM_RUNNING: break;
+    switch (picocalc_sim_state()) {
+    case PICOCALC_SIM_HALTED: return "halted";
+    case PICOCALC_SIM_BOOTSEL: return "BOOTSEL";
+    case PICOCALC_SIM_POWERED_OFF: return "off";
+    case PICOCALC_SIM_RUNNING: break;
     }
-    if (pcsim_speed() < 0.95) {
-        snprintf(text, sizeof(text), "%.0f%% speed", pcsim_speed() * 100);
+    if (picocalc_sim_speed() < 0.95) {
+        snprintf(text, sizeof(text), "%.0f%% speed", picocalc_sim_speed() * 100);
         return text;
     }
     return "";
@@ -409,21 +409,21 @@ void menu_bar()
     if (!ImGui::BeginMainMenuBar())
         return;
     menu_height = ImGui::GetWindowSize().y;
-    bool running = pcsim_machine_running();
+    bool running = picocalc_sim_machine_running();
     if (ImGui::BeginMenu("Machine")) {
         if (ImGui::MenuItem("Restart"))
             restart(false);
         ImGui::SetItemTooltip("Switch off and on again, with any changed settings");
         if (ImGui::MenuItem("Reset", "F12", false, running)) {
-            pcsim_bootsel_button(false);
-            pcsim_reboot("reset button");
+            picocalc_sim_bootsel_button(false);
+            picocalc_sim_reboot("reset button");
         }
         if (ImGui::MenuItem("Reset into BOOTSEL", "Shift+F12", false, running)) {
-            pcsim_bootsel_button(true);
-            pcsim_reboot("reset button");
+            picocalc_sim_bootsel_button(true);
+            picocalc_sim_reboot("reset button");
         }
         if (ImGui::MenuItem("Power button", nullptr, false, running))
-            pcsim_power_button();
+            picocalc_sim_power_button();
         ImGui::Separator();
         if (ImGui::MenuItem("Flash UF2...", nullptr, false, running))
             pick(PICK_UF2);
@@ -433,12 +433,12 @@ void menu_bar()
         ImGui::MenuItem("Settings...", nullptr, &show_settings);
         ImGui::Separator();
         if (ImGui::MenuItem("Quit"))
-            pcsim_request_quit(0);
+            picocalc_sim_request_quit(0);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("SD card")) {
         if (card_in()) {
-            ImGui::TextDisabled("%s", pcsim_opts.card_path ? base_name(pcsim_opts.card_path) : "card inserted");
+            ImGui::TextDisabled("%s", picocalc_sim_opts.card_path ? base_name(picocalc_sim_opts.card_path) : "card inserted");
             if (ImGui::MenuItem("Eject"))
                 eject_card();
         } else if (ImGui::MenuItem("Insert image...")) {
@@ -447,13 +447,13 @@ void menu_bar()
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Sound")) {
-        if (ImGui::MenuItem("Mute", nullptr, &pcsim_opts.mute))
-            remember_on("mute", pcsim_opts.mute);
+        if (ImGui::MenuItem("Mute", nullptr, &picocalc_sim_opts.mute))
+            remember_on("mute", picocalc_sim_opts.mute);
         ImGui::SetNextItemWidth(120 * content_scale);
-        if (ImGui::SliderInt("Volume", &pcsim_opts.volume, 0, 100, "%d%%"))
-            remember_int("volume", pcsim_opts.volume);
+        if (ImGui::SliderInt("Volume", &picocalc_sim_opts.volume, 0, 100, "%d%%"))
+            remember_int("volume", picocalc_sim_opts.volume);
         ImGui::Separator();
-        if (running && picocalc_audio_recording(pcsim_picocalc.audio)) {
+        if (running && picocalc_audio_recording(picocalc_sim_picocalc.audio)) {
             if (ImGui::MenuItem("Stop recording"))
                 stop_recording();
         } else if (ImGui::MenuItem("Record to WAV...", nullptr, false, running)) {
@@ -465,21 +465,21 @@ void menu_bar()
         for (int n = 1; n <= 4; n++) {
             char label[16];
             snprintf(label, sizeof(label), "%dx", n);
-            if (ImGui::MenuItem(label, nullptr, pcsim_opts.scale == n)) {
-                pcsim_opts.scale = n;
+            if (ImGui::MenuItem(label, nullptr, picocalc_sim_opts.scale == n)) {
+                picocalc_sim_opts.scale = n;
                 ui_fit_window(n);
                 remember_int("scale", n);
             }
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Screenshot", "F11", false, running))
-            pcsim_screenshot_auto();
+            picocalc_sim_screenshot_auto();
         ImGui::MenuItem("Log", nullptr, &show_log);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
         ImGui::MenuItem("Keyboard", nullptr, &show_keys);
-        ImGui::MenuItem("About pcsim", nullptr, &show_about);
+        ImGui::MenuItem("About picocalc-sim", nullptr, &show_about);
         ImGui::EndMenu();
     }
     const char *status = machine_status();
@@ -523,7 +523,7 @@ bool path_field(const char *label, const char *hint, std::string *path, int kind
     return changed;
 }
 
-std::string board_label(const pcsim_board_desc_t &d)
+std::string board_label(const picocalc_sim_board_desc_t &d)
 {
     char text[128];
     snprintf(text, sizeof(text), "%s (%s, %u MB flash%s%s)", d.name, d.rp2040 ? "RP2040" : "RP2350", d.flash_mb,
@@ -534,15 +534,15 @@ std::string board_label(const pcsim_board_desc_t &d)
 void machine_tab()
 {
     ImGui::SeparatorText("At the next restart");
-    pcsim_board_desc_t d, chosen = {};
+    picocalc_sim_board_desc_t d, chosen = {};
     std::string preview = "(chosen from the UF2)";
-    for (int i = 0; pcsim_board_desc(i, &d); i++)
+    for (int i = 0; picocalc_sim_board_desc(i, &d); i++)
         if (pending.board == d.name) {
             preview = board_label(d);
             chosen = d;
         }
     if (ImGui::BeginCombo("Board", preview.c_str())) {
-        for (int i = 0; pcsim_board_desc(i, &d); i++)
+        for (int i = 0; picocalc_sim_board_desc(i, &d); i++)
             if (ImGui::Selectable(board_label(d).c_str(), pending.board == d.name))
                 pending.board = d.name;
         ImGui::EndCombo();
@@ -550,31 +550,31 @@ void machine_tab()
     ImGui::SetItemTooltip("Each board keeps its own flash, as if the Pico in the PicoCalc were swapped");
 
     char def[4096];
-    pcsim_data_path(def, sizeof(def), "rp2040-rom.elf", false);
+    picocalc_sim_data_path(def, sizeof(def), "rp2040-rom.elf", false);
     ImGui::BeginDisabled(!chosen.rp2040 && !pending.board.empty());
     path_field("Boot ROM", def, &pending.rom, PICK_ROM);
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("The RP2040's own boot ROM, which pcsim cannot include: b2.elf from "
+    ImGui::SetItemTooltip("The RP2040's own boot ROM, which picocalc-sim cannot include: b2.elf from "
                           "github.com/raspberrypi/pico-bootrom-rp2040/releases");
 
-    static const char *const places[] = {"In the data folder", "In memory until pcsim quits", "In a file"};
+    static const char *const places[] = {"In the data folder", "In memory until picocalc-sim quits", "In a file"};
     ImGui::Combo("Flash", &pending.flash, places, 3);
     if (pending.flash == FLASH_FILE)
         path_field("Flash image", "a file that holds the whole flash", &pending.flash_file, PICK_FLASH);
     else if (pending.flash == FLASH_DEFAULT) {
         char file[64];
         snprintf(file, sizeof(file), "%s.flash", pending.board.empty() ? "BOARD" : pending.board.c_str());
-        pcsim_data_path(def, sizeof(def), file, false);
+        picocalc_sim_data_path(def, sizeof(def), file, false);
         note(def);
     }
     ImGui::Checkbox("Instant SPI, I2C and UART transfers", &pending.fast);
     ImGui::Checkbox("Log faults, unknown ROM calls and bus errors", &pending.trace);
 
     ImGui::SeparatorText("Now");
-    if (ImGui::Checkbox("Run as fast as the host allows", &pcsim_opts.unthrottled))
-        remember_on("unthrottled", pcsim_opts.unthrottled);
-    if (ImGui::Checkbox("Print what the firmware sends on UART0", &pcsim_opts.console))
-        remember_on("console", pcsim_opts.console);
+    if (ImGui::Checkbox("Run as fast as the host allows", &picocalc_sim_opts.unthrottled))
+        remember_on("unthrottled", picocalc_sim_opts.unthrottled);
+    if (ImGui::Checkbox("Print what the firmware sends on UART0", &picocalc_sim_opts.console))
+        remember_on("console", picocalc_sim_opts.console);
 }
 
 void wifi_tab()
@@ -638,18 +638,18 @@ void wifi_tab()
 void devices_tab()
 {
     ImGui::SeparatorText("Now");
-    if (ImGui::SliderInt("Battery", &pcsim_opts.battery, 0, 100, "%d%%")) {
+    if (ImGui::SliderInt("Battery", &picocalc_sim_opts.battery, 0, 100, "%d%%")) {
         set_battery();
-        remember_int("battery", pcsim_opts.battery);
+        remember_int("battery", picocalc_sim_opts.battery);
     }
-    if (ImGui::Checkbox("Charging", &pcsim_opts.charging)) {
+    if (ImGui::Checkbox("Charging", &picocalc_sim_opts.charging)) {
         set_battery();
-        remember_on("charging", pcsim_opts.charging);
+        remember_on("charging", picocalc_sim_opts.charging);
     }
-    if (ImGui::SliderInt("Volume", &pcsim_opts.volume, 0, 100, "%d%%"))
-        remember_int("volume", pcsim_opts.volume);
-    if (ImGui::Checkbox("Mute", &pcsim_opts.mute))
-        remember_on("mute", pcsim_opts.mute);
+    if (ImGui::SliderInt("Volume", &picocalc_sim_opts.volume, 0, 100, "%d%%"))
+        remember_int("volume", picocalc_sim_opts.volume);
+    if (ImGui::Checkbox("Mute", &picocalc_sim_opts.mute))
+        remember_on("mute", picocalc_sim_opts.mute);
     std::string shots = store.shots;
     if (path_field("Screenshots", "folder for F11's screenshots", &shots, PICK_SHOTS))
         choose_shots(shots.c_str());
@@ -742,7 +742,7 @@ void keys_window()
         ImGui::End();
         return;
     }
-    note("Keys go to the PicoCalc unless one of pcsim's text fields has them.");
+    note("Keys go to the PicoCalc unless one of picocalc-sim's text fields has them.");
     if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_BordersInnerH)) {
         ImGui::TableSetupColumn("Host key");
         ImGui::TableSetupColumn("PicoCalc");
@@ -763,12 +763,12 @@ void keys_window()
 void about_window()
 {
     place_window(420);
-    if (!ImGui::Begin("About pcsim", &show_about, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+    if (!ImGui::Begin("About picocalc-sim", &show_about, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::End();
         return;
     }
     int v = SDL_GetVersion();
-    ImGui::TextWrapped("pcsim emulates a PicoCalc with an RP2350 or RP2040 board.");
+    ImGui::TextWrapped("picocalc-sim emulates a PicoCalc with an RP2350 or RP2040 board.");
     ImGui::Spacing();
     ImGui::Text("SDL %d.%d.%d (zlib license)", SDL_VERSIONNUM_MAJOR(v), SDL_VERSIONNUM_MINOR(v),
                 SDL_VERSIONNUM_MICRO(v));
@@ -875,13 +875,13 @@ void ui_init(SDL_Window *w, SDL_Renderer *r)
 
     pending = applied = from_opts();
     to_opts(applied);
-    set_shots(pcsim_opts.screenshot_dir);
-    if (pcsim_opts.card_path) {
-        store.card = pcsim_opts.card_path;
-        pcsim_opts.card_path = store.card.c_str();
+    set_shots(picocalc_sim_opts.screenshot_dir);
+    if (picocalc_sim_opts.card_path) {
+        store.card = picocalc_sim_opts.card_path;
+        picocalc_sim_opts.card_path = store.card.c_str();
     }
-    if (pcsim_opts.wav_path)
-        store.wav = pcsim_opts.wav_path;
+    if (picocalc_sim_opts.wav_path)
+        store.wav = picocalc_sim_opts.wav_path;
 
     // The menu bar's height is only known from a frame laid out with the fonts.
     ImGui_ImplSDLRenderer3_NewFrame();
@@ -894,7 +894,7 @@ void ui_init(SDL_Window *w, SDL_Renderer *r)
 void ui_shutdown(void)
 {
     if (save_at)
-        pcsim_settings_save();
+        picocalc_sim_settings_save();
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
@@ -902,7 +902,7 @@ void ui_shutdown(void)
 
 void ui_fit_window(int scale)
 {
-    float side = PCSIM_LCD_WIDTH * scale * content_scale;
+    float side = PICOCALC_SIM_LCD_WIDTH * scale * content_scale;
     SDL_SetWindowSize(window, (int)side, (int)(side + menu_height));
 }
 
@@ -941,7 +941,7 @@ void ui_drop_file(const char *path)
 
 void ui_restarting(void)
 {
-    start_mark = pcsim_log_count();
+    start_mark = picocalc_sim_log_count();
 }
 
 float ui_frame(void)
@@ -950,22 +950,22 @@ float ui_frame(void)
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     poll_log();
-    if (pcsim_machine_running() && applied.board.empty()) {
+    if (picocalc_sim_machine_running() && applied.board.empty()) {
         // Pinned, so that a restart without the UF2 that chose the board stays on it.
-        applied.board = pending.board = pcsim_board_name();
+        applied.board = pending.board = picocalc_sim_board_name();
     }
     static unsigned seen_starts;
-    if (pcsim_machine_running() && pcsim_machine_starts() != seen_starts) {
+    if (picocalc_sim_machine_running() && picocalc_sim_machine_starts() != seen_starts) {
         // The next launch comes back to it, as the PicoCalc keeps the Pico it was last given.
-        seen_starts = pcsim_machine_starts();
-        remember("board", pcsim_board_name());
+        seen_starts = picocalc_sim_machine_starts();
+        remember("board", picocalc_sim_board_name());
     }
     if (save_at && SDL_GetTicks() >= save_at) {
         save_at = 0;
-        pcsim_settings_save();
+        picocalc_sim_settings_save();
     }
     menu_bar();
-    if (!pcsim_machine_running())
+    if (!picocalc_sim_machine_running())
         stopped_panel();
     if (show_settings)
         settings_window();

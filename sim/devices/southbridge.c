@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "pcsim/bus.h"
-#include "pcsim/devices.h"
-#include "pcsim/keys.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/devices.h"
+#include "picocalc-sim/keys.h"
+#include "picocalc-sim/sim.h"
 
 // The STM32F103 on the PicoCalc mainboard: an I2C slave at 0x1F that scans the keyboard into a
 // FIFO and reports battery and backlight state. Every exchange is a register byte written
@@ -142,7 +142,7 @@ void southbridge_key(southbridge_t *sb, uint8_t key, bool pressed)
         uint8_t reported = is_modifier(key) || key == PC_KEY_CAPS_LOCK ? key : translate(sb, key);
         push(sb, PC_KEY_STATE_PRESSED, reported);
         if (sb->nheld < (int)(sizeof(sb->held) / sizeof(sb->held[0])))
-            sb->held[sb->nheld++] = (held_key_t){key, reported, pcsim_uptime_us(), false};
+            sb->held[sb->nheld++] = (held_key_t){key, reported, picocalc_sim_uptime_us(), false};
     } else {
         // The release carries the code the press reported, even if Shift changed in between.
         uint8_t reported = key;
@@ -163,7 +163,7 @@ void southbridge_key(southbridge_t *sb, uint8_t key, bool pressed)
 // power-off and reset that BIOS 1.4 offers.
 void southbridge_tick(southbridge_t *sb)
 {
-    uint64_t now = pcsim_uptime_us();
+    uint64_t now = picocalc_sim_uptime_us();
     pthread_mutex_lock(&sb->lock);
     for (int i = 0; i < sb->nheld; i++) {
         held_key_t *h = &sb->held[i];
@@ -181,13 +181,13 @@ void southbridge_tick(southbridge_t *sb)
     pthread_mutex_unlock(&sb->lock);
 
     if (reset)
-        pcsim_reboot("southbridge reset");
+        picocalc_sim_reboot("southbridge reset");
     if (power_off) {
         pthread_mutex_lock(&sb->lock);
         sb->regs[REG_BKL] = 0;
         sb->generation++;
         pthread_mutex_unlock(&sb->lock);
-        pcsim_stop(PCSIM_POWERED_OFF, "powered off by the southbridge");
+        picocalc_sim_stop(PICOCALC_SIM_POWERED_OFF, "powered off by the southbridge");
     }
 }
 
@@ -232,10 +232,10 @@ static int sb_write(void *ctx, const uint8_t *src, size_t len, bool nostop)
         uint8_t value = src[1];
         switch (reg) {
         case REG_RST:
-            sb->reset_at_us = pcsim_uptime_us() + (uint64_t)(value ? value : 1) * 1000000ull;
+            sb->reset_at_us = picocalc_sim_uptime_us() + (uint64_t)(value ? value : 1) * 1000000ull;
             break;
         case REG_OFF:
-            sb->power_off_at_us = pcsim_uptime_us() + (uint64_t)(value ? value : 1) * 1000000ull;
+            sb->power_off_at_us = picocalc_sim_uptime_us() + (uint64_t)(value ? value : 1) * 1000000ull;
             break;
         default:
             sb->regs[reg] = value;
@@ -270,7 +270,7 @@ southbridge_t *southbridge_create(unsigned sda_pin, unsigned scl_pin, uint8_t ad
     sb->regs[REG_OFF] = 0x01;
     sb->battery = 85;
 
-    pcsim_i2c_device_t *dev = calloc(1, sizeof(*dev));
+    picocalc_sim_i2c_device_t *dev = calloc(1, sizeof(*dev));
     dev->name = "STM32 southbridge";
     dev->sda_pin = sda_pin;
     dev->scl_pin = scl_pin;
@@ -278,7 +278,7 @@ southbridge_t *southbridge_create(unsigned sda_pin, unsigned scl_pin, uint8_t ad
     dev->write = sb_write;
     dev->read = sb_read;
     dev->ctx = sb;
-    pcsim_i2c_attach(dev);
+    picocalc_sim_i2c_attach(dev);
     return sb;
 }
 

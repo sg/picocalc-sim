@@ -8,15 +8,15 @@
 extern "C" {
 #endif
 
-#define PCSIM_LCD_WIDTH 320
-#define PCSIM_LCD_HEIGHT 320
+#define PICOCALC_SIM_LCD_WIDTH 320
+#define PICOCALC_SIM_LCD_HEIGHT 320
 
 typedef struct {
     unsigned sck, mosi, miso, cs;
-} pcsim_spi_pins_t;
+} picocalc_sim_spi_pins_t;
 
 typedef struct st7365p st7365p_t;
-st7365p_t *st7365p_create(pcsim_spi_pins_t pins, unsigned dc_pin, unsigned rst_pin);
+st7365p_t *st7365p_create(picocalc_sim_spi_pins_t pins, unsigned dc_pin, unsigned rst_pin);
 // Composes what the panel shows (scroll, inversion, sleep, backlight) into 320x320 ARGB8888.
 void st7365p_render(st7365p_t *lcd, uint32_t *argb, uint8_t backlight);
 uint32_t st7365p_generation(st7365p_t *lcd);
@@ -36,7 +36,7 @@ uint32_t southbridge_generation(southbridge_t *sb);
 void southbridge_destroy(southbridge_t *sb);
 
 typedef struct sdcard sdcard_t;
-sdcard_t *sdcard_create(pcsim_spi_pins_t pins, int detect_pin);
+sdcard_t *sdcard_create(picocalc_sim_spi_pins_t pins, int detect_pin);
 bool sdcard_insert(sdcard_t *sd, const char *image_path);
 void sdcard_eject(sdcard_t *sd);
 void sdcard_flush(sdcard_t *sd);
@@ -73,7 +73,7 @@ typedef struct picocalc {
     esp_psram_t *psram;
 } picocalc_t;
 
-extern picocalc_t pcsim_picocalc;
+extern picocalc_t picocalc_sim_picocalc;
 bool picocalc_board_init(void);
 // Frees the devices picocalc_board_init made; the machine drops their pin registrations.
 void picocalc_board_free(void);

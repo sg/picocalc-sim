@@ -12,7 +12,7 @@
 #include "lwip/tcp.h"
 #include "lwip/timeouts.h"
 
-#include "pcsim/sim.h"
+#include "picocalc-sim/sim.h"
 
 // The firmware's TCP connections end at lwIP, running here as the far end of each one, and are
 // relayed over host sockets. An outbound connection is destination-NATed onto a port of lwIP's
@@ -633,7 +633,7 @@ static fwd_t *open_forward(uint32_t bind_ip, uint16_t hport, uint16_t gport, boo
     if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0 || listen(fd, 8) != 0 || !sock_set_nonblock(fd) ||
         getsockname(fd, (struct sockaddr *)&sa, &sl) != 0) {
         if (!quiet)
-            pcsim_log("net: cannot listen on port %u: %s", hport, sock_strerror(sock_errno()));
+            picocalc_sim_log("net: cannot listen on port %u: %s", hport, sock_strerror(sock_errno()));
         sock_close(fd);
         return NULL;
     }
@@ -654,7 +654,7 @@ bool tcpnat_forward(const char *spec)
     if (!strncmp(s, "tcp:", 4)) {
         s += 4;
     } else if (!strncmp(s, "udp:", 4)) {
-        pcsim_log("net: --forward %s: only TCP ports can be forwarded", spec);
+        picocalc_sim_log("net: --forward %s: only TCP ports can be forwarded", spec);
         return false;
     }
     char buf[128];
@@ -675,7 +675,7 @@ bool tcpnat_forward(const char *spec)
     }
     int hp = n >= 2 ? atoi(parts[n - 2]) : 0, gp = n >= 2 ? atoi(parts[n - 1]) : 0;
     if (n < 2 || hp <= 0 || hp > 65535 || gp <= 0 || gp > 65535) {
-        pcsim_log("net: --forward %s: expected [tcp:][ADDRESS:]HOSTPORT:FIRMWAREPORT", spec);
+        picocalc_sim_log("net: --forward %s: expected [tcp:][ADDRESS:]HOSTPORT:FIRMWAREPORT", spec);
         return false;
     }
     fwd_t *f = open_forward(bind_ip, (uint16_t)hp, (uint16_t)gp, false);
@@ -685,7 +685,7 @@ bool tcpnat_forward(const char *spec)
     struct in_addr a;
     a.s_addr = htonl(bind_ip);
     inet_ntop(AF_INET, &a, addr, sizeof(addr));
-    pcsim_log("net: %s:%d forwards to the firmware's TCP port %d%s", addr, hp, gp,
+    picocalc_sim_log("net: %s:%d forwards to the firmware's TCP port %d%s", addr, hp, gp,
               f->ftp ? " (FTP passive mode handled)" : "");
     return true;
 }
@@ -769,8 +769,8 @@ void tcpnat_service(const pollfd_t *fds, int n)
         if (c->state == C_CONNECTING) {
             int err = sock_pending_error(c->fd);
             if (err) {
-                if (pcsim_opts.trace)
-                    pcsim_log("net: connect to port %u refused: %s", c->dport, sock_strerror(err));
+                if (picocalc_sim_opts.trace)
+                    picocalc_sim_log("net: connect to port %u refused: %s", c->dport, sock_strerror(err));
                 refuse_syn(c->syn, c->syn_len);
                 conn_close(c, true);
             } else {

@@ -2,8 +2,8 @@
 #include <string.h>
 
 #include "chip.h"
-#include "pcsim/bus.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/sim.h"
 
 // Records the waveform of the pins a device listens to without feeding anything back into the
 // chip: a PWM output as its slice settings, so a fast carrier costs nothing per cycle, and any
@@ -38,7 +38,7 @@ static struct {
     track_t *tr[MAX_PINS];
     unsigned rate;
     uint64_t base, done, done_t;
-    pcsim_pin_wave_fn fn;
+    picocalc_sim_pin_wave_fn fn;
     void *ctx;
     bool overflowed;
     float buf[BATCH * MAX_PINS];
@@ -66,7 +66,7 @@ static void append(track_t *tr, uint64_t t, const pin_wave_t *w)
     if (t == last->t || tr->head - tr->tail == SEGS) {
         if (t != last->t && !W.overflowed) {
             W.overflowed = true;
-            pcsim_log("pin %u changes faster than its waveform can be recorded; some are merged", tr->pin);
+            picocalc_sim_log("pin %u changes faster than its waveform can be recorded; some are merged", tr->pin);
         }
         last->w = *w;
         return;
@@ -172,7 +172,7 @@ void pinwave_stop(void)
     g_wave_pins = 0;
 }
 
-bool pcsim_pin_wave(const unsigned *pins, int npins, unsigned rate_hz, pcsim_pin_wave_fn fn, void *ctx)
+bool picocalc_sim_pin_wave(const unsigned *pins, int npins, unsigned rate_hz, picocalc_sim_pin_wave_fn fn, void *ctx)
 {
     chip_t *m = g_chip;
     if (!m || W.n || npins < 1 || npins > MAX_PINS || !rate_hz)
@@ -180,7 +180,7 @@ bool pcsim_pin_wave(const unsigned *pins, int npins, unsigned rate_hz, pcsim_pin
     for (int i = 0; i < npins; i++)
         if (pins[i] >= m->board->num_gpio)
             return false;
-    pcsim_machine_lock();
+    picocalc_sim_machine_lock();
     for (int i = 0; i < npins; i++) {
         track_t *tr = calloc(1, sizeof(*tr));
         tr->pin = pins[i];
@@ -196,6 +196,6 @@ bool pcsim_pin_wave(const unsigned *pins, int npins, unsigned rate_hz, pcsim_pin
     W.fn = fn;
     W.ctx = ctx;
     W.n = npins;
-    pcsim_machine_unlock();
+    picocalc_sim_machine_unlock();
     return true;
 }

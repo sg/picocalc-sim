@@ -1,10 +1,10 @@
 #!/bin/sh
 # Runs ftpserver on each W board behind the emulated WiFi and checks that an FTP client on the host
 # can log in, list, download and upload through a port forward.
-#   ci/wifi-test.sh PCSIM MKCARD FTPSERVER.uf2...
-# PCSIM_ROM, if set, is the RP2040 boot ROM for the Pico W image.
+#   ci/wifi-test.sh PICOCALC_SIM MKCARD FTPSERVER.uf2...
+# PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico W image.
 set -u
-pcsim=$1
+picocalc_sim=$1
 mkcard=$2
 shift 2
 here=$(cd "$(dirname "$0")" && pwd)
@@ -30,7 +30,7 @@ failed=0
 for uf2; do
     name=$(basename "$uf2")
     "$mkcard" "$work/sd.img" "$work/card" >/dev/null || exit 1
-    "$pcsim" --headless --flash none --card "$work/sd.img" ${PCSIM_ROM:+--rom "$PCSIM_ROM"} --wifi-ap PicoCalc-CI:ci-password \
+    "$picocalc_sim" --headless --flash none --card "$work/sd.img" ${PICOCALC_SIM_ROM:+--rom "$PICOCALC_SIM_ROM"} --wifi-ap PicoCalc-CI:ci-password \
         --forward "$port:21" -t 200 "$uf2" >"$work/log" 2>&1 &
     pid=$!
     if timeout 190 python3 -I "$here/ftp-client.py" 127.0.0.1 "$port" "$work/card/big.bin" >"$work/out" 2>&1; then

@@ -1,7 +1,7 @@
 #!/bin/sh
-# Cross-compiles pcsim.exe (the window), pcsim-console.exe (the same for a command line) and
-# pcsim-mkcard.exe for Windows x86-64 with MinGW-w64, each a single file that needs nothing beyond
-# what Windows itself ships.
+# Cross-compiles picocalc-sim.exe (the window), picocalc-sim-console.exe (the same for a command
+# line) and picocalc-sim-mkcard.exe for Windows x86-64 with MinGW-w64, each a single file that needs
+# nothing beyond what Windows itself ships.
 #   ci/build-windows.sh SOURCE_DIR BUILD_DIR
 set -eu
 src=$1
@@ -20,7 +20,7 @@ cmake --build "$build" -j"$(nproc)"
 
 # A MinGW runtime DLL (libwinpthread-1.dll, libgcc_s_seh-1.dll) would have to ship beside the .exe.
 system_dlls='advapi32|gdi32|imm32|iphlpapi|kernel32|msvcrt|ole32|oleaut32|setupapi|shell32|user32|version|winmm|ws2_32'
-for exe in "$build/pcsim.exe" "$build/pcsim-console.exe" "$build/tools/mkcard/pcsim-mkcard.exe"; do
+for exe in "$build/picocalc-sim.exe" "$build/picocalc-sim-console.exe" "$build/tools/mkcard/picocalc-sim-mkcard.exe"; do
     extra=$(x86_64-w64-mingw32-objdump -p "$exe" | sed -n 's/^[[:space:]]*DLL Name: //p' |
         grep -viE "^($system_dlls)\.dll$" || true)
     if [ -n "$extra" ]; then
@@ -34,7 +34,7 @@ done
 subsystem() {
     x86_64-w64-mingw32-objdump -p "$1" | sed -n 's/^Subsystem[[:space:]]*[0-9a-f]*[[:space:]]*//p'
 }
-for check in "pcsim.exe:(Windows GUI)" "pcsim-console.exe:(Windows CUI)" "tools/mkcard/pcsim-mkcard.exe:(Windows CUI)"; do
+for check in "picocalc-sim.exe:(Windows GUI)" "picocalc-sim-console.exe:(Windows CUI)" "tools/mkcard/picocalc-sim-mkcard.exe:(Windows CUI)"; do
     exe=${check%%:*}
     got=$(subsystem "$build/$exe")
     if [ "$got" != "${check#*:}" ]; then

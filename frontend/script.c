@@ -4,8 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "pcsim/frontend.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/frontend.h"
+#include "picocalc-sim/sim.h"
 
 // Drives the keyboard from a file, one command per line:
 //   wait <ms>            type <text>          key <chord>
@@ -33,8 +33,8 @@ static void unescape_and_type(const char *s)
             default: c = *s; break;
             }
         }
-        if (!pcsim_keys_type_char(c, KEY_HOLD_MS, KEY_GAP_MS))
-            pcsim_log("script: the PicoCalc has no key for 0x%02x", (unsigned char)c);
+        if (!picocalc_sim_keys_type_char(c, KEY_HOLD_MS, KEY_GAP_MS))
+            picocalc_sim_log("script: the PicoCalc has no key for 0x%02x", (unsigned char)c);
     }
 }
 
@@ -43,8 +43,8 @@ static void *script_thread(void *arg)
     (void)arg;
     FILE *f = fopen(script_path, "r");
     if (!f) {
-        pcsim_log("cannot open script %s", script_path);
-        pcsim_request_quit(2);
+        picocalc_sim_log("cannot open script %s", script_path);
+        picocalc_sim_request_quit(2);
         return NULL;
     }
     char line[1024];
@@ -67,33 +67,33 @@ static void *script_thread(void *arg)
                 rest++;
 
         if (!strcmp(cmd, "wait")) {
-            pcsim_sleep_ns((uint64_t)strtoul(rest, NULL, 10) * 1000000ull);
+            picocalc_sim_sleep_ns((uint64_t)strtoul(rest, NULL, 10) * 1000000ull);
         } else if (!strcmp(cmd, "type")) {
             unescape_and_type(rest);
         } else if (!strcmp(cmd, "key")) {
-            if (!pcsim_keys_chord(rest, KEY_HOLD_MS))
-                pcsim_log("script line %d: unknown key '%s'", lineno, rest);
-            pcsim_sleep_ns(KEY_GAP_MS * 1000000ull);
+            if (!picocalc_sim_keys_chord(rest, KEY_HOLD_MS))
+                picocalc_sim_log("script line %d: unknown key '%s'", lineno, rest);
+            picocalc_sim_sleep_ns(KEY_GAP_MS * 1000000ull);
         } else if (!strcmp(cmd, "screenshot")) {
-            pcsim_screenshot(rest);
+            picocalc_sim_screenshot(rest);
         } else if (!strcmp(cmd, "restart")) {
-            unsigned n = pcsim_machine_starts();
-            pcsim_request_restart();
-            while (pcsim_machine_starts() == n && !pcsim_quit_requested(NULL))
-                pcsim_sleep_ns(10000000ull);
+            unsigned n = picocalc_sim_machine_starts();
+            picocalc_sim_request_restart();
+            while (picocalc_sim_machine_starts() == n && !picocalc_sim_quit_requested(NULL))
+                picocalc_sim_sleep_ns(10000000ull);
         } else if (!strcmp(cmd, "quit")) {
             fclose(f);
-            pcsim_request_quit(*rest ? atoi(rest) : 0);
+            picocalc_sim_request_quit(*rest ? atoi(rest) : 0);
             return NULL;
         } else {
-            pcsim_log("script line %d: unknown command '%s'", lineno, cmd);
+            picocalc_sim_log("script line %d: unknown command '%s'", lineno, cmd);
         }
     }
     fclose(f);
     return NULL;
 }
 
-void pcsim_script_start(const char *path)
+void picocalc_sim_script_start(const char *path)
 {
     script_path = strdup(path);
     pthread_t t;

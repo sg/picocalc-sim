@@ -1044,7 +1044,7 @@ static void block_run(cpu_t *c, block_t *b, uint64_t until)
 static bool blocks_on(void)
 {
     if (blocks_enabled < 0) {
-        const char *e = getenv("PCSIM_NO_BLOCKS");
+        const char *e = getenv("PICOCALC_SIM_NO_BLOCKS");
         blocks_enabled = !(e && *e && *e != '0');
     }
     return blocks_enabled;

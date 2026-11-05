@@ -1,6 +1,6 @@
 #!/bin/sh
 # Downloads the RP2040-B2 boot ROM that the Pico and Pico W boards run, which can't be shipped
-# with pcsim, and checks it is the published file.
+# with picocalc-sim, and checks it is the published file.
 #   ci/fetch-rp2040-rom.sh FILE
 set -eu
 out=$1

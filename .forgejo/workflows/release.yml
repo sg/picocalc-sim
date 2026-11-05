@@ -23,13 +23,13 @@ env:
   PRERELEASE: ${{ github.event.inputs.prerelease }}
   TOKEN: ${{ github.token }}
   # the RP2040 boot ROM the Pico and Pico W tests need, fetched for the run and never packed
-  PCSIM_ROM: rom/b2.elf
+  PICOCALC_SIM_ROM: rom/b2.elf
 
 jobs:
   release:
     runs-on: docker
     container:
-      # the Pico SDK builder from picocalc-z80's ci/builder; pcsim uses only its compiler and
+      # the Pico SDK builder from picocalc-z80's ci/builder; picocalc-sim uses only its compiler and
       # cmake, and ci/build-linux.sh adds the SDL headers it lacks
       image: picocalc-builder:2.3.1
     steps:
@@ -42,18 +42,18 @@ jobs:
         run: src/ci/build-linux.sh src build
 
       - name: Fetch the RP2040 boot ROM
-        run: src/ci/fetch-rp2040-rom.sh "$PCSIM_ROM"
+        run: src/ci/fetch-rp2040-rom.sh "$PICOCALC_SIM_ROM"
 
       - name: Boot the latest firmware releases
         run: |
           src/ci/fetch-firmware.sh "$GITHUB_API_URL" "${GITHUB_REPOSITORY%%/*}" fw
-          src/ci/boot-test.sh build/pcsim fw/*.uf2
+          src/ci/boot-test.sh build/picocalc-sim fw/*.uf2
 
       - name: Restart each firmware mid-boot
-        run: src/ci/restart-test.sh build/pcsim fw/*.uf2
+        run: src/ci/restart-test.sh build/picocalc-sim fw/*.uf2
 
       - name: Serve FTP over the emulated WiFi
-        run: src/ci/wifi-test.sh build/pcsim build/tools/mkcard/pcsim-mkcard fw/picocalc-ftpserver-*.uf2
+        run: src/ci/wifi-test.sh build/picocalc-sim build/tools/mkcard/picocalc-sim-mkcard fw/picocalc-ftpserver-*.uf2
 
       - name: Build for Windows
         run: src/ci/build-windows.sh src build-win
@@ -61,24 +61,24 @@ jobs:
       - name: Boot, restart and serve FTP on Windows (under Wine)
         run: |
           src/ci/wine-wrap.sh build-win
-          src/ci/boot-test.sh build-win/pcsim-wine fw/*.uf2
-          src/ci/restart-test.sh build-win/pcsim-wine fw/*.uf2
-          src/ci/wifi-test.sh build-win/pcsim-wine build-win/pcsim-mkcard-wine fw/picocalc-ftpserver-*.uf2
+          src/ci/boot-test.sh build-win/picocalc-sim-wine fw/*.uf2
+          src/ci/restart-test.sh build-win/picocalc-sim-wine fw/*.uf2
+          src/ci/wifi-test.sh build-win/picocalc-sim-wine build-win/picocalc-sim-mkcard-wine fw/picocalc-ftpserver-*.uf2
 
       - name: Pack the binaries
         run: |
-          name="pcsim-$TAG-linux-x86_64"
+          name="picocalc-sim-$TAG-linux-x86_64"
           mkdir -p "pkg/$name" dist
-          strip -o "pkg/$name/pcsim" build/pcsim
-          strip -o "pkg/$name/pcsim-mkcard" build/tools/mkcard/pcsim-mkcard
+          strip -o "pkg/$name/picocalc-sim" build/picocalc-sim
+          strip -o "pkg/$name/picocalc-sim-mkcard" build/tools/mkcard/picocalc-sim-mkcard
           cp src/README.md "pkg/$name/"
           tar -C pkg -czf "dist/$name.tar.gz" "$name"
 
-          name="pcsim-$TAG-windows-x86_64"
+          name="picocalc-sim-$TAG-windows-x86_64"
           mkdir -p "pkg/$name"
-          x86_64-w64-mingw32-strip -o "pkg/$name/pcsim.exe" build-win/pcsim.exe
-          x86_64-w64-mingw32-strip -o "pkg/$name/pcsim-console.exe" build-win/pcsim-console.exe
-          x86_64-w64-mingw32-strip -o "pkg/$name/pcsim-mkcard.exe" build-win/tools/mkcard/pcsim-mkcard.exe
+          x86_64-w64-mingw32-strip -o "pkg/$name/picocalc-sim.exe" build-win/picocalc-sim.exe
+          x86_64-w64-mingw32-strip -o "pkg/$name/picocalc-sim-console.exe" build-win/picocalc-sim-console.exe
+          x86_64-w64-mingw32-strip -o "pkg/$name/picocalc-sim-mkcard.exe" build-win/tools/mkcard/picocalc-sim-mkcard.exe
           cp src/README.md "pkg/$name/"
           (cd pkg && python3 -m zipfile -c "../dist/$name.zip" "$name")
 
@@ -98,7 +98,7 @@ jobs:
           prev=$(git -C src describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
           {
             echo "- Linux x86-64: needs glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39)."
-            echo "- Windows x86-64: for Windows 10 and 11; open pcsim.exe, or run pcsim-console.exe from a Command Prompt or PowerShell for headless runs and pcsim's messages."
+            echo "- Windows x86-64: for Windows 10 and 11; open picocalc-sim.exe, or run picocalc-sim-console.exe from a Command Prompt or PowerShell for headless runs and picocalc-sim's messages."
             echo
             echo "Changes since ${prev:-the first commit}:"
             echo

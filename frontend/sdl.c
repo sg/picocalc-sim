@@ -1,18 +1,18 @@
-#include "pcsim/devices.h"
-#include "pcsim/frontend.h"
-#include "pcsim/keys.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/devices.h"
+#include "picocalc-sim/frontend.h"
+#include "picocalc-sim/keys.h"
+#include "picocalc-sim/sim.h"
 
-#ifndef PCSIM_HAVE_SDL
+#ifndef PICOCALC_SIM_HAVE_SDL
 
-bool pcsim_frontend_sdl_available(void)
+bool picocalc_sim_frontend_sdl_available(void)
 {
     return false;
 }
 
-int pcsim_frontend_sdl_run(void)
+int picocalc_sim_frontend_sdl_run(void)
 {
-    return pcsim_frontend_headless_run();
+    return picocalc_sim_frontend_headless_run();
 }
 
 #else
@@ -25,7 +25,7 @@ int pcsim_frontend_sdl_run(void)
 
 #include "ui.h"
 
-bool pcsim_frontend_sdl_available(void)
+bool picocalc_sim_frontend_sdl_available(void)
 {
     return true;
 }
@@ -91,10 +91,10 @@ static void key_down(SDL_Keycode sym)
     bool shift;
     if (!map_key(sym, &key, &shift) || nheld == (int)(sizeof(held) / sizeof(held[0])))
         return;
-    bool synth = shift && !southbridge_shift_held(pcsim_picocalc.sb);
+    bool synth = shift && !southbridge_shift_held(picocalc_sim_picocalc.sb);
     if (synth)
-        pcsim_keys_press(PC_KEY_LSHIFT);
-    pcsim_keys_press(key);
+        picocalc_sim_keys_press(PC_KEY_LSHIFT);
+    picocalc_sim_keys_press(key);
     held[nheld++] = (held_t){sym, key, synth};
 }
 
@@ -103,9 +103,9 @@ static void key_up(SDL_Keycode sym)
     for (int i = 0; i < nheld; i++) {
         if (held[i].sym != sym)
             continue;
-        pcsim_keys_release(held[i].key);
+        picocalc_sim_keys_release(held[i].key);
         if (held[i].synth_shift)
-            pcsim_keys_release(PC_KEY_LSHIFT);
+            picocalc_sim_keys_release(PC_KEY_LSHIFT);
         held[i] = held[--nheld];
         return;
     }
@@ -131,10 +131,10 @@ static void SDLCALL audio_cb(void *ctx, SDL_AudioStream *stream, int additional,
 {
     static int16_t buf[2 * 1024];
     int frames = (additional + 3) / 4;
-    int gain = pcsim_opts.volume * 256 / 100;
+    int gain = picocalc_sim_opts.volume * 256 / 100;
     while (frames > 0) {
         int n = frames < 1024 ? frames : 1024;
-        picocalc_audio_pull(pcsim_picocalc.audio, buf, (size_t)n);
+        picocalc_audio_pull(picocalc_sim_picocalc.audio, buf, (size_t)n);
         for (int i = 0; i < 2 * n; i++)
             buf[i] = (int16_t)(buf[i] * gain / 256);
         SDL_PutAudioStreamData(stream, buf, n * 4);
@@ -144,10 +144,10 @@ static void SDLCALL audio_cb(void *ctx, SDL_AudioStream *stream, int additional,
 
 static SDL_AudioStream *open_audio(void)
 {
-    if (pcsim_opts.mute || !pcsim_machine_running())
+    if (picocalc_sim_opts.mute || !picocalc_sim_machine_running())
         return NULL;
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        pcsim_log("no sound: %s", SDL_GetError());
+        picocalc_sim_log("no sound: %s", SDL_GetError());
         return NULL;
     }
     // SDL3 would pick 1024 frames at 48 kHz; 512 keeps the sound closer behind the picture.
@@ -155,10 +155,10 @@ static SDL_AudioStream *open_audio(void)
     SDL_AudioSpec spec = {.format = SDL_AUDIO_S16, .channels = 2, .freq = 48000};
     SDL_AudioStream *stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_cb, NULL);
     if (!stream) {
-        pcsim_log("no sound: %s", SDL_GetError());
+        picocalc_sim_log("no sound: %s", SDL_GetError());
         return NULL;
     }
-    if (!picocalc_audio_play(pcsim_picocalc.audio)) {
+    if (!picocalc_audio_play(picocalc_sim_picocalc.audio)) {
         SDL_DestroyAudioStream(stream);
         return NULL;
     }
@@ -169,9 +169,9 @@ static SDL_AudioStream *open_audio(void)
 static SDL_Window *create_window(void)
 {
     SDL_PropertiesID props = SDL_CreateProperties();
-    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, pcsim_window_title());
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, PCSIM_LCD_WIDTH);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, PCSIM_LCD_HEIGHT);
+    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, picocalc_sim_window_title());
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, PICOCALC_SIM_LCD_WIDTH);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, PICOCALC_SIM_LCD_HEIGHT);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
     // shown once the UI has worked out its size
@@ -186,40 +186,40 @@ static SDL_FRect lcd_rect(SDL_Renderer *renderer, float top)
     int w, h;
     SDL_GetCurrentRenderOutputSize(renderer, &w, &h);
     float aw = (float)w, ah = (float)h - top;
-    float fit = fminf(aw / PCSIM_LCD_WIDTH, ah / PCSIM_LCD_HEIGHT);
+    float fit = fminf(aw / PICOCALC_SIM_LCD_WIDTH, ah / PICOCALC_SIM_LCD_HEIGHT);
     float scale = fit >= 1.0f ? floorf(fit) : fmaxf(fit, 0.0f);
-    float lw = PCSIM_LCD_WIDTH * scale, lh = PCSIM_LCD_HEIGHT * scale;
+    float lw = PICOCALC_SIM_LCD_WIDTH * scale, lh = PICOCALC_SIM_LCD_HEIGHT * scale;
     return (SDL_FRect){floorf((aw - lw) / 2), top + floorf((ah - lh) / 2), lw, lh};
 }
 
-int pcsim_frontend_sdl_run(void)
+int picocalc_sim_frontend_sdl_run(void)
 {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
-        pcsim_log("SDL could not start (%s); running headless", SDL_GetError());
-        return pcsim_frontend_headless_run();
+        picocalc_sim_log("SDL could not start (%s); running headless", SDL_GetError());
+        return picocalc_sim_frontend_headless_run();
     }
     SDL_Window *window = create_window();
     if (!window) {
-        pcsim_log("SDL window failed (%s); running headless", SDL_GetError());
+        picocalc_sim_log("SDL window failed (%s); running headless", SDL_GetError());
         SDL_Quit();
-        return pcsim_frontend_headless_run();
+        return picocalc_sim_frontend_headless_run();
     }
     SDL_Renderer *renderer = SDL_CreateRenderer(window, NULL);
     if (!renderer)
         renderer = SDL_CreateRenderer(window, SDL_SOFTWARE_RENDERER);
     SDL_SetRenderVSync(renderer, 1);
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-                                             PCSIM_LCD_WIDTH, PCSIM_LCD_HEIGHT);
+                                             PICOCALC_SIM_LCD_WIDTH, PICOCALC_SIM_LCD_HEIGHT);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-    static uint32_t pixels[PCSIM_LCD_WIDTH * PCSIM_LCD_HEIGHT];
+    static uint32_t pixels[PICOCALC_SIM_LCD_WIDTH * PICOCALC_SIM_LCD_HEIGHT];
     ui_init(window, renderer);
-    ui_fit_window(pcsim_opts.scale);
+    ui_fit_window(picocalc_sim_opts.scale);
     SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
     SDL_ShowWindow(window);
     SDL_AudioStream *audio = open_audio();
-    bool muted = pcsim_opts.mute;
+    bool muted = picocalc_sim_opts.mute;
 
-    uint64_t start = pcsim_mono_ns();
+    uint64_t start = picocalc_sim_mono_ns();
     uint32_t last_lcd = ~0u, last_sb = ~0u;
     char last_title[256] = "";
     int code = 0;
@@ -233,14 +233,14 @@ int pcsim_frontend_sdl_run(void)
                 running = false;
                 break;
             case SDL_EVENT_KEY_DOWN:
-                if (e.key.repeat || ui_took || !pcsim_machine_running())
+                if (e.key.repeat || ui_took || !picocalc_sim_machine_running())
                     break;
                 if (e.key.key == SDLK_F11)
-                    pcsim_screenshot_auto();
+                    picocalc_sim_screenshot_auto();
                 else if (e.key.key == SDLK_F12) {
                     // The BOOTSEL button on the Pico, held while the reset button is pressed.
-                    pcsim_bootsel_button((e.key.mod & SDL_KMOD_SHIFT) != 0);
-                    pcsim_reboot("reset button");
+                    picocalc_sim_bootsel_button((e.key.mod & SDL_KMOD_SHIFT) != 0);
+                    picocalc_sim_reboot("reset button");
                 } else
                     key_down(e.key.key);
                 break;
@@ -259,7 +259,7 @@ int pcsim_frontend_sdl_run(void)
             }
         }
 
-        if (pcsim_restart_requested()) {
+        if (picocalc_sim_restart_requested()) {
             SDL_Keycode carried[sizeof(held) / sizeof(held[0])];
             int ncarried = nheld;
             for (int i = 0; i < nheld; i++)
@@ -271,35 +271,35 @@ int pcsim_frontend_sdl_run(void)
             audio = NULL;
             ui_restarting();
             // A machine that fails to start stays stopped, and the UI says why.
-            if (pcsim_machine_restart()) {
+            if (picocalc_sim_machine_restart()) {
                 press_held(carried, ncarried);
                 audio = open_audio();
             }
             last_lcd = last_sb = ~0u;
         }
-        if (pcsim_opts.mute != muted) {
-            muted = pcsim_opts.mute;
+        if (picocalc_sim_opts.mute != muted) {
+            muted = picocalc_sim_opts.mute;
             if (audio)
                 SDL_DestroyAudioStream(audio);
             audio = open_audio();
         }
-        if (pcsim_machine_running())
-            southbridge_tick(pcsim_picocalc.sb);
-        if (pcsim_quit_requested(&code))
+        if (picocalc_sim_machine_running())
+            southbridge_tick(picocalc_sim_picocalc.sb);
+        if (picocalc_sim_quit_requested(&code))
             break;
-        if (pcsim_opts.timeout_s > 0 && (pcsim_mono_ns() - start) / 1e9 >= pcsim_opts.timeout_s)
+        if (picocalc_sim_opts.timeout_s > 0 && (picocalc_sim_mono_ns() - start) / 1e9 >= picocalc_sim_opts.timeout_s)
             break;
 
-        bool on = pcsim_machine_running();
-        uint32_t lcd_gen = on ? st7365p_generation(pcsim_picocalc.lcd) : 0;
-        uint32_t sb_gen = on ? southbridge_generation(pcsim_picocalc.sb) : 0;
+        bool on = picocalc_sim_machine_running();
+        uint32_t lcd_gen = on ? st7365p_generation(picocalc_sim_picocalc.lcd) : 0;
+        uint32_t sb_gen = on ? southbridge_generation(picocalc_sim_picocalc.sb) : 0;
         if (on && (lcd_gen != last_lcd || sb_gen != last_sb)) {
             last_lcd = lcd_gen;
             last_sb = sb_gen;
-            st7365p_render(pcsim_picocalc.lcd, pixels, southbridge_lcd_backlight(pcsim_picocalc.sb));
-            SDL_UpdateTexture(texture, NULL, pixels, PCSIM_LCD_WIDTH * 4);
+            st7365p_render(picocalc_sim_picocalc.lcd, pixels, southbridge_lcd_backlight(picocalc_sim_picocalc.sb));
+            SDL_UpdateTexture(texture, NULL, pixels, PICOCALC_SIM_LCD_WIDTH * 4);
         }
-        const char *title = pcsim_window_title();
+        const char *title = picocalc_sim_window_title();
         if (strcmp(title, last_title) != 0) {
             snprintf(last_title, sizeof(last_title), "%s", title);
             SDL_SetWindowTitle(window, title);

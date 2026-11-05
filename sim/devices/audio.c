@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "pcsim/bus.h"
-#include "pcsim/devices.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/devices.h"
+#include "picocalc-sim/sim.h"
 
 // The mainboard's audio circuit (schematic v2.0): U501 buffers GP26 and GP27 into 220R over 100R
 // with 100nF across the 100R (a 24 kHz low-pass), then 47uF into 1.8K (taking off the DC), ahead
@@ -169,8 +169,8 @@ static bool listen(picocalc_audio_t *a)
 {
     if (a->listening)
         return true;
-    if (!pcsim_pin_wave(a->pins, 2, IN_RATE, on_wave, a)) {
-        pcsim_log("audio output is not available");
+    if (!picocalc_sim_pin_wave(a->pins, 2, IN_RATE, on_wave, a)) {
+        picocalc_sim_log("audio output is not available");
         return false;
     }
     a->listening = true;
@@ -182,11 +182,11 @@ bool picocalc_audio_record(picocalc_audio_t *a, const char *wav_path)
     picocalc_audio_close(a);
     FILE *wav = fopen(wav_path, "wb");
     if (!wav) {
-        pcsim_log("cannot write %s", wav_path);
+        picocalc_sim_log("cannot write %s", wav_path);
         return false;
     }
     // The emulation thread writes to the file once it is set.
-    pcsim_machine_lock();
+    picocalc_sim_machine_lock();
     a->wav = wav;
     a->wav_frames = 0;
     wav_header(a);
@@ -195,7 +195,7 @@ bool picocalc_audio_record(picocalc_audio_t *a, const char *wav_path)
         fclose(a->wav);
         a->wav = NULL;
     }
-    pcsim_machine_unlock();
+    picocalc_sim_machine_unlock();
     return ok;
 }
 
@@ -249,11 +249,11 @@ void picocalc_audio_close(picocalc_audio_t *a)
 {
     if (!a || !a->wav)
         return;
-    pcsim_machine_lock();
+    picocalc_sim_machine_lock();
     wav_header(a);
     fclose(a->wav);
     a->wav = NULL;
-    pcsim_machine_unlock();
+    picocalc_sim_machine_unlock();
 }
 
 void picocalc_audio_destroy(picocalc_audio_t *a)

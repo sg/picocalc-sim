@@ -3,25 +3,25 @@
 #include <unistd.h>
 
 #include "chip.h"
-#include "pcsim/bus.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/sim.h"
 
 // Connects device models to the chip's pins. An SPI device takes whole frames from whichever
 // PL022 drives its clock pin, and decodes bits itself when PIO or software toggles the pins.
 
-static pcsim_spi_device_t *spi_devs;
-static pcsim_i2c_device_t *i2c_devs;
+static picocalc_sim_spi_device_t *spi_devs;
+static picocalc_sim_i2c_device_t *i2c_devs;
 static gpio_watch_t *watches[NUM_GPIO_MAX];
 
 void devices_detach_all(void)
 {
     while (spi_devs) {
-        pcsim_spi_device_t *d = spi_devs;
+        picocalc_sim_spi_device_t *d = spi_devs;
         spi_devs = d->next;
         free(d);
     }
     while (i2c_devs) {
-        pcsim_i2c_device_t *d = i2c_devs;
+        picocalc_sim_i2c_device_t *d = i2c_devs;
         i2c_devs = d->next;
         free(d);
     }
@@ -34,19 +34,19 @@ void devices_detach_all(void)
     pinwave_stop();
 }
 
-void pcsim_spi_attach(pcsim_spi_device_t *dev)
+void picocalc_sim_spi_attach(picocalc_sim_spi_device_t *dev)
 {
     dev->next = spi_devs;
     spi_devs = dev;
 }
 
-void pcsim_i2c_attach(pcsim_i2c_device_t *dev)
+void picocalc_sim_i2c_attach(picocalc_sim_i2c_device_t *dev)
 {
     dev->next = i2c_devs;
     i2c_devs = dev;
 }
 
-void pcsim_gpio_watch(unsigned pin, pcsim_gpio_watch_fn fn, void *ctx)
+void picocalc_sim_gpio_watch(unsigned pin, picocalc_sim_gpio_watch_fn fn, void *ctx)
 {
     if (pin >= NUM_GPIO_MAX)
         return;
@@ -57,19 +57,19 @@ void pcsim_gpio_watch(unsigned pin, pcsim_gpio_watch_fn fn, void *ctx)
     watches[pin] = w;
 }
 
-void pcsim_gpio_drive_input(unsigned pin, int level)
+void picocalc_sim_gpio_drive_input(unsigned pin, int level)
 {
     chip_t *m = g_chip;
     if (!m || pin >= NUM_GPIO_MAX)
         return;
-    pcsim_machine_lock();
+    picocalc_sim_machine_lock();
     m->gpio[pin].ext_driven = level >= 0;
     m->gpio[pin].ext_level = level > 0;
     gpio_refresh(m);
-    pcsim_machine_unlock();
+    picocalc_sim_machine_unlock();
 }
 
-void pcsim_gpio_drive_input_locked(unsigned pin, int level)
+void picocalc_sim_gpio_drive_input_locked(unsigned pin, int level)
 {
     chip_t *m = g_chip;
     if (!m || pin >= NUM_GPIO_MAX)
@@ -83,30 +83,30 @@ void pcsim_gpio_drive_input_locked(unsigned pin, int level)
     gpio_refresh_mask(m, 1ull << pin);
 }
 
-uint64_t pcsim_gpio_edge_time(void)
+uint64_t picocalc_sim_gpio_edge_time(void)
 {
     chip_t *m = g_chip;
     return m->pin_t ? m->pin_t : m->edge_t ? m->edge_t : m->now;
 }
 
-void pcsim_gpio_drive_input_at(unsigned pin, int level, uint64_t t)
+void picocalc_sim_gpio_drive_input_at(unsigned pin, int level, uint64_t t)
 {
     chip_t *m = g_chip;
     if (!m)
         return;
     uint64_t at = m->ext_at;
     m->ext_at = t;
-    pcsim_gpio_drive_input_locked(pin, level);
+    picocalc_sim_gpio_drive_input_locked(pin, level);
     m->ext_at = at;
 }
 
-int pcsim_gpio_pad_speed(unsigned pin)
+int picocalc_sim_gpio_pad_speed(unsigned pin)
 {
     chip_t *m = g_chip;
     return m && pin < NUM_GPIO_MAX ? gpio_pad_speed(m, pin) : 0;
 }
 
-bool pcsim_gpio_level(unsigned pin)
+bool picocalc_sim_gpio_level(unsigned pin)
 {
     chip_t *m = g_chip;
     if (!m || pin >= NUM_GPIO_MAX)
@@ -114,7 +114,7 @@ bool pcsim_gpio_level(unsigned pin)
     return m->gpio[pin].level;
 }
 
-static bool spi_pins_on_controller(chip_t *m, pcsim_spi_device_t *d, int bus)
+static bool spi_pins_on_controller(chip_t *m, picocalc_sim_spi_device_t *d, int bus)
 {
     return gpio_func(m, d->sck_pin) == FUNC_SPI && (int)((d->sck_pin >> 3) & 1) == bus;
 }
@@ -122,7 +122,7 @@ static bool spi_pins_on_controller(chip_t *m, pcsim_spi_device_t *d, int bus)
 void devices_spi_frame(chip_t *m, int bus, uint16_t mosi, int bits, uint16_t *miso)
 {
     uint16_t in = 0xffff;
-    for (pcsim_spi_device_t *d = spi_devs; d; d = d->next) {
+    for (picocalc_sim_spi_device_t *d = spi_devs; d; d = d->next) {
         if (!spi_pins_on_controller(m, d, bus) || m->gpio[d->cs_pin].level)
             continue;
         if (bits > 8) {
@@ -138,7 +138,7 @@ void devices_spi_frame(chip_t *m, int bus, uint16_t mosi, int bits, uint16_t *mi
 
 void devices_gpio_changed(chip_t *m, unsigned pin, bool level)
 {
-    for (pcsim_spi_device_t *d = spi_devs; d; d = d->next) {
+    for (picocalc_sim_spi_device_t *d = spi_devs; d; d = d->next) {
         if (pin == d->cs_pin) {
             bool sel = !level;
             if (sel != d->selected) {
@@ -162,7 +162,7 @@ void devices_gpio_changed(chip_t *m, unsigned pin, bool level)
 void devices_spi_bit(chip_t *m, unsigned sck_pin, unsigned mosi_pin, int bit)
 {
     (void)m;
-    for (pcsim_spi_device_t *d = spi_devs; d; d = d->next) {
+    for (picocalc_sim_spi_device_t *d = spi_devs; d; d = d->next) {
         if (d->sck_pin != sck_pin || d->mosi_pin != mosi_pin || !d->selected)
             continue;
         d->shift = (uint8_t)((d->shift << 1) | (bit & 1));
@@ -175,7 +175,7 @@ void devices_spi_bit(chip_t *m, unsigned sck_pin, unsigned mosi_pin, int bit)
 
 int devices_i2c_start(chip_t *m, int bus, uint8_t addr, void **handle)
 {
-    for (pcsim_i2c_device_t *d = i2c_devs; d; d = d->next) {
+    for (picocalc_sim_i2c_device_t *d = i2c_devs; d; d = d->next) {
         if (d->addr != addr)
             continue;
         if (gpio_func(m, d->scl_pin) != FUNC_I2C || (int)((d->scl_pin >> 1) & 1) != bus)
@@ -190,18 +190,18 @@ int devices_i2c_start(chip_t *m, int bus, uint8_t addr, void **handle)
 
 void devices_i2c_write(void *handle, const uint8_t *buf, int len, bool nostop)
 {
-    pcsim_i2c_device_t *d = handle;
+    picocalc_sim_i2c_device_t *d = handle;
     d->write(d->ctx, buf, (size_t)len, nostop);
 }
 
 int devices_i2c_read(void *handle, uint8_t *buf, int len, bool nostop)
 {
-    pcsim_i2c_device_t *d = handle;
+    picocalc_sim_i2c_device_t *d = handle;
     return d->read(d->ctx, buf, (size_t)len, nostop);
 }
 
 void devices_uart_tx(chip_t *m, int idx, uint8_t byte)
 {
     (void)m;
-    pcsim_console_out(idx, byte);
+    picocalc_sim_console_out(idx, byte);
 }

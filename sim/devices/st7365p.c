@@ -2,9 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "pcsim/bus.h"
-#include "pcsim/devices.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/devices.h"
+#include "picocalc-sim/sim.h"
 
 // The PicoCalc's 320x320 IPS panel hangs off an ST7365P whose frame memory is 320 columns by
 // 480 rows. Only the commands that change what the panel shows are modelled; the power, gamma
@@ -250,7 +250,7 @@ static void parameter(st7365p_t *lcd, uint8_t b)
     case CMD_COLMOD:
         lcd->colmod = p[0];
         if ((p[0] & 0x07) != 0x05 && (p[0] & 0x07) != 0x06)
-            pcsim_log("LCD: COLMOD 0x%02x set; only 16- and 18-bit pixels are modelled", p[0]);
+            picocalc_sim_log("LCD: COLMOD 0x%02x set; only 16- and 18-bit pixels are modelled", p[0]);
         break;
     case CMD_VSCRDEF:
         if (lcd->nparams == 6) {
@@ -290,7 +290,7 @@ static uint8_t read_byte(st7365p_t *lcd)
 static uint8_t lcd_xfer(void *ctx, uint8_t mosi)
 {
     st7365p_t *lcd = ctx;
-    bool data = pcsim_gpio_level(lcd->dc_pin);
+    bool data = picocalc_sim_gpio_level(lcd->dc_pin);
     pthread_mutex_lock(&lcd->lock);
     uint8_t miso = 0xff;
     if (!data)
@@ -328,7 +328,7 @@ static void lcd_reset_pin(void *ctx, unsigned pin, bool level)
     }
 }
 
-st7365p_t *st7365p_create(pcsim_spi_pins_t pins, unsigned dc_pin, unsigned rst_pin)
+st7365p_t *st7365p_create(picocalc_sim_spi_pins_t pins, unsigned dc_pin, unsigned rst_pin)
 {
     st7365p_t *lcd = calloc(1, sizeof(*lcd));
     pthread_mutex_init(&lcd->lock, NULL);
@@ -336,7 +336,7 @@ st7365p_t *st7365p_create(pcsim_spi_pins_t pins, unsigned dc_pin, unsigned rst_p
     reset_registers(lcd);
     power_on_noise(lcd);
 
-    pcsim_spi_device_t *dev = calloc(1, sizeof(*dev));
+    picocalc_sim_spi_device_t *dev = calloc(1, sizeof(*dev));
     dev->name = "ST7365P LCD";
     dev->sck_pin = pins.sck;
     dev->mosi_pin = pins.mosi;
@@ -345,8 +345,8 @@ st7365p_t *st7365p_create(pcsim_spi_pins_t pins, unsigned dc_pin, unsigned rst_p
     dev->select = lcd_select;
     dev->xfer = lcd_xfer;
     dev->ctx = lcd;
-    pcsim_spi_attach(dev);
-    pcsim_gpio_watch(rst_pin, lcd_reset_pin, lcd);
+    picocalc_sim_spi_attach(dev);
+    picocalc_sim_gpio_watch(rst_pin, lcd_reset_pin, lcd);
     return lcd;
 }
 
@@ -407,16 +407,16 @@ void st7365p_render(st7365p_t *lcd, uint32_t *argb, uint8_t backlight)
     pthread_mutex_lock(&lcd->lock);
     if (lcd->sleeping || !lcd->display_on || backlight == 0) {
         pthread_mutex_unlock(&lcd->lock);
-        for (int i = 0; i < PCSIM_LCD_WIDTH * PCSIM_LCD_HEIGHT; i++)
+        for (int i = 0; i < PICOCALC_SIM_LCD_WIDTH * PICOCALC_SIM_LCD_HEIGHT; i++)
             argb[i] = 0xff000000u;
         return;
     }
     // Backlight PWM scales brightness, but a dim backlight is still readable on the real panel.
     uint32_t scale = 64 + (uint32_t)backlight * 191 / 255;
-    for (unsigned line = 0; line < PCSIM_LCD_HEIGHT; line++) {
+    for (unsigned line = 0; line < PICOCALC_SIM_LCD_HEIGHT; line++) {
         const uint16_t *row = lcd->gram[panel_line_to_row(lcd, line)];
-        uint32_t *out = argb + line * PCSIM_LCD_WIDTH;
-        for (unsigned x = 0; x < PCSIM_LCD_WIDTH; x++)
+        uint32_t *out = argb + line * PICOCALC_SIM_LCD_WIDTH;
+        for (unsigned x = 0; x < PICOCALC_SIM_LCD_WIDTH; x++)
             out[x] = to_argb(lcd, row[x], scale);
     }
     pthread_mutex_unlock(&lcd->lock);

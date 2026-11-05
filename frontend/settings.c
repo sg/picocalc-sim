@@ -7,8 +7,8 @@
 #include <windows.h>
 #endif
 
-#include "pcsim/frontend.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/frontend.h"
+#include "picocalc-sim/sim.h"
 
 // The window's settings file: KEY = VALUE lines named after the long options, so it reads like a
 // command line and can be edited by hand.
@@ -21,7 +21,8 @@ static entry_t *entries;
 static int count, cap;
 static char path[4096];
 
-// The order the file is written in; keys it does not know come after, kept for a newer pcsim.
+// The order the file is written in; keys it does not know come after, kept for a newer
+// picocalc-sim.
 static const char *const known[] = {
     "board",   "rom",     "flash",   "card",     "fast",   "unthrottled", "trace", "console",
     "no-wifi", "wifi-ap", "forward", "battery",  "charging", "volume",    "mute",  "scale",
@@ -84,7 +85,7 @@ static bool parse_bool(const char *key, const char *v, bool *out)
     else if (!strcmp(v, "off") || !strcmp(v, "no") || !strcmp(v, "false") || !strcmp(v, "0"))
         *out = false;
     else {
-        pcsim_log("%s: %s should be on or off, not '%s'", path, key, v);
+        picocalc_sim_log("%s: %s should be on or off, not '%s'", path, key, v);
         return false;
     }
     return true;
@@ -97,11 +98,12 @@ static void parse_int(const char *key, const char *v, int lo, int hi, int *out)
     if (*v && !*end && n >= lo && n <= hi)
         *out = (int)n;
     else
-        pcsim_log("%s: %s should be a number from %d to %d, not '%s'", path, key, lo, hi, v);
+        picocalc_sim_log("%s: %s should be a number from %d to %d, not '%s'", path, key, lo, hi, v);
 }
 
-// pcsim_opts gets copies, as the entries change while the window runs. They are kept here for as
-// long as pcsim runs, since the window points pcsim_opts at its own strings once it starts.
+// picocalc_sim_opts gets copies, as the entries change while the window runs. They are kept here
+// for as long as picocalc-sim runs, since the window points picocalc_sim_opts at its own strings
+// once it starts.
 static char **copies;
 static int ncopies;
 
@@ -119,7 +121,7 @@ static const char *path_value(const char *v)
 
 static void apply(const char *key, const char *v)
 {
-    pcsim_options_t *o = &pcsim_opts;
+    picocalc_sim_options_t *o = &picocalc_sim_opts;
     if (!strcmp(key, "board"))
         o->default_board = path_value(v);
     else if (!strcmp(key, "rom"))
@@ -154,13 +156,13 @@ static void apply(const char *key, const char *v)
         o->screenshot_dir = copy(v);
 }
 
-void pcsim_settings_load(const char *const *cli, int ncli)
+void picocalc_sim_settings_load(const char *const *cli, int ncli)
 {
-    pcsim_data_path(path, sizeof(path), "settings.ini", false);
+    picocalc_sim_data_path(path, sizeof(path), "settings.ini", false);
     FILE *f = fopen(path, "r");
     if (!f)
         return;
-    pcsim_log("settings: %s", path);
+    picocalc_sim_log("settings: %s", path);
     char line[2048];
     int n = 0;
     while (fgets(line, sizeof(line), f)) {
@@ -170,13 +172,13 @@ void pcsim_settings_load(const char *const *cli, int ncli)
             continue;
         char *eq = strchr(s, '=');
         if (!eq) {
-            pcsim_log("%s:%d: expected KEY = VALUE", path, n);
+            picocalc_sim_log("%s:%d: expected KEY = VALUE", path, n);
             continue;
         }
         *eq = 0;
         char *key = trim(s), *value = trim(eq + 1);
         if (!is_known(key))
-            pcsim_log("%s:%d: unknown setting '%s', kept as it is", path, n, key);
+            picocalc_sim_log("%s:%d: unknown setting '%s', kept as it is", path, n, key);
         add(key, value);
     }
     fclose(f);
@@ -187,7 +189,7 @@ void pcsim_settings_load(const char *const *cli, int ncli)
             apply(entries[i].key, entries[i].value);
 }
 
-const char *pcsim_settings_get(const char *key)
+const char *picocalc_sim_settings_get(const char *key)
 {
     for (int i = 0; i < count; i++)
         if (!strcmp(entries[i].key, key))
@@ -195,14 +197,14 @@ const char *pcsim_settings_get(const char *key)
     return NULL;
 }
 
-void pcsim_settings_set(const char *key, const char *value)
+void picocalc_sim_settings_set(const char *key, const char *value)
 {
     drop(key);
     if (value)
         add(key, value);
 }
 
-void pcsim_settings_set_list(const char *key, const char *const *values, int n)
+void picocalc_sim_settings_set_list(const char *key, const char *const *values, int n)
 {
     drop(key);
     for (int i = 0; i < n; i++)
@@ -216,19 +218,20 @@ static void write_entries(FILE *f, const char *key)
             fprintf(f, "%s = %s\n", entries[i].key, entries[i].value);
 }
 
-bool pcsim_settings_save(void)
+bool picocalc_sim_settings_save(void)
 {
-    pcsim_data_path(path, sizeof(path), "settings.ini", true);
+    picocalc_sim_data_path(path, sizeof(path), "settings.ini", true);
     char tmp[sizeof(path) + 8];
     snprintf(tmp, sizeof(tmp), "%s.new", path);
     FILE *f = fopen(tmp, "w");
     if (!f) {
-        pcsim_log("cannot write %s: %s", tmp, strerror(errno));
+        picocalc_sim_log("cannot write %s: %s", tmp, strerror(errno));
         return false;
     }
-    fputs("# pcsim's window settings, saved as they change there. Each is the long form of a\n"
-          "# command-line option, and that option given on the command line wins for the run.\n"
-          "# Headless runs ignore this file. pcsim rewrites it, so comments added here are lost.\n",
+    fputs("# picocalc-sim's window settings, saved as they change there. Each is the long form of\n"
+          "# a command-line option, and that option given on the command line wins for the run.\n"
+          "# Headless runs ignore this file. picocalc-sim rewrites it, so comments added here are\n"
+          "# lost.\n",
           f);
     for (size_t i = 0; i < sizeof(known) / sizeof(known[0]); i++)
         write_entries(f, known[i]);
@@ -241,7 +244,7 @@ bool pcsim_settings_save(void)
     ok = ok && rename(tmp, path) == 0;
 #endif
     if (!ok) {
-        pcsim_log("cannot write %s", path);
+        picocalc_sim_log("cannot write %s", path);
         remove(tmp);
     }
     return ok;

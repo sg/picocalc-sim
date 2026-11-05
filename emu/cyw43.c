@@ -3,9 +3,9 @@
 #include <string.h>
 
 #include "chip.h"
-#include "pcsim/bus.h"
-#include "pcsim/net.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/net.h"
+#include "picocalc-sim/sim.h"
 
 // The W boards' CYW43439 as the SDK's cyw43 driver sees it over gSPI: the bus registers, the
 // backplane the radio firmware is downloaded into, and the SDPCM control, event and data channels
@@ -256,13 +256,13 @@ static ap_t *find_ap(cyw43_t *w, const uint8_t *ssid, size_t len)
 static void config_aps(cyw43_t *w)
 {
     w->naps = 0;
-    w->permissive = pcsim_opts.wifi_ap_count == 0;
-    for (int i = 0; i < pcsim_opts.wifi_ap_count; i++) {
-        const char *s = pcsim_opts.wifi_aps[i];
+    w->permissive = picocalc_sim_opts.wifi_ap_count == 0;
+    for (int i = 0; i < picocalc_sim_opts.wifi_ap_count; i++) {
+        const char *s = picocalc_sim_opts.wifi_aps[i];
         const char *colon = strchr(s, ':');
         size_t n = colon ? (size_t)(colon - s) : strlen(s);
         if (n == 0 || n > 32) {
-            pcsim_log("wifi: ignoring access point '%s' (the SSID must be 1-32 bytes)", s);
+            picocalc_sim_log("wifi: ignoring access point '%s' (the SSID must be 1-32 bytes)", s);
             continue;
         }
         add_ap(w, s, n, colon ? colon + 1 : NULL, false);
@@ -341,7 +341,7 @@ static void send_event(cyw43_t *w, uint32_t type, uint32_t status, uint32_t reas
     if (type < 152 && !(w->evmask[type / 8] & (1u << (type % 8))))
         return;
     if (debug)
-        pcsim_log("wifi: event %u status %u reason %u", type, status, reason);
+        picocalc_sim_log("wifi: event %u status %u reason %u", type, status, reason);
     size_t body = 4 + 14 + 10 + 48 + dlen;
     if (hdr_len(CH_EVENT) + body > PKT_MAX)
         return;
@@ -483,7 +483,7 @@ static void set_link(cyw43_t *w, bool up)
     if (w->link == up)
         return;
     w->link = up;
-    pcsim_net_link(up);
+    picocalc_sim_net_link(up);
 }
 
 static void leave(cyw43_t *w)
@@ -513,7 +513,7 @@ static void join_event(chip_t *m, emu_event_t *ev)
     }
     if (!a) {
         if (w->missing_len != w->join_ssid_len || memcmp(w->missing, w->join_ssid, w->join_ssid_len)) {
-            pcsim_log("wifi: no access point named '%.*s'", (int)w->join_ssid_len, w->join_ssid);
+            picocalc_sim_log("wifi: no access point named '%.*s'", (int)w->join_ssid_len, w->join_ssid);
             memcpy(w->missing, w->join_ssid, w->join_ssid_len);
             w->missing_len = w->join_ssid_len;
         }
@@ -523,7 +523,7 @@ static void join_event(chip_t *m, emu_event_t *ev)
     if (a->any_pass)
         a->secured = secured;
     if (a->secured != secured) {
-        pcsim_log("wifi: '%s' is %s but the firmware asked for %s", a->ssid, a->secured ? "secured" : "open",
+        picocalc_sim_log("wifi: '%s' is %s but the firmware asked for %s", a->ssid, a->secured ? "secured" : "open",
                   secured ? "a secured join" : "an open join");
         send_event(w, EV_SET_SSID, ST_FAIL, 0, 0, a->bssid, NULL, 0);
         return;
@@ -532,7 +532,7 @@ static void join_event(chip_t *m, emu_event_t *ev)
     send_event(w, EV_ASSOC, ST_SUCCESS, 0, 0, a->bssid, NULL, 0);
     send_event(w, EV_LINK, ST_SUCCESS, 0, 1, a->bssid, NULL, 0);
     if (secured && !a->any_pass && strcmp(w->key, a->pass) != 0) {
-        pcsim_log("wifi: wrong password for '%s'", a->ssid);
+        picocalc_sim_log("wifi: wrong password for '%s'", a->ssid);
         send_event(w, EV_PSK_SUP, WLC_SUP_KEYXCHANGE_FAIL, WLC_E_SUP_DEAUTH, 0, a->bssid, NULL, 0);
         return;
     }
@@ -541,7 +541,7 @@ static void join_event(chip_t *m, emu_event_t *ev)
     send_event(w, EV_SET_SSID, ST_SUCCESS, 0, 0, a->bssid, NULL, 0);
     w->joined = 1;
     set_link(w, true);
-    pcsim_log("wifi: joined '%s'", a->ssid);
+    picocalc_sim_log("wifi: joined '%s'", a->ssid);
 }
 
 static void start_join(cyw43_t *w, const uint8_t *ssid, uint32_t len)
@@ -585,9 +585,9 @@ static int32_t get_var(cyw43_t *w, const char *name, uint8_t *buf, size_t len)
     if (!strcmp(name, "cur_etheraddr")) {
         memcpy(tmp, w->mac, 6);
     } else if (!strcmp(name, "clmver")) {
-        put_string(tmp, sizeof(tmp), "API: 12.2 Data: pcsim Compiler: none ClmImport: none Creation: none");
+        put_string(tmp, sizeof(tmp), "API: 12.2 Data: picocalc-sim Compiler: none ClmImport: none Creation: none");
     } else if (!strcmp(name, "ver")) {
-        put_string(tmp, sizeof(tmp), "wl0: pcsim CYW43439 model 7.95.61 FWID 01-pcsim\n");
+        put_string(tmp, sizeof(tmp), "wl0: picocalc-sim CYW43439 model 7.95.61 FWID 01-picocalc-sim\n");
     } else if (!strcmp(name, "mcast_list")) {
         memcpy(tmp, w->mcast, sizeof(w->mcast));
     } else if (!strcmp(name, "ccgpioin") || !strcmp(name, "bss") || !strcmp(name, "maxassoc") ||
@@ -616,7 +616,7 @@ static int32_t set_var(cyw43_t *w, const char *name, const uint8_t *val, size_t 
         if (len >= 8 && (rd32(val) & 1)) {
             bool on = rd32(val + 4) & 1;
             if (on != w->led && w->m->trace)
-                pcsim_log("wifi: LED %s", on ? "on" : "off");
+                picocalc_sim_log("wifi: LED %s", on ? "on" : "off");
             w->led = on;
         }
     } else if (!strcmp(name, "bsscfg:event_msgs")) {
@@ -747,7 +747,7 @@ static void control_from_host(cyw43_t *w, const uint8_t *p, size_t n)
     memcpy(buf, p + 16, in_len);
     int32_t status = do_ioctl(w, cmd, (flags & 2) != 0, buf, len, in_len);
     if (debug)
-        pcsim_log("wifi: ioctl %u%s%s len %u -> %d", cmd, cmd == WLC_GET_VAR || cmd == WLC_SET_VAR ? " " : "",
+        picocalc_sim_log("wifi: ioctl %u%s%s len %u -> %d", cmd, cmd == WLC_GET_VAR || cmd == WLC_SET_VAR ? " " : "",
                   cmd == WLC_GET_VAR || cmd == WLC_SET_VAR ? (const char *)p + 16 : "", len, status);
     pkt_t *r = pkt_new(w, CH_CONTROL, 16 + len);
     wr32(r->buf + 12, cmd);
@@ -774,7 +774,7 @@ static void sdpcm_from_host(cyw43_t *w, const uint8_t *d, size_t len)
     } else if (chan == CH_DATA && size >= hlen + 4) {
         size_t off = hlen + 4 + (size_t)d[hlen + 3] * 4;
         if (off < size && w->link)
-            pcsim_net_input(d + off, size - off);
+            picocalc_sim_net_input(d + off, size - off);
     }
     maybe_credit(w);
 }
@@ -811,7 +811,7 @@ static void boot_done(chip_t *m, emu_event_t *ev)
                 ver = (const char *)w->ram + i;
                 break;
             }
-        pcsim_log("wifi: radio firmware downloaded%s%.60s", ver ? ": " : "", ver ? ver : "");
+        picocalc_sim_log("wifi: radio firmware downloaded%s%.60s", ver ? ": " : "", ver ? ver : "");
     }
     update_irq(w);
 }
@@ -975,7 +975,7 @@ static void prepare_read(cyw43_t *w, unsigned fn, uint32_t addr, size_t len)
         if (p) {
             size_t c = p->len < n ? p->len : n;
             if (debug)
-                pcsim_log("wifi: host reads packet chan %u len %zu (asked %zu)", p->buf[5], p->len, n);
+                picocalc_sim_log("wifi: host reads packet chan %u len %zu (asked %zu)", p->buf[5], p->len, n);
             memcpy(d, p->buf, c);
             w->credit = (uint8_t)(w->host_seq + CREDIT_WINDOW);
             if (c > 9)
@@ -1031,7 +1031,7 @@ static void byte_in(cyw43_t *w, uint8_t b)
         swap16(c, 4);
     w->cmd = rd32(c);
     if (debug)
-        pcsim_log("wifi: bus %s fn %u addr %05x len %u", (w->cmd >> 31) ? "write" : "read", (w->cmd >> 28) & 3,
+        picocalc_sim_log("wifi: bus %s fn %u addr %05x len %u", (w->cmd >> 31) ? "write" : "read", (w->cmd >> 28) & 3,
                   (w->cmd >> 11) & 0x1ffff, w->cmd & 0x7ff);
     if (!(w->cmd >> 31))
         prepare_read(w, (w->cmd >> 28) & 3, (w->cmd >> 11) & 0x1ffff, w->cmd & 0x7ff);
@@ -1080,7 +1080,7 @@ static void update_irq(cyw43_t *w)
     if (g->ext_driven == drive && (!drive || g->ext_level == level))
         return;
     if (debug)
-        pcsim_log("wifi: irq pin %s%s", drive ? "driven " : "released", drive ? (level ? "high" : "low") : "");
+        picocalc_sim_log("wifi: irq pin %s%s", drive ? "driven " : "released", drive ? (level ? "high" : "low") : "");
     g->ext_driven = drive;
     g->ext_level = drive && level;
     gpio_refresh_mask(m, 1ull << PIN_DATA);
@@ -1091,7 +1091,7 @@ static void poll_event(chip_t *m, emu_event_t *ev)
     cyw43_t *w = ev->ctx;
     if (!w->powered)
         return;
-    pcsim_net_poll();
+    picocalc_sim_net_poll();
     ev_schedule(m, &w->poll_ev, m->now + POLL_PS);
 }
 
@@ -1155,7 +1155,7 @@ static void cs_changed(void *ctx, unsigned pin, bool level)
 
 void cyw43_init(chip_t *m)
 {
-    debug = getenv("PCSIM_WIFI_DEBUG") != NULL;
+    debug = getenv("PICOCALC_SIM_WIFI_DEBUG") != NULL;
     cyw43_t *w = calloc(1, sizeof(*w));
     w->m = m;
     w->ram = calloc(1, RAM_SIZE);
@@ -1164,9 +1164,9 @@ void cyw43_init(chip_t *m)
     memcpy(w->mac, mac, 6);
     m->wifi = w;
     power(w, false);
-    pcsim_net_attach(rx_frame, w);
-    pcsim_gpio_watch(PIN_REG_ON, reg_on_changed, w);
-    pcsim_gpio_watch(PIN_CS, cs_changed, w);
+    picocalc_sim_net_attach(rx_frame, w);
+    picocalc_sim_gpio_watch(PIN_REG_ON, reg_on_changed, w);
+    picocalc_sim_gpio_watch(PIN_CS, cs_changed, w);
 }
 
 void cyw43_free(chip_t *m)
@@ -1175,7 +1175,7 @@ void cyw43_free(chip_t *m)
     if (!w)
         return;
     power(w, false);
-    pcsim_net_attach(NULL, NULL);
+    picocalc_sim_net_attach(NULL, NULL);
     free(w->ram);
     free(w);
     m->wifi = NULL;

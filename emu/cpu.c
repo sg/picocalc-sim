@@ -40,7 +40,7 @@ void emu_log(const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    fputs("[pcsim] ", stderr);
+    fputs("[picocalc-sim] ", stderr);
     vfprintf(stderr, fmt, ap);
     fputc('\n', stderr);
     va_end(ap);

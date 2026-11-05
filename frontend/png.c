@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "pcsim/frontend.h"
+#include "picocalc-sim/frontend.h"
 
 // A dependency-free PNG writer: stored (uncompressed) deflate blocks inside a valid zlib stream.
 
@@ -45,7 +45,7 @@ static bool chunk(FILE *f, const char *type, const uint8_t *data, size_t len)
     return fwrite(hdr, 1, 8, f) == 8 && (len == 0 || fwrite(data, 1, len, f) == len) && fwrite(tail, 1, 4, f) == 4;
 }
 
-bool pcsim_png_write(const char *path, const uint32_t *argb, int width, int height)
+bool picocalc_sim_png_write(const char *path, const uint32_t *argb, int width, int height)
 {
     if (!crc_table[1])
         crc_init();

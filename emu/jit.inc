@@ -551,7 +551,7 @@ static void jit_flush(void)
 
 static bool jit_init(void)
 {
-    const char *e = getenv("PCSIM_NO_JIT");
+    const char *e = getenv("PICOCALC_SIM_NO_JIT");
     if (e && *e && *e != '0')
         return false;
     // The flags are read with LAHF, which a few of the earliest x86-64 processors lack.

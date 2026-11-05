@@ -1,5 +1,6 @@
 #!/bin/sh
-# Release build of pcsim and pcsim-mkcard that needs only glibc on the desktop it is copied to.
+# Release build of picocalc-sim and picocalc-sim-mkcard that needs only glibc on the desktop it is
+# copied to.
 #   ci/build-linux.sh SOURCE_DIR BUILD_DIR
 set -eu
 src=$1
@@ -22,9 +23,9 @@ cmake -S "$src" -B "$build" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build" -j"$(nproc)"
 
 # an installed libsdl3-dev would be picked over the pinned SDL and become a runtime dependency
-extra=$(ldd "$build/pcsim" | grep -vE 'linux-vdso|libc\.so|libm\.so|ld-linux' || true)
+extra=$(ldd "$build/picocalc-sim" | grep -vE 'linux-vdso|libc\.so|libm\.so|ld-linux' || true)
 if [ -n "$extra" ]; then
-    echo "pcsim depends on more than the C library:"
+    echo "picocalc-sim depends on more than the C library:"
     echo "$extra"
     exit 1
 fi
@@ -38,4 +39,4 @@ for driver in VIDEO_DRIVER_X11 VIDEO_DRIVER_WAYLAND AUDIO_DRIVER_PULSEAUDIO \
     fi
 done
 
-echo "glibc symbols needed: $(objdump -T "$build/pcsim" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1)"
+echo "glibc symbols needed: $(objdump -T "$build/picocalc-sim" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1)"

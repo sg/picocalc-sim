@@ -1,10 +1,10 @@
 #!/bin/sh
 # Boots each UF2 headless and fails if a core faults, the ROM is asked for something it lacks,
 # the firmware never draws on the panel, or its sound is not recorded.
-#   ci/boot-test.sh PCSIM UF2...
-# PCSIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W images.
+#   ci/boot-test.sh PICOCALC_SIM UF2...
+# PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W images.
 set -u
-pcsim=$1
+picocalc_sim=$1
 shift
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -15,7 +15,7 @@ for uf2; do
     name=$(basename "$uf2")
     rm -f "$work/panel.png" "$work/sound.wav"
     # unthrottled because script waits are host time and a slow runner would otherwise see less boot
-    timeout 120 "$pcsim" --headless --unthrottled --trace --flash none --no-card ${PCSIM_ROM:+--rom "$PCSIM_ROM"} \
+    timeout 120 "$picocalc_sim" --headless --unthrottled --trace --flash none --no-card ${PICOCALC_SIM_ROM:+--rom "$PICOCALC_SIM_ROM"} \
         --wav "$work/sound.wav" --script "$work/boot.pcs" "$uf2" >"$work/out.log" 2>"$work/err.log"
     rc=$?
     problem=

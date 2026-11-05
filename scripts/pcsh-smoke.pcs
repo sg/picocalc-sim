@@ -1,5 +1,5 @@
 # Boots pcsh, lists the card, runs Lua, interrupts it with Brk, and saves the panel.
-#   build/pcsim --headless --card sd.img --script scripts/pcsh-smoke.pcs ../pcsh/build-pico2/pcsh.uf2
+#   build/picocalc-sim --headless --card sd.img --script scripts/pcsh-smoke.pcs ../pcsh/build-pico2/pcsh.uf2
 wait 2500
 type sdcard\n
 wait 1500

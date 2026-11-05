@@ -10,11 +10,11 @@ endif()
 
 set(FATFS_DIR "" CACHE PATH "FatFs sources (ff.c); found or fetched when empty")
 set(LWIP_DIR "" CACHE PATH "lwIP sources (src/core/tcp.c); found or fetched when empty")
-option(PCSIM_SDL "Build the SDL3 window frontend" ON)
-option(PCSIM_FETCH_SDL "Download and build SDL3 when it is not installed" ON)
-set(PCSIM_SDL3_SHA256 "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3" CACHE STRING "SHA-256 of the SDL3 release tarball")
+option(PICOCALC_SIM_SDL "Build the SDL3 window frontend" ON)
+option(PICOCALC_SIM_FETCH_SDL "Download and build SDL3 when it is not installed" ON)
+set(PICOCALC_SIM_SDL3_SHA256 "9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3" CACHE STRING "SHA-256 of the SDL3 release tarball")
 set(IMGUI_DIR "" CACHE PATH "Dear ImGui sources (imgui.cpp); fetched when empty")
-set(PCSIM_IMGUI_SHA256 "21d8a0a565e85dce943e375db00812c2f3f0ab21f3f0f7964e364a63422d7f99" CACHE STRING "SHA-256 of the Dear ImGui release tarball")
+set(PICOCALC_SIM_IMGUI_SHA256 "21d8a0a565e85dce943e375db00812c2f3f0ab21f3f0f7964e364a63422d7f99" CACHE STRING "SHA-256 of the Dear ImGui release tarball")
 
 find_package(Threads REQUIRED)
 include(cmake/Dependencies.cmake)
@@ -30,7 +30,7 @@ if(WIN32)
 endif()
 
 set(LWIP_SRC ${LWIP_DIR}/src/core)
-add_library(pcsim_lwip STATIC
+add_library(picocalc_sim_lwip STATIC
     ${LWIP_SRC}/def.c
     ${LWIP_SRC}/inet_chksum.c
     ${LWIP_SRC}/init.c
@@ -49,11 +49,11 @@ add_library(pcsim_lwip STATIC
     ${LWIP_SRC}/ipv4/ip4.c
     ${LWIP_SRC}/ipv4/ip4_addr.c
     ${LWIP_SRC}/ipv4/ip4_frag.c)
-target_include_directories(pcsim_lwip PUBLIC sim/net ${LWIP_DIR}/src/include)
-target_compile_options(pcsim_lwip PRIVATE -w)
+target_include_directories(picocalc_sim_lwip PUBLIC sim/net ${LWIP_DIR}/src/include)
+target_compile_options(picocalc_sim_lwip PRIVATE -w)
 
 # Everything but main(), so the Windows build can link two programs without compiling twice.
-add_library(pcsim_objs OBJECT
+add_library(picocalc_sim_objs OBJECT
     emu/chip.c
     emu/cpu.c
     emu/cyw43.c
@@ -90,31 +90,31 @@ add_library(pcsim_objs OBJECT
     frontend/script.c
     frontend/sdl.c
     frontend/settings.c)
-target_include_directories(pcsim_objs PUBLIC emu sim/include)
-target_compile_options(pcsim_objs PUBLIC -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(pcsim_objs PUBLIC pcsim_lwip Threads::Threads m)
+target_include_directories(picocalc_sim_objs PUBLIC emu sim/include)
+target_compile_options(picocalc_sim_objs PUBLIC -Wall -Wextra -Wno-unused-parameter)
+target_link_libraries(picocalc_sim_objs PUBLIC picocalc_sim_lwip Threads::Threads m)
 if(WIN32)
-    target_link_libraries(pcsim_objs PUBLIC ws2_32 iphlpapi winmm)
+    target_link_libraries(picocalc_sim_objs PUBLIC ws2_32 iphlpapi winmm)
 endif()
-if(PCSIM_HAVE_SDL)
-    target_sources(pcsim_objs PRIVATE frontend/ui.cpp)
-    target_compile_definitions(pcsim_objs PRIVATE PCSIM_HAVE_SDL=1)
-    target_link_libraries(pcsim_objs PUBLIC pcsim_imgui)
+if(PICOCALC_SIM_HAVE_SDL)
+    target_sources(picocalc_sim_objs PRIVATE frontend/ui.cpp)
+    target_compile_definitions(picocalc_sim_objs PRIVATE PICOCALC_SIM_HAVE_SDL=1)
+    target_link_libraries(picocalc_sim_objs PUBLIC picocalc_sim_imgui)
     # the C++ runtime goes into the binary, which then still needs nothing beyond the C library
     if(NOT WIN32 AND NOT APPLE)
-        target_link_options(pcsim_objs PUBLIC -static-libstdc++ -static-libgcc)
+        target_link_options(picocalc_sim_objs PUBLIC -static-libstdc++ -static-libgcc)
     endif()
 endif()
 
-add_executable(pcsim frontend/main.c)
-target_link_libraries(pcsim PRIVATE pcsim_objs)
+add_executable(picocalc-sim frontend/main.c)
+target_link_libraries(picocalc-sim PRIVATE picocalc_sim_objs)
 if(WIN32)
-    # Started from Explorer, pcsim.exe then opens no console window beside its own. A command line
-    # neither waits for such a program nor shows its output, so pcsim-console.exe is the same
-    # program built for one.
-    target_link_options(pcsim PRIVATE -Wl,--subsystem,windows)
-    add_executable(pcsim-console frontend/main.c)
-    target_link_libraries(pcsim-console PRIVATE pcsim_objs)
+    # Started from Explorer, picocalc-sim.exe then opens no console window beside its own. A command
+    # line neither waits for such a program nor shows its output, so picocalc-sim-console.exe is the
+    # same program built for one.
+    target_link_options(picocalc-sim PRIVATE -Wl,--subsystem,windows)
+    add_executable(picocalc-sim-console frontend/main.c)
+    target_link_libraries(picocalc-sim-console PRIVATE picocalc_sim_objs)
 endif()
 
 add_subdirectory(tools/mkcard)

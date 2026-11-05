@@ -11,8 +11,8 @@
 #include <netinet/tcp.h>
 #endif
 
-#include "pcsim/net.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/net.h"
+#include "picocalc-sim/sim.h"
 
 // The firmware's side of the network: a 10.0.2.0/24 Ethernet with the host at 10.0.2.2, which
 // routes, answers ARP, DHCP and ping, and forwards DNS at 10.0.2.3 to the host's resolver. UDP and
@@ -25,7 +25,7 @@
 static const uint8_t gw_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02};
 static const uint8_t bcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
-static pcsim_net_rx_fn rx_fn;
+static picocalc_sim_net_rx_fn rx_fn;
 static void *rx_ctx;
 static uint8_t guest_mac[6];
 static bool guest_mac_known;
@@ -34,7 +34,7 @@ bool net_link_up;
 
 uint64_t net_now_ms(void)
 {
-    return pcsim_uptime_us() / 1000;
+    return picocalc_sim_uptime_us() / 1000;
 }
 
 void net_set_nodelay(sock_t s)
@@ -524,7 +524,7 @@ static void ping_send(uint32_t dst, const uint8_t *icmp, size_t len)
         icmp_handle = IcmpCreateFile();
         if (icmp_handle == INVALID_HANDLE_VALUE) {
             ping_failed = true;
-            pcsim_log("net: Windows would not open its ICMP helper, so pings beyond 10.0.2.2 go unanswered");
+            picocalc_sim_log("net: Windows would not open its ICMP helper, so pings beyond 10.0.2.2 go unanswered");
         }
     }
     if (icmp_handle == INVALID_HANDLE_VALUE || len > sizeof(pings[0].req))
@@ -594,7 +594,7 @@ static void ping_send(uint32_t dst, const uint8_t *icmp, size_t len)
             if (ping_fd >= 0)
                 close(ping_fd);
             ping_fd = -1;
-            pcsim_log("net: the host does not allow unprivileged ping sockets, so pings beyond 10.0.2.2 go "
+            picocalc_sim_log("net: the host does not allow unprivileged ping sockets, so pings beyond 10.0.2.2 go "
                       "unanswered (on Linux see net.ipv4.ping_group_range)");
         }
     }
@@ -703,7 +703,7 @@ static void ipv4_input(uint8_t *ip, size_t len)
     }
 }
 
-void pcsim_net_input(const uint8_t *frame, size_t len)
+void picocalc_sim_net_input(const uint8_t *frame, size_t len)
 {
     if (len < 14 || len > 1518)
         return;
@@ -720,13 +720,13 @@ void pcsim_net_input(const uint8_t *frame, size_t len)
         ipv4_input(buf + 14, len - 14);
 }
 
-void pcsim_net_attach(pcsim_net_rx_fn fn, void *ctx)
+void picocalc_sim_net_attach(picocalc_sim_net_rx_fn fn, void *ctx)
 {
     rx_fn = fn;
     rx_ctx = ctx;
 }
 
-void pcsim_net_link(bool up)
+void picocalc_sim_net_link(bool up)
 {
     if (up == net_link_up)
         return;
@@ -739,7 +739,7 @@ void pcsim_net_link(bool up)
     }
 }
 
-void pcsim_net_poll(void)
+void picocalc_sim_net_poll(void)
 {
     dns_poll();
     pollfd_t fds[256];
@@ -776,9 +776,9 @@ void pcsim_net_poll(void)
     tcpnat_timers();
 }
 
-void pcsim_net_shutdown(void)
+void picocalc_sim_net_shutdown(void)
 {
-    pcsim_net_link(false);
+    picocalc_sim_net_link(false);
     tcpnat_shutdown();
     rx_fn = NULL;
     rx_ctx = NULL;
@@ -786,15 +786,15 @@ void pcsim_net_shutdown(void)
     ip_id = 0;
 }
 
-bool pcsim_net_init(void)
+bool picocalc_sim_net_init(void)
 {
     if (!sock_startup()) {
-        pcsim_log("net: cannot start the host's socket library");
+        picocalc_sim_log("net: cannot start the host's socket library");
         return false;
     }
     tcpnat_init();
     bool ok = true;
-    for (int i = 0; i < pcsim_opts.forward_count; i++)
-        ok &= tcpnat_forward(pcsim_opts.forwards[i]);
+    for (int i = 0; i < picocalc_sim_opts.forward_count; i++)
+        ok &= tcpnat_forward(picocalc_sim_opts.forwards[i]);
     return ok;
 }

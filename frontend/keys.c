@@ -4,38 +4,38 @@
 #include <strings.h>
 #include <time.h>
 
-#include "pcsim/bus.h"
-#include "pcsim/devices.h"
-#include "pcsim/frontend.h"
-#include "pcsim/keys.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/devices.h"
+#include "picocalc-sim/frontend.h"
+#include "picocalc-sim/keys.h"
+#include "picocalc-sim/sim.h"
 
 static void sleep_ms(unsigned ms)
 {
-    pcsim_sleep_ns((uint64_t)ms * 1000000ull);
+    picocalc_sim_sleep_ns((uint64_t)ms * 1000000ull);
 }
 
 // A restart frees the devices and makes new ones with the machine locked, and a script's keys
 // can arrive in between.
 static void send_key(uint8_t key, bool pressed)
 {
-    pcsim_machine_lock();
-    if (pcsim_picocalc.sb)
-        southbridge_key(pcsim_picocalc.sb, key, pressed);
-    pcsim_machine_unlock();
+    picocalc_sim_machine_lock();
+    if (picocalc_sim_picocalc.sb)
+        southbridge_key(picocalc_sim_picocalc.sb, key, pressed);
+    picocalc_sim_machine_unlock();
 }
 
-void pcsim_keys_press(uint8_t key)
+void picocalc_sim_keys_press(uint8_t key)
 {
     // The power button is the only way back from a power-off, and any key stands in for it.
-    if (pcsim_state() == PCSIM_POWERED_OFF) {
-        pcsim_power_button();
+    if (picocalc_sim_state() == PICOCALC_SIM_POWERED_OFF) {
+        picocalc_sim_power_button();
         return;
     }
     send_key(key, true);
 }
 
-void pcsim_keys_release(uint8_t key)
+void picocalc_sim_keys_release(uint8_t key)
 {
     send_key(key, false);
 }
@@ -88,25 +88,25 @@ static bool key_for_char(char c, uint8_t *key, bool *shift)
     }
 }
 
-bool pcsim_keys_type_char(char c, unsigned hold_ms, unsigned gap_ms)
+bool picocalc_sim_keys_type_char(char c, unsigned hold_ms, unsigned gap_ms)
 {
     uint8_t key;
     bool shift;
     if (!key_for_char(c, &key, &shift))
         return false;
     // Caps Lock flips letters, so typing a given case may need Shift the other way.
-    pcsim_machine_lock();
-    bool caps = pcsim_picocalc.sb && southbridge_caps_lock(pcsim_picocalc.sb);
-    pcsim_machine_unlock();
+    picocalc_sim_machine_lock();
+    bool caps = picocalc_sim_picocalc.sb && southbridge_caps_lock(picocalc_sim_picocalc.sb);
+    picocalc_sim_machine_unlock();
     if (key >= 'a' && key <= 'z' && caps)
         shift = !shift;
     if (shift)
-        pcsim_keys_press(PC_KEY_LSHIFT);
-    pcsim_keys_press(key);
+        picocalc_sim_keys_press(PC_KEY_LSHIFT);
+    picocalc_sim_keys_press(key);
     sleep_ms(hold_ms);
-    pcsim_keys_release(key);
+    picocalc_sim_keys_release(key);
     if (shift)
-        pcsim_keys_release(PC_KEY_LSHIFT);
+        picocalc_sim_keys_release(PC_KEY_LSHIFT);
     sleep_ms(gap_ms);
     return true;
 }
@@ -133,7 +133,7 @@ static const named_key_t named_keys[] = {
     {"insert", PC_KEY_ENTER, true},     {"brk", PC_KEY_ESC, true},        {"break", PC_KEY_ESC, true},
 };
 
-bool pcsim_keys_chord(const char *spec, unsigned hold_ms)
+bool picocalc_sim_keys_chord(const char *spec, unsigned hold_ms)
 {
     uint8_t mods[4];
     int nmods = 0;
@@ -178,36 +178,36 @@ bool pcsim_keys_chord(const char *spec, unsigned hold_ms)
         mods[nmods++] = PC_KEY_LSHIFT;
 
     for (int i = 0; i < nmods; i++)
-        pcsim_keys_press(mods[i]);
-    pcsim_keys_press(key);
+        picocalc_sim_keys_press(mods[i]);
+    picocalc_sim_keys_press(key);
     sleep_ms(hold_ms);
-    pcsim_keys_release(key);
+    picocalc_sim_keys_release(key);
     for (int i = nmods - 1; i >= 0; i--)
-        pcsim_keys_release(mods[i]);
+        picocalc_sim_keys_release(mods[i]);
     return true;
 }
 
-bool pcsim_screenshot(const char *path)
+bool picocalc_sim_screenshot(const char *path)
 {
-    static uint32_t pixels[PCSIM_LCD_WIDTH * PCSIM_LCD_HEIGHT];
-    pcsim_machine_lock();
-    bool have = pcsim_picocalc.lcd != NULL;
+    static uint32_t pixels[PICOCALC_SIM_LCD_WIDTH * PICOCALC_SIM_LCD_HEIGHT];
+    picocalc_sim_machine_lock();
+    bool have = picocalc_sim_picocalc.lcd != NULL;
     if (have)
-        st7365p_render(pcsim_picocalc.lcd, pixels, southbridge_lcd_backlight(pcsim_picocalc.sb));
-    pcsim_machine_unlock();
+        st7365p_render(picocalc_sim_picocalc.lcd, pixels, southbridge_lcd_backlight(picocalc_sim_picocalc.sb));
+    picocalc_sim_machine_unlock();
     if (!have) {
-        pcsim_log("no screenshot while the machine is stopped");
+        picocalc_sim_log("no screenshot while the machine is stopped");
         return false;
     }
-    if (!pcsim_png_write(path, pixels, PCSIM_LCD_WIDTH, PCSIM_LCD_HEIGHT)) {
-        pcsim_log("cannot write %s", path);
+    if (!picocalc_sim_png_write(path, pixels, PICOCALC_SIM_LCD_WIDTH, PICOCALC_SIM_LCD_HEIGHT)) {
+        picocalc_sim_log("cannot write %s", path);
         return false;
     }
-    pcsim_log("screenshot: %s", path);
+    picocalc_sim_log("screenshot: %s", path);
     return true;
 }
 
-const char *pcsim_screenshot_auto(void)
+const char *picocalc_sim_screenshot_auto(void)
 {
     static char path[1024];
     static int counter;
@@ -216,34 +216,34 @@ const char *pcsim_screenshot_auto(void)
     localtime_r(&now, &tm);
     char stamp[32];
     strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
-    snprintf(path, sizeof(path), "%s/picocalc-%s-%d.png", pcsim_opts.screenshot_dir, stamp, ++counter);
-    return pcsim_screenshot(path) ? path : NULL;
+    snprintf(path, sizeof(path), "%s/picocalc-%s-%d.png", picocalc_sim_opts.screenshot_dir, stamp, ++counter);
+    return picocalc_sim_screenshot(path) ? path : NULL;
 }
 
-const char *pcsim_window_title(void)
+const char *picocalc_sim_window_title(void)
 {
     static char title[256];
-    if (!pcsim_machine_running())
+    if (!picocalc_sim_machine_running())
         return "PicoCalc - not running";
     const char *state = "";
-    switch (pcsim_state()) {
-    case PCSIM_RUNNING:
+    switch (picocalc_sim_state()) {
+    case PICOCALC_SIM_RUNNING:
         break;
-    case PCSIM_HALTED:
+    case PICOCALC_SIM_HALTED:
         state = " - HALTED (F12 resets)";
         break;
-    case PCSIM_BOOTSEL:
+    case PICOCALC_SIM_BOOTSEL:
         state = " - BOOTSEL: drop a UF2 on the window (F12 resets)";
         break;
-    case PCSIM_POWERED_OFF:
+    case PICOCALC_SIM_POWERED_OFF:
         state = " - POWERED OFF (any key)";
         break;
     }
-    double speed = pcsim_speed();
+    double speed = picocalc_sim_speed();
     char speed_note[32] = "";
-    if (pcsim_state() == PCSIM_RUNNING && speed < 0.95)
+    if (picocalc_sim_state() == PICOCALC_SIM_RUNNING && speed < 0.95)
         snprintf(speed_note, sizeof(speed_note), " - %.0f%% speed", speed * 100);
-    snprintf(title, sizeof(title), "PicoCalc [%s]%s%s%s", pcsim_board_name(),
-             southbridge_caps_lock(pcsim_picocalc.sb) ? " - CAPS" : "", speed_note, state);
+    snprintf(title, sizeof(title), "PicoCalc [%s]%s%s%s", picocalc_sim_board_name(),
+             southbridge_caps_lock(picocalc_sim_picocalc.sb) ? " - CAPS" : "", speed_note, state);
     return title;
 }

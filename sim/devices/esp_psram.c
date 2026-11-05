@@ -3,9 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "pcsim/bus.h"
-#include "pcsim/devices.h"
-#include "pcsim/sim.h"
+#include "picocalc-sim/bus.h"
+#include "picocalc-sim/devices.h"
+#include "picocalc-sim/sim.h"
 
 // The PicoCalc mainboard's 8 MB ESP-PSRAM64H, on ordinary GPIOs. It takes SPI (SI on SIO0, SO on
 // SIO1) or, in quad commands and after Enter Quad Mode, four bits a clock; it samples on the
@@ -63,7 +63,7 @@ static void warn(esp_psram_t *p, unsigned kind, const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
-    pcsim_log("PSRAM: %s", msg);
+    picocalc_sim_log("PSRAM: %s", msg);
 }
 
 static double mhz(uint64_t period_ps)
@@ -91,8 +91,8 @@ static void check(esp_psram_t *p, uint64_t t)
 
 static void drive(esp_psram_t *p, int i, int level, uint64_t t)
 {
-    uint64_t rise = T_RISE_PS - T_RISE_SHARP_PS * pcsim_gpio_pad_speed(p->sck);
-    pcsim_gpio_drive_input_at(p->sio[i], level, t + (level > 0 ? rise : T_FALL_PS));
+    uint64_t rise = T_RISE_PS - T_RISE_SHARP_PS * picocalc_sim_gpio_pad_speed(p->sck);
+    picocalc_sim_gpio_drive_input_at(p->sio[i], level, t + (level > 0 ? rise : T_FALL_PS));
 }
 
 // SO reads high whenever the part isn't sending, though the RP2350 pulls it down (seen on a
@@ -102,16 +102,16 @@ static void release(esp_psram_t *p)
     if (!p->driving)
         return;
     p->driving = false;
-    uint64_t t = pcsim_gpio_edge_time() + T_HZ_PS;
+    uint64_t t = picocalc_sim_gpio_edge_time() + T_HZ_PS;
     for (int i = 0; i < 4; i++)
-        pcsim_gpio_drive_input_at(p->sio[i], i == 1 ? 1 : -1, t);
+        picocalc_sim_gpio_drive_input_at(p->sio[i], i == 1 ? 1 : -1, t);
 }
 
 // The outputs come on at the rising edge before the first data bit, low until that bit is sent:
 // a PicoCalc showed SO falling then, and reading 0 there before a first bit of 1.
 static void start_output(esp_psram_t *p)
 {
-    uint64_t t = pcsim_gpio_edge_time();
+    uint64_t t = picocalc_sim_gpio_edge_time();
     p->driving = true;
     for (int i = 0; i < 4; i++)
         if (i == 1 || p->data_quad)
@@ -169,7 +169,7 @@ static void on_cs(void *ctx, unsigned pin, bool level)
     if (sel == p->selected)
         return;
     p->selected = sel;
-    uint64_t t = pcsim_gpio_edge_time();
+    uint64_t t = picocalc_sim_gpio_edge_time();
     if (sel) {
         p->t_sel = t;
         p->t_rise = 0;
@@ -208,16 +208,16 @@ static void on_cs(void *ctx, unsigned pin, bool level)
 static unsigned sample(esp_psram_t *p)
 {
     if (p->width == 1)
-        return pcsim_gpio_level(p->sio[0]);
+        return picocalc_sim_gpio_level(p->sio[0]);
     unsigned v = 0;
     for (int i = 3; i >= 0; i--)
-        v = (v << 1) | pcsim_gpio_level(p->sio[i]);
+        v = (v << 1) | picocalc_sim_gpio_level(p->sio[i]);
     return v;
 }
 
 static void rising(esp_psram_t *p)
 {
-    uint64_t t = pcsim_gpio_edge_time();
+    uint64_t t = picocalc_sim_gpio_edge_time();
     if (p->t_rise && t - p->t_rise < p->min_period)
         p->min_period = t - p->t_rise;
     p->t_rise = t;
@@ -276,7 +276,7 @@ static void falling(esp_psram_t *p)
         p->out_bits = 8;
     }
     p->driving = true;
-    uint64_t t = pcsim_gpio_edge_time();
+    uint64_t t = picocalc_sim_gpio_edge_time();
     if (p->width == 1) {
         drive(p, 1, p->out >> 7, t);
     } else {
@@ -314,9 +314,9 @@ esp_psram_t *esp_psram_create(unsigned cs_pin, unsigned sck_pin, const unsigned 
         x ^= x << 5;
         memcpy(p->mem + i, &x, 4);
     }
-    pcsim_gpio_watch(cs_pin, on_cs, p);
-    pcsim_gpio_watch(sck_pin, on_sck, p);
-    pcsim_gpio_drive_input(p->sio[1], 1);
+    picocalc_sim_gpio_watch(cs_pin, on_cs, p);
+    picocalc_sim_gpio_watch(sck_pin, on_sck, p);
+    picocalc_sim_gpio_drive_input(p->sio[1], 1);
     return p;
 }
 
