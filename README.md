@@ -87,7 +87,7 @@ cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that 
 is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
 the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`), and
-it boots and restarts the RP2350 firmware again on Raspberry Pi's RP2350 ROM
+it boots and restarts the RP2350 firmware again on Raspberry Pi's A2 and A4 RP2350 ROMs
 (`ci/fetch-rp2350-rom.sh`); the ROMs are used only for the tests and are not packed into the
 release. If they pass, it stages a draft release with `picocalc-sim-TAG-linux-x86_64.tar.gz` and
 `picocalc-sim-TAG-windows-x86_64.zip`. Pushing a commit runs nothing; `build.yml` runs the same
@@ -158,17 +158,18 @@ A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
 The RP2350 boards boot through picocalc-sim's own stand-in for the chip's boot ROM unless
 `--rp2350-rom FILE`, or the RP2350 ROM field in Settings, names Raspberry Pi's real one, which then
 runs the chip's own boot path, ROM functions and flash routines. Download `bootrom-combined.bin`
-from the [A2 release](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A2):
+from the [A2](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A2) or
+[A4](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A4) release:
 
 ```sh
 build/picocalc-sim --rp2350-rom bootrom-combined.bin ../pcsh/build-pico2/pcsh.uf2
 ```
 
 Images in flash or RAM and uf2loader work on it. Its USB boot, which the BOOTSEL button, a reboot
-into BOOTSEL and an empty flash all lead to, runs in the Arm security extension's Non-secure state,
-which is not emulated yet, so the machine halts there; F12 resets it, and Flash UF2 works as
-before. Only the A2 ROM runs: the emulated chip is an RP2350 A2, and the A3 and A4 ROMs check the
-security extension as soon as they start.
+into BOOTSEL and an empty flash all lead to, runs in Non-secure state as on the chip and waits for a
+USB host that never connects (see [Status](#status)); F12 resets the board, and Flash UF2 writes an
+image as before. The emulated chip becomes the stepping the ROM was built for: an A2 with the A2
+ROM, and an A3 with the A3 or A4 ROM, since A4 changed only the ROM.
 
 ### uf2loader
 
@@ -381,31 +382,39 @@ the command line is written again and the card stays in the slot (unlike the men
   `PICOCALC_SIM_NO_JIT=1` keeps to the block handlers and `PICOCALC_SIM_NO_BLOCKS=1` steps. The
   RP2040's Cortex-M0+ cores run the ARMv6-M subset the same way, faulting on what the M0+ lacks
   (unaligned accesses, Thumb-2 instructions other than BL, MSR, MRS and the barriers).
-- **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP) is
-  modelled by what each canned operation computes rather than its internal datapath: operands are
-  captured as doubles and the final read returns the IEEE result. The redundancy coprocessor (RCP,
-  `emu/rcp.c`) follows the datasheet: salts, canaries, sequence counts, its checked assertions,
-  pseudorandom delays, and the NMI and stall an RCP fault brings on both cores.
+- **Security extension.** Each Cortex-M33 has Secure and Non-secure states, with their banked
+  stack pointers, masks, CONTROL, SysTicks and system control registers (Secure code reaches the
+  Non-secure ones through the alias at `0xe002e000`), the SAU and the RP2350's IDAU, secure
+  gateways (SG), BXNS and BLXNS, the TT instructions, SecureFaults, and exceptions that cross from
+  one state to the other, which stack and clear the Secure registers before a Non-secure handler
+  runs. Non-secure code is always stepped one instruction at a time, as each access it makes is
+  checked against the SAU and IDAU; Secure code keeps the blocks and native code.
+- **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP), whose
+  Secure and Non-secure instances are coprocessors 4 and 5, is modelled by what each canned
+  operation computes rather than its internal datapath: operands are captured as doubles and the
+  final read returns the IEEE result. The redundancy coprocessor (RCP, `emu/rcp.c`) follows the
+  datasheet: salts, canaries, sequence counts, its checked assertions, pseudorandom delays, the NMI
+  and stall an RCP fault brings on both cores, and the zeroed reads and ignored checks Non-secure
+  code gets.
 - **Boot ROM.** On the RP2350, `emu/rom.c` stands in for the boot ROM, so no ROM file is needed,
-  and `--rp2350-rom` runs Raspberry Pi's own, published under a BSD license, instead; its USB boot
-  needs the Arm security extension's Non-secure state, which is not emulated yet. The stand-in
+  and `--rp2350-rom` runs Raspberry Pi's own, published under a BSD license, instead. The stand-in
   follows the real boot path (watchdog and reboot parameters, the picobin block loop, embedded and
   standalone partition tables, ATRANS address translation, load maps, BOOTSEL when nothing
   boots), runs core 1's launch handshake, and implements the ROM API the SDK and uf2loader call:
   flash operations, partition queries, `chain_image`, `reboot`, `get_sys_info` and so on. The
   RP2040 runs its real ROM, from a file the user supplies.
-- **Peripherals.** Register-level models of what the PicoCalc firmware uses: SIO (FIFOs,
-  spinlocks, interpolators), IO bank and pads, TIMER0/1, watchdog, POWMAN's always-on timer,
-  clocks/PLLs/tick generators, PL022 SPI, DesignWare I2C, PL011 UART, PIO (all three blocks,
-  stepped instruction by instruction on whole system clock cycles, so a fractional divider gives
-  uneven ones as on the chip, except that the counting loop of pico-examples' PWM program, which
-  PIO audio drivers use, skips ahead to its next edge), 16-channel DMA, PWM, QMI
-  direct mode with a W25Q flash (busy for its datasheet's typical erase and program times) and an
-  APS6404 PSRAM, TRNG, SHA-256 accelerator, OTP chip ID, boot RAM and boot locks.
-  On the RP2040 the same models sit behind its register layout (`emu/rp2040.c`), with its own
-  clock tree, resets, SIO hardware divider, RTC, and the SSI and XIP cache it reaches flash through;
-  XIP reads get flash data only while the SSI and the flash's continuous-read mode are set up as
-  boot2 leaves them.
+- **Peripherals.** Register-level models of what the PicoCalc firmware uses: SIO (FIFOs, spinlocks,
+  doorbells and interpolators, in its Secure and Non-secure banks), IO bank and pads, TIMER0/1,
+  watchdog, POWMAN's always-on timer, clocks/PLLs/tick generators, PL022 SPI, DesignWare I2C, PL011
+  UART, PIO (all three blocks, stepped instruction by instruction on whole system clock cycles, so a
+  fractional divider gives uneven ones as on the chip, except that the counting loop of
+  pico-examples' PWM program, which PIO audio drivers use, skips ahead to its next edge), 16-channel
+  DMA, PWM, QMI direct mode with a W25Q flash (busy for its datasheet's typical erase and program
+  times) and an APS6404 PSRAM, TRNG, SHA-256 accelerator, OTP chip ID, boot RAM and boot locks. On
+  the RP2040 the same models sit behind its register layout (`emu/rp2040.c`), with its own clock
+  tree, resets, SIO hardware divider, RTC, and the SSI and XIP cache it reaches flash through; XIP
+  reads get flash data only while the SSI and the flash's continuous-read mode are set up as boot2
+  leaves them.
 - **Timing.** Emulated time is paced against the host clock. Buses move data at the rate the
   firmware programmed (a 10 kHz I2C poll of the keyboard takes as long as it does on the board).
 - **Pin timing.** A pin's change reaches the PIO's inputs a cycle plus the pads' delays later
@@ -465,7 +474,8 @@ Not emulated yet, or not faithfully:
   at 12 mA fast slew; other pad settings are interpolated, and quad mode is unmeasured. A read
   that lands within a fraction of a nanosecond of a change, which varies from read to read on the
   board, gives the same answer every time here.
-- **USB** enumerates nothing: the controller's registers exist but no host is connected.
+- **USB** enumerates nothing: the controller's registers exist but no host is connected, so the
+  RP2350 ROM's USB boot waits in Non-secure state as on a board with nothing plugged in.
 - **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
   RP2040, and the ROM's USB boot waits for a host that never comes, as on a Pico with nothing
   plugged in. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
@@ -473,9 +483,10 @@ Not emulated yet, or not faithfully:
 - **RISC-V** images for the RP2350 are not supported.
 - **Windows:** `picocalc-sim-mkcard.exe` reads host file names in the system code page, so files
   whose names are not plain ASCII may not copy.
-- Secure state only: the Arm security extension's Non-secure state is not emulated, so Raspberry
-  Pi's RP2350 ROM halts at its USB boot. The MPU and SAU keep their registers but don't enforce
-  them. OTP reads as unprogrammed apart from the chip ID.
+- Privilege is not enforced, so unprivileged code can do whatever privileged code can. The MPU is
+  consulted only by TT, not by loads, stores or fetches. ACCESSCTRL keeps its registers and its
+  GPIO_NSMASK masks the Non-secure SIO, but its bus filters don't refuse any access yet. OTP reads
+  as unprogrammed apart from the chip ID.
 - Assumptions about the keyboard controller I could not check against hardware are marked in
   `sim/devices/southbridge.c` (hold after 300 ms, release codes).
 

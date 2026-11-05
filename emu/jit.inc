@@ -597,12 +597,8 @@ static void jit_set_ps(uint32_t ps);
 static bool jit_look(cpu_t *c, uint32_t pc, uint32_t it)
 {
     chip_t *m = c->m;
-    if (c->fault) {
-        unsigned exc = c->fault_usage ? EXC_USAGEFAULT : EXC_BUSFAULT;
-        c->r[15] = pc;
-        c->itstate = it;
-        take_fault(c, exc, pc, exc == EXC_USAGEFAULT ? "unaligned access" : "bus fault");
-    }
+    if (c->fault)
+        take_flagged_fault(c, pc, it);
     c->t += (uint64_t)c->cyc * m->sys_ps;
     if (c->t >= jx.until)
         return false;
@@ -612,7 +608,8 @@ static bool jit_look(cpu_t *c, uint32_t pc, uint32_t it)
             sleep_check(c);
     }
     // An exception just taken leaves check_exc set, which block_run answers after one instruction.
-    if (c->state != CPU_RUN || c->itstate || c->check_exc)
+    // Non-secure code is stepped, and a flush must wait until no native code is running.
+    if (c->state != CPU_RUN || c->itstate || c->check_exc || c->ns || m->code_flush)
         return false;
     if (m->sys_ps != J.ps)
         jit_set_ps(m->sys_ps);
@@ -2599,6 +2596,8 @@ static bool jit_run(cpu_t *c, block_t *b, uint64_t until)
         }
         uint8_t *site = jx.site;
         uint32_t epoch = J.epoch, npc = c->r[15];
+        if (c->ns || m->code_flush)
+            return false;
         block_t *nb = block_find(m, npc);
         if (!nb)
             return false;

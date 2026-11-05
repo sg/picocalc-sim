@@ -23,7 +23,7 @@ for uf2; do
     problem=
     if [ $rc -ne 0 ]; then
         problem="exited with $rc"
-    elif grep -qE 'locked up|RCP|Non-secure|bus error|undefined instruction|unimplemented|unknown code|BKPT|ARM state|coprocessor instruction|divide by zero|SVC at' "$work/err.log"; then
+    elif grep -qE 'locked up|RCP|security violation|Secure code|Secure address|Non-secure memory|security boundary|exception return|integrity signature|function return|wrong mode|not enabled for Non-secure|bus error|undefined instruction|unimplemented|unknown code|BKPT|ARM state|coprocessor instruction|divide by zero|SVC at' "$work/err.log"; then
         problem="faulted"
     elif ! lit=$(python3 - "$work/panel.png" <<'EOF'
 import collections, struct, sys, zlib

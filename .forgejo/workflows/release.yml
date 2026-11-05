@@ -55,13 +55,14 @@ jobs:
       - name: Serve FTP over the emulated WiFi
         run: src/ci/wifi-test.sh build/picocalc-sim build/tools/mkcard/picocalc-sim-mkcard fw/picocalc-ftpserver-*.uf2
 
-      - name: Boot and restart the RP2350 firmware on Raspberry Pi's boot ROM
-        env:
-          PICOCALC_SIM_RP2350_ROM: rom/rp2350-a2.bin
+      - name: Boot and restart the RP2350 firmware on Raspberry Pi's A2 and A4 boot ROMs
         run: |
-          src/ci/fetch-rp2350-rom.sh "$PICOCALC_SIM_RP2350_ROM"
-          src/ci/boot-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
-          src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
+          for rev in A2 A4; do
+            src/ci/fetch-rp2350-rom.sh $rev rom/rp2350-$rev.bin
+            export PICOCALC_SIM_RP2350_ROM=rom/rp2350-$rev.bin
+            src/ci/boot-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
+            src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
+          done
 
       - name: Build for Windows
         run: src/ci/build-windows.sh src build-win

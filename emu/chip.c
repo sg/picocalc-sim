@@ -127,8 +127,6 @@ void chip_request(chip_t *m, int what, const char *reason)
         m->req_reset = true;
     else if (what == REQ_BOOTSEL)
         m->req_bootsel = true;
-    else if (what == REQ_HALT)
-        m->req_halt = true;
     else
         m->req_poweroff = true;
     snprintf(m->req_reason, sizeof(m->req_reason), "%s", reason);
@@ -499,12 +497,12 @@ static uint32_t mem_read(chip_t *m, cpu_t *c, uint32_t addr, int size, bool *ok)
         return extract(periph_read(m, addr, ok), addr, size);
     case 0xd:
         if (c)
-            return extract(sio_read(c, addr & 0x1ffff), addr, size);
+            return extract(sio_read(c, addr & 0x3ffff, ok), addr, size);
         break;
     case 0xe:
         if (c) {
             if (addr < 0xe0040000u)
-                return extract(cpu_ppb_read(c, addr & 0xffff), addr, size);
+                return extract(cpu_ppb_read(c, addr & 0x3ffff), addr, size);
             return 0;
         }
         break;
@@ -621,14 +619,14 @@ static void mem_write(chip_t *m, cpu_t *c, uint32_t addr, uint32_t v, int size, 
         return;
     case 0xd:
         if (c) {
-            sio_write(c, addr & 0x1ffff, replicate(v, size));
+            sio_write(c, addr & 0x3ffff, replicate(v, size), ok);
             return;
         }
         break;
     case 0xe:
         if (c) {
             if (addr < 0xe0040000u)
-                cpu_ppb_write(c, addr & 0xffff, v);
+                cpu_ppb_write(c, addr & 0x3ffff, v);
             return;
         }
         break;
@@ -647,6 +645,10 @@ static inline void touch_now(chip_t *m, cpu_t *c)
 static __attribute__((noinline)) uint32_t bus_read_decode(cpu_t *c, uint32_t addr, int size)
 {
     chip_t *m = c->m;
+    // Non-secure state has no pages, so each of its accesses arrives here to be checked; the
+    // timers, being peripherals, are open to it.
+    if (unlikely(c->ns) && !cpu_ns_access(c, addr))
+        return 0;
     bool ok = true;
     uint32_t v = mem_read(m, c, addr, size, &ok);
     if (!ok) {
@@ -676,6 +678,8 @@ uint32_t bus_read(cpu_t *c, uint32_t addr, int size)
 void bus_write(cpu_t *c, uint32_t addr, uint32_t v, int size)
 {
     chip_t *m = c->m;
+    if (unlikely(c->ns) && !cpu_ns_access(c, addr))
+        return;
     touch_now(m, c);
     bool ok = true;
     mem_write(m, c, addr, v, size, &ok);
@@ -815,6 +819,12 @@ void chip_reset(chip_t *m, bool watchdog)
     memset(m->rosc_regs, 0, sizeof(m->rosc_regs));
     m->rosc_regs[0] = 0xfabaa0;
     m->rosc_regs[4] = 0xaa0;
+    // A3 resets with the ROSC's first two stages randomised, and clk_sys on the ROSC through its
+    // auxiliary mux rather than on clk_ref.
+    if (m->a3) {
+        m->rosc_regs[1] = 0x88;
+        m->clk[CLK_SYS].ctrl = 0x41;
+    }
     m->pll_sys = (pll_t){.cs = 1, .pwr = 0x2d, .fbdiv = 0, .prim = 0x77000};
     m->pll_usb = m->pll_sys;
     memset(m->syscfg, 0, sizeof(m->syscfg));

@@ -53,6 +53,20 @@ enum {
 
 #define MAX_EXC 96
 
+typedef struct {
+    uint32_t csr, rvr, cvr;
+    uint64_t t;
+    bool countflag;
+    emu_event_t ev;
+} systick_t;
+
+// One security state's MPU, which only TT consults: accesses are not checked against it.
+typedef struct {
+    uint32_t ctrl, rnr, rbar[8], rlar[8], mair[2];
+} mpu_t;
+
+// Banked registers have a Secure copy under the plain name and a Non-secure one ending in _ns, and
+// r[13] is the current stack pointer, whose own slot is stale until the core switches stacks.
 struct cpu {
     uint32_t r[16];
     uint32_t apsr;
@@ -67,22 +81,35 @@ struct cpu {
     bool event;
     bool check_exc;
     bool fault;
-    bool fault_usage;
+    // The exception a fault flagged by a memory access or check raises: a BusFault, UsageFault
+    // or SecureFault.
+    uint8_t fault_exc;
+    bool ns;
     uint32_t cyc;
     uint32_t fetch_line;
     uint64_t t;
     uint64_t insns;
+    // Loads and stores go through these: the chip's pages in Secure state, and none in
+    // Non-secure state, so that every access there takes the path that checks its attribution.
+    uint8_t **rpage, **wpage;
+    // Instruction fetches from fw_lo up to fw_lo + fw_size need no attribution check, nor do
+    // Non-secure loads and stores in the same way from dw_lo.
+    uint32_t fw_lo, fw_size, dw_lo, dw_size;
 
-    uint32_t nvic_en[2], nvic_pend[2];
+    uint32_t msp_ns, psp_ns, msplim_ns, psplim_ns;
+    uint32_t control_ns, primask_ns, basepri_ns, faultmask_ns;
+
+    uint32_t nvic_en[2], nvic_pend[2], nvic_itns[2];
     uint8_t nvic_pri[64];
-    uint8_t shpr[16];
-    bool pend_pendsv, pend_systick, pend_nmi;
-    uint32_t active[3];
+    uint8_t shpr[16], shpr_ns[16];
+    bool pend_pendsv, pend_systick, pend_pendsv_ns, pend_systick_ns, pend_nmi;
+    // Active exceptions by number, with banked exceptions' Secure instances; active_ns holds
+    // their Non-secure instances.
+    uint32_t active[3], active_ns;
     uint32_t vtor, scr, ccr, shcsr, cfsr, hfsr, mmfar, bfar, cpacr, nsacr, aircr;
-    uint32_t fpccr, fpcar, fpdscr;
-    // The MPU and SAU registers, kept so software reads back what it set; neither restricts or
-    // attributes accesses, since everything runs Secure and privileged checks are not modelled.
-    uint32_t mpu_ctrl, mpu_rnr, mpu_rbar[8], mpu_rlar[8], mpu_mair[2];
+    uint32_t vtor_ns, scr_ns, ccr_ns, shcsr_ns, cfsr_ns, mmfar_ns, cpacr_ns, aircr_ns;
+    uint32_t fpccr, fpcar, fpdscr, fpccr_ns, fpcar_ns, fpdscr_ns;
+    mpu_t mpu[2];
     uint32_t sau_ctrl, sau_rnr, sau_rbar[8], sau_rlar[8], sfsr, sfar;
     uint8_t pri_mask;
 
@@ -92,10 +119,8 @@ struct cpu {
     bool excl_valid;
     uint32_t excl_addr;
 
-    uint32_t syst_csr, syst_rvr, syst_cvr;
-    uint64_t syst_t;
-    bool syst_countflag;
-    emu_event_t syst_ev;
+    // The Secure SysTick, then the Non-secure one.
+    systick_t syst[2];
 
     int hle_state;
     uint32_t hle_val;
@@ -115,6 +140,9 @@ static inline void cpu_poke(cpu_t *c)
 }
 void cpu_wake(cpu_t *c, bool event);
 bool cpu_irq_wakes(cpu_t *c);
+// Whether Non-secure state may access a; if not, a SecureFault is flagged.
+bool cpu_ns_access(cpu_t *c, uint32_t a);
+void cpu_undefined(cpu_t *c, uint32_t pc, uint32_t op);
 const char *cpu_state_name(const cpu_t *c);
 void cpu_dump(const cpu_t *c);
 void cpu_return_from_hle(cpu_t *c);

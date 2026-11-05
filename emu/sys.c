@@ -9,8 +9,6 @@
 #define XOSC_HZ 12000000ull
 #define ROSC_HZ 11000000ull
 
-enum { CLK_GPOUT0, CLK_GPOUT1, CLK_GPOUT2, CLK_GPOUT3, CLK_REF, CLK_SYS, CLK_PERI, CLK_HSTX, CLK_USB, CLK_ADC };
-
 static uint64_t pll_hz(chip_t *m, const pll_t *p)
 {
     if (!m->xosc_hz)
@@ -220,7 +218,7 @@ uint32_t sysctl_read(chip_t *m, uint32_t base, uint32_t off)
     switch (base) {
     case 0x40000000:
         switch (off) {
-        case 0x00: return 0x20004927u;
+        case 0x00: return (m->a3 ? 0x30000000u : 0x20000000u) | 0x00004927u;
         case 0x04: return m->board->num_gpio > 30 ? 0 : 1;
         case 0x08: return 2;
         case 0x14: return 0x8e9b3f2au;
@@ -473,7 +471,12 @@ void sysctl_write(chip_t *m, uint32_t base, uint32_t off, uint32_t v)
         break;
     }
     case 0x40060000:
-        if (off < 0x100 && ((v >> 16) == 0xacce || off < 0x10))
+        // The GPIO_NSMASK registers take no password and use the upper half.
+        if (off == 0x0c)
+            m->accessctrl[3] = v;
+        else if (off == 0x10)
+            m->accessctrl[4] = v & 0xff00ffffu;
+        else if (off < 0x100 && (v >> 16) == 0xacce)
             m->accessctrl[off >> 2] = v & 0xffff;
         break;
     case 0x40068000:

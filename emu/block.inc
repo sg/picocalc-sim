@@ -903,6 +903,16 @@ static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
     }
     if (!n)
         return false;
+    // A block may be run by either core, so it must be Secure code to both of their SAUs.
+    if (!m->rp2040 && ((m->core[0].sau_ctrl | m->core[1].sau_ctrl) & 3))
+        for (int k = 0; k < 2; k++) {
+            uint32_t lo, hi;
+            if (security_check(&m->core[k], pc, true, true, &lo, &hi).ns || a - 1 > hi) {
+                // The ops were overwritten, so the entry must not match what it held before.
+                b->tag = 0;
+                return false;
+            }
+        }
     const uint8_t *src = page + (pc & 0xffff);
     bool fixed = (src >= m->rom && src < m->rom + ROM_SIZE) || (src >= m->flash && src < m->flash + m->flash_size);
     b->tag = pc | 1;
@@ -1006,12 +1016,8 @@ static void block_run(cpu_t *c, block_t *b, uint64_t until)
         d->fn(c, d);
         insns++;
         if (unlikely(needs_look(c))) {
-            if (c->fault) {
-                unsigned exc = c->fault_usage ? EXC_USAGEFAULT : EXC_BUSFAULT;
-                c->r[15] = pc;
-                c->itstate = 0;
-                take_fault(c, exc, pc, exc == EXC_USAGEFAULT ? "unaligned access" : "bus fault");
-            }
+            if (c->fault)
+                take_flagged_fault(c, pc, 0);
             t = c->t + (uint64_t)c->cyc * m->sys_ps;
             break;
         }
@@ -1021,7 +1027,7 @@ static void block_run(cpu_t *c, block_t *b, uint64_t until)
         if (++d == end || c->r[15] != next) {
             // The core only stops or starts an IT block at an instruction that ends a block or
             // branches, and an IT block is then stepped one instruction at a time by cpu_run.
-            if (c->itstate || c->state != CPU_RUN)
+            if (c->itstate || c->state != CPU_RUN || c->ns || m->code_flush)
                 break;
             uint32_t npc = c->r[15];
             unsigned k = npc == next ? 0 : 1;

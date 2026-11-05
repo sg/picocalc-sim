@@ -351,7 +351,7 @@ const char *pick_title(int kind)
     case PICK_CARD: return "SD card image to insert";
     case PICK_WAV: return "WAV file to record to";
     case PICK_ROM: return "RP2040 boot ROM (b2.elf or a 16 KB image)";
-    case PICK_RP2350_ROM: return "RP2350 boot ROM (the A2 bootrom-combined.bin)";
+    case PICK_RP2350_ROM: return "RP2350 boot ROM (bootrom-combined.bin)";
     case PICK_FLASH: return "Flash image";
     case PICK_SHOTS: return "Folder for screenshots";
     }
@@ -573,9 +573,9 @@ void machine_tab()
     ImGui::BeginDisabled(chosen.rp2040);
     path_field("RP2350 ROM", "picocalc-sim's own", &pending.rp2350_rom, PICK_RP2350_ROM);
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("Raspberry Pi's RP2350 boot ROM, to run instead of picocalc-sim's stand-in: the A2 "
-                          "bootrom-combined.bin from github.com/raspberrypi/pico-bootrom-rp2350/releases. "
-                          "Its USB boot needs Non-secure state, which is not emulated yet.");
+    ImGui::SetItemTooltip("Raspberry Pi's RP2350 boot ROM, to run instead of picocalc-sim's stand-in: "
+                          "bootrom-combined.bin from the A2 or A4 release at "
+                          "github.com/raspberrypi/pico-bootrom-rp2350/releases");
 
     static const char *const places[] = {"In the data folder", "In memory until picocalc-sim quits", "In a file"};
     ImGui::Combo("Flash", &pending.flash, places, 3);

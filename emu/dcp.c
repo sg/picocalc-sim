@@ -45,7 +45,8 @@ typedef struct {
     bool engaged;
 } dcp_state_t;
 
-static dcp_state_t st[2];
+// Each core has a Secure instance as coprocessor 4 and a Non-secure one as coprocessor 5.
+static dcp_state_t st[2][2];
 
 void dcp_reset(void)
 {
@@ -62,9 +63,9 @@ static double Y(dcp_state_t *s)
     return bits_to_d(s->y);
 }
 
-bool dcp_mcrr(cpu_t *c, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi)
+bool dcp_mcrr(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi)
 {
-    dcp_state_t *s = &st[c->id];
+    dcp_state_t *s = &st[c->id][cp - 4];
     uint64_t v = ((uint64_t)hi << 32) | lo;
     switch (opc1) {
     case 0:
@@ -123,9 +124,9 @@ bool dcp_mcrr(cpu_t *c, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi)
     }
 }
 
-bool dcp_cdp(cpu_t *c, unsigned opc1, unsigned crd, unsigned crn, unsigned crm, unsigned opc2)
+bool dcp_cdp(cpu_t *c, unsigned cp, unsigned opc1, unsigned crd, unsigned crn, unsigned crm, unsigned opc2)
 {
-    dcp_state_t *s = &st[c->id];
+    dcp_state_t *s = &st[c->id][cp - 4];
     (void)crd;
     (void)crn;
     switch (opc1) {
@@ -180,9 +181,9 @@ static uint32_t to_int(double d, bool is_signed, bool round_nearest)
     return (uint32_t)d;
 }
 
-bool dcp_mrc(cpu_t *c, unsigned crm, unsigned opc2, uint32_t *v, bool pop)
+bool dcp_mrc(cpu_t *c, unsigned cp, unsigned crm, unsigned opc2, uint32_t *v, bool pop)
 {
-    dcp_state_t *s = &st[c->id];
+    dcp_state_t *s = &st[c->id][cp - 4];
     switch (crm) {
     case 0:
         if (opc2 == 1) {
@@ -219,9 +220,9 @@ bool dcp_mrc(cpu_t *c, unsigned crm, unsigned opc2, uint32_t *v, bool pop)
     }
 }
 
-bool dcp_mrrc(cpu_t *c, unsigned opc1, unsigned crm, uint32_t *lo, uint32_t *hi, bool pop)
+bool dcp_mrrc(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t *lo, uint32_t *hi, bool pop)
 {
-    dcp_state_t *s = &st[c->id];
+    dcp_state_t *s = &st[c->id][cp - 4];
     (void)pop;
     uint64_t r;
     switch (crm) {

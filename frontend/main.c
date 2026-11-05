@@ -24,7 +24,7 @@ static void usage(const char *argv0)
            "                         ~/.local/share/picocalc-sim/rp2040-rom.elf or .bin); pico and\n"
            "                         pico_w need it\n"
            "      --rp2350-rom FILE  run Raspberry Pi's RP2350 boot ROM instead of picocalc-sim's own:\n"
-           "                         the A2 bootrom-combined.bin from github.com/raspberrypi/\n"
+           "                         the A2 or A4 bootrom-combined.bin from github.com/raspberrypi/\n"
            "                         pico-bootrom-rp2350\n"
            "  -f, --flash FILE       flash image to use and keep (default\n"
            "                         ~/.local/share/picocalc-sim/BOARD.flash; 'none' for one kept in\n"

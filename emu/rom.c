@@ -134,17 +134,17 @@ bool rp2350_load_rom(chip_t *m, const char *path, char *err, size_t errlen)
         snprintf(err, errlen, "%s is not a 32 KB RP2350 boot ROM image such as bootrom-combined.bin", path);
         return false;
     }
-    // Its minor version is the chip revision it was built for.
-    if (image[0x13] != 2) {
-        snprintf(err, errlen,
-                 "%s is the RP2350-A%u boot ROM; the emulated chip is an A2, and the later ROMs need the "
-                 "Arm security extension, which is not emulated yet",
-                 path, image[0x13]);
+    // Its minor version is the stepping it was built for, which the chip becomes; A4 changed only
+    // the ROM.
+    if (image[0x13] < 2 || image[0x13] > 4) {
+        snprintf(err, errlen, "%s is a boot ROM for RP2350-A%u, which is not emulated; A2, A3 and A4 are", path,
+                 image[0x13]);
         return false;
     }
     memcpy(m->rom, image, ROM_SIZE);
     memcpy(m->rom + ROM_SIZE, image, ROM_SIZE);
     m->real_rom = true;
+    m->a3 = image[0x13] >= 3;
     return true;
 }
 
@@ -590,7 +590,7 @@ static void forget_state(void)
 
 static bool fifo_push(chip_t *m, int core, uint32_t v)
 {
-    sio_fifo_t *tx = &m->fifo[core];
+    sio_fifo_t *tx = &m->sio[0].fifo[core];
     if (tx->count == 8)
         return false;
     tx->data[(tx->head + tx->count) & 7] = v;
@@ -602,7 +602,7 @@ static bool fifo_push(chip_t *m, int core, uint32_t v)
 
 static bool fifo_pop(chip_t *m, int core, uint32_t *v)
 {
-    sio_fifo_t *rx = &m->fifo[1 - core];
+    sio_fifo_t *rx = &m->sio[0].fifo[1 - core];
     if (!rx->count)
         return false;
     *v = rx->data[rx->head];

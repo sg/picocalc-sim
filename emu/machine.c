@@ -225,10 +225,10 @@ bool picocalc_sim_flash_uf2(const char *path, char *err, size_t errlen)
 static void handle_requests(void)
 {
     pthread_mutex_lock(&chip.power_lock);
-    bool reset = chip.req_reset, bootsel = chip.req_bootsel, poweroff = chip.req_poweroff, halt = chip.req_halt;
+    bool reset = chip.req_reset, bootsel = chip.req_bootsel, poweroff = chip.req_poweroff;
     char reason[96];
     memcpy(reason, chip.req_reason, sizeof(reason));
-    chip.req_reset = chip.req_bootsel = chip.req_poweroff = chip.req_halt = false;
+    chip.req_reset = chip.req_bootsel = chip.req_poweroff = false;
     atomic_store(&chip.req_any, false);
     pthread_mutex_unlock(&chip.power_lock);
 
@@ -254,14 +254,6 @@ static void handle_requests(void)
         picocalc_sim_log("power off: %s", reason);
         flash_save();
         set_state(PICOCALC_SIM_POWERED_OFF, reason);
-        for (int i = 0; i < 2; i++)
-            chip.core[i].state = CPU_OFF;
-        return;
-    }
-    if (halt) {
-        picocalc_sim_log("halted: %s", reason);
-        flash_save();
-        set_state(PICOCALC_SIM_HALTED, reason);
         for (int i = 0; i < 2; i++)
             chip.core[i].state = CPU_OFF;
         return;

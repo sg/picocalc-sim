@@ -307,9 +307,12 @@ static void ldst_dual_excl(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
     unsigned rn = hw1 & 0xf, rt = (hw2 >> 12) & 0xf, rt2 = (hw2 >> 8) & 0xf;
     unsigned op = (hw1 >> 4) & 0x1f;
     if ((hw1 & 0xfff0) == 0xe840 && (hw2 & 0xf03f) == 0xf000) {
-        // TT: everything here is Secure, and an IDAU-exempt or secure address reports S=1.
-        unsigned rd = (hw2 >> 8) & 0xf;
-        r[rd] = (1u << 22) | (1u << 20) | (1u << 18);
+        bool alt = hw2 & 0x80;
+        if (!c->v8 || (alt && c->ns)) {
+            undefined(c, pc, ((uint32_t)hw1 << 16) | hw2);
+            return;
+        }
+        r[(hw2 >> 8) & 0xf] = tt_resp(c, r[rn], alt, hw2 & 0x40);
         return;
     }
     if (hw1 == 0xe97f && hw2 == 0xe97f)
@@ -649,8 +652,8 @@ static void long_multiply(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
     if (op1 == 1 || op1 == 3) {
         unsigned rd = rhi;
         if (b == 0) {
-            if (c->ccr & 0x10) {
-                c->cfsr |= UFSR_DIVBYZERO;
+            if (cur_ccr(c) & 0x10) {
+                ufsr_set(c, UFSR_DIVBYZERO);
                 take_fault(c, EXC_USAGEFAULT, pc, "divide by zero");
                 return;
             }
@@ -778,6 +781,14 @@ static void coprocessor(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
     uint32_t *r = c->r;
     unsigned cp = (hw2 >> 8) & 0xf;
     bool two = hw1 & 0x1000;
+    // Non-secure code needs NSACR and its own CPACR to grant it the coprocessor; the FPU's two
+    // numbers follow CP10.
+    unsigned cpn = cp == 11 ? 10 : cp;
+    if (c->ns && (!(c->nsacr & (1u << cpn)) || !((c->cpacr_ns >> (2 * cpn)) & 1))) {
+        ufsr_set(c, UFSR_NOCP);
+        take_fault(c, EXC_USAGEFAULT, pc, "coprocessor not enabled for Non-secure state");
+        return;
+    }
     if (!two && (cp == 10 || cp == 11)) {
         exec_fp(c, pc, hw1, hw2);
         return;
@@ -795,13 +806,13 @@ static void coprocessor(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
         unsigned rt = (hw2 >> 12) & 0xf, rt2 = hw1 & 0xf, opc1 = (hw2 >> 4) & 0xf, crm = hw2 & 0xf;
         if (hw1 & 0x10) {
             uint32_t lo = 0, hi = 0;
-            ok = cp == 4 ? dcp_mrrc(c, opc1, crm, &lo, &hi, two) : coproc_mrrc(c, cp, opc1, crm, &lo, &hi);
+            ok = (cp == 4 || cp == 5) ? dcp_mrrc(c, cp, opc1, crm, &lo, &hi, two) : coproc_mrrc(c, cp, opc1, crm, &lo, &hi);
             if (ok) {
                 r[rt] = lo;
                 r[rt2] = hi;
             }
         } else {
-            ok = cp == 4 ? dcp_mcrr(c, opc1, crm, r[rt], r[rt2]) : coproc_mcrr(c, cp, opc1, crm, r[rt], r[rt2]);
+            ok = (cp == 4 || cp == 5) ? dcp_mcrr(c, cp, opc1, crm, r[rt], r[rt2]) : coproc_mcrr(c, cp, opc1, crm, r[rt], r[rt2]);
         }
     } else if ((hw1 & 0x0f00) == 0x0e00) {
         unsigned crn = hw1 & 0xf, crm = hw2 & 0xf, opc2 = (hw2 >> 5) & 7;
@@ -809,7 +820,7 @@ static void coprocessor(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
             unsigned rt = (hw2 >> 12) & 0xf, opc1 = (hw1 >> 5) & 7;
             if (hw1 & 0x10) {
                 uint32_t v = 0;
-                ok = cp == 4 ? dcp_mrc(c, crm, opc2, &v, two) : coproc_mrc(c, cp, opc1, crn, crm, opc2, &v);
+                ok = (cp == 4 || cp == 5) ? dcp_mrc(c, cp, crm, opc2, &v, two) : coproc_mrc(c, cp, opc1, crn, crm, opc2, &v);
                 if (ok) {
                     if (rt == 15)
                         c->apsr = (c->apsr & 0x0fffffffu) | (v & 0xf0000000u);
@@ -821,11 +832,11 @@ static void coprocessor(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
             }
         } else {
             unsigned opc1 = (hw1 >> 4) & 0xf, crd = (hw2 >> 12) & 0xf;
-            ok = cp == 4 ? dcp_cdp(c, opc1, crd, crn, crm, opc2) : coproc_cdp(c, cp, opc1, crd, crn, crm, opc2);
+            ok = (cp == 4 || cp == 5) ? dcp_cdp(c, cp, opc1, crd, crn, crm, opc2) : coproc_cdp(c, cp, opc1, crd, crn, crm, opc2);
         }
     }
     if (!ok) {
-        c->cfsr |= UFSR_NOCP;
+        ufsr_set(c, UFSR_NOCP);
         if (c->m->trace)
             emu_log("core %d coprocessor %u instruction %04x %04x at %08x not handled", c->id, cp, hw1, hw2, pc);
         take_fault(c, EXC_USAGEFAULT, pc, "coprocessor instruction");

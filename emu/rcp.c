@@ -3,8 +3,7 @@
 #include "chip.h"
 
 // The RP2350's redundancy coprocessor (coprocessor 7): hardware-checked assertions that the boot
-// ROM relies on, as the datasheet's section 3.6.3 describes them. Everything runs in Secure state
-// here, so the Non-secure rules (masked reads, ignored checks) never apply.
+// ROM relies on, as the datasheet's section 3.6.3 describes them.
 
 #define RCP_TRUE 0xa500a500u
 #define RCP_FALSE 0x00c300c3u
@@ -89,6 +88,20 @@ static bool is_bool(uint32_t v)
     return v == RCP_TRUE || v == RCP_FALSE;
 }
 
+enum { BAD, MCR, MRC, MCRR, CDP };
+
+static bool rcp_valid(int kind, unsigned opc1, unsigned crn, unsigned crm, unsigned rt)
+{
+    bool untagged = !crn && !crm;
+    switch (kind) {
+    case MRC: return opc1 == 0 || (opc1 <= 2 && untagged);
+    case MCR: return opc1 == 0 || opc1 == 4 || opc1 == 5 || (opc1 <= 3 && untagged);
+    case MCRR: return (opc1 == 8 && (crm & 7) <= 1) || (opc1 <= 7 && !(crm & 7));
+    case CDP: return opc1 == 0 && untagged && !rt;
+    default: return false;
+    }
+}
+
 void rcp_exec(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
 {
     chip_t *m = c->m;
@@ -100,7 +113,7 @@ void rcp_exec(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
         return;
     }
 
-    enum { BAD, MCR, MRC, MCRR, CDP } kind = BAD;
+    int kind = BAD;
     unsigned opc1 = 0, opc2 = 0, crn = 0, crm = hw2 & 0xf, rt = (hw2 >> 12) & 0xf, rt2 = hw1 & 0xf;
     if ((hw1 & 0x0fe0) == 0x0c40) {
         kind = (hw1 & 0x10) ? BAD : MCRR;
@@ -119,7 +132,19 @@ void rcp_exec(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
     // Every opcode the datasheet lists has an odd count of Opc1 ones plus the parity bit (Opc2
     // bit 0, or CRm bit 3 for mcrr), though its text says even.
     unsigned parity_bit = kind == MCRR ? (crm >> 3) & 1 : opc2 & 1;
-    if (kind == BAD || !((__builtin_popcount(opc1) + parity_bit) & 1)) {
+    bool parity_ok = (__builtin_popcount(opc1) + parity_bit) & 1;
+    // Non-secure code reads only zeroes, triggers no faults and sees no delays (datasheet section
+    // 3.6.3.2), and an instruction the RCP rejects is undefined to it.
+    if (c->ns) {
+        if (!parity_ok || !rcp_valid(kind, opc1, crn, crm, rt))
+            cpu_undefined(c, pc, (uint32_t)hw1 << 16 | hw2);
+        else if (kind == MRC && rt == 15)
+            c->apsr &= 0x0fffffffu;
+        else if (kind == MRC)
+            r[rt] = 0;
+        return;
+    }
+    if (kind == BAD || !parity_ok) {
         fault(c, pc, "invalid instruction");
         return;
     }

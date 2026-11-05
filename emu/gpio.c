@@ -45,7 +45,10 @@ void gpio_reset(chip_t *m)
     memset(m->gpio_inte, 0, sizeof(m->gpio_inte));
     memset(m->gpio_intf, 0, sizeof(m->gpio_intf));
     memset(m->gpio_edge, 0, sizeof(m->gpio_edge));
-    memset(m->pads_qspi, 0, sizeof(m->pads_qspi));
+    // SCLK, SD0 and SD1 reset with pull-downs; SD2, SD3 and chip select with pull-ups.
+    m->pads_qspi[0] = 0;
+    for (int i = 1; i < 7; i++)
+        m->pads_qspi[i] = PAD_ISO | PAD_IE | (i < 4 ? PAD_PDE : PAD_PUE) | (1u << 4) | 2;
     m->gpio_irq_pins = 0;
     m->in_late = 0;
     m->in_settle_t = 0;
@@ -280,8 +283,12 @@ uint64_t gpio_in_all(chip_t *m)
         for (unsigned pin = 0; pin < m->board->num_gpio; pin++)
             if (gpio_in(m, pin))
                 v |= 1ull << pin;
-        // The QSPI pins idle high: chip select deasserted and data lines pulled up.
-        v |= 0xfull << 60 | 1ull << 59;
+        // Chip select idles deasserted, and the deselected flash leaves the data lines to their
+        // pulls, which is how the boot ROM reads SD1 to choose between USB and UART boot.
+        v |= 1ull << 59;
+        for (unsigned i = 0; i < 4; i++)
+            if ((m->pads_qspi[2 + i] & (PAD_IE | PAD_PUE)) == (PAD_IE | PAD_PUE))
+                v |= 1ull << (60 + i);
         m->gpio_in_cache = v;
         m->gpio_in_valid = true;
     }
@@ -444,8 +451,10 @@ uint32_t pads_read(chip_t *m, bool qspi, uint32_t off)
 void pads_write(chip_t *m, bool qspi, uint32_t off, uint32_t v)
 {
     if (qspi) {
-        if (off < 0x1c)
-            m->pads_qspi[off >> 2] = v;
+        if (off < 0x1c) {
+            m->pads_qspi[off >> 2] = off ? v & 0x1ff : v & 1;
+            m->gpio_in_valid = false;
+        }
         return;
     }
     if (off == 0)

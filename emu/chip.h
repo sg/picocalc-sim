@@ -35,6 +35,8 @@ enum {
     IRQ_IO_QSPI = 23,
     IRQ_SIO_FIFO = 25,
     IRQ_SIO_BELL = 26,
+    IRQ_SIO_FIFO_NS = 27,
+    IRQ_SIO_BELL_NS = 28,
     IRQ_SIO_MTIMECMP = 29,
     IRQ_CLOCKS = 30,
     IRQ_SPI0 = 31,
@@ -229,6 +231,13 @@ typedef struct {
     bool roe, wof;
 } sio_fifo_t;
 
+// What the SIO duplicates for Non-secure use: one core's FIFO to the other, by sending core.
+typedef struct {
+    sio_fifo_t fifo[2];
+    uint32_t spinlocks;
+    uint32_t doorbell[2];
+} sio_bank_t;
+
 typedef struct {
     uint32_t ctrl, div;
 } clock_reg_t;
@@ -334,6 +343,9 @@ typedef struct {
     bool flash_crm;
 } rp2040_t;
 
+// The RP2350 clock generators, in register order.
+enum { CLK_GPOUT0, CLK_GPOUT1, CLK_GPOUT2, CLK_GPOUT3, CLK_REF, CLK_SYS, CLK_PERI, CLK_HSTX, CLK_USB, CLK_ADC };
+
 struct chip {
     cpu_t core[2];
     const board_info_t *board;
@@ -434,9 +446,8 @@ struct chip {
     gpio_watch_t *watch[NUM_GPIO_MAX];
 
     uint32_t sio_out[2], sio_oe[2];
-    sio_fifo_t fifo[2];
-    uint32_t spinlocks;
-    uint32_t doorbell[2];
+    // The Secure bank, then the Non-secure one.
+    sio_bank_t sio[2];
     interp_t interp[2][2];
     uint32_t peri_nonsec;
 
@@ -452,6 +463,8 @@ struct chip {
     // Changes whenever ROM or flash contents, or where they are mapped, may have changed, so
     // predecoded blocks from them need no byte-by-byte check.
     uint32_t code_gen;
+    // Set when every translated block must go, at the next point where none is running.
+    bool code_flush;
     uint32_t xip_stream_addr, xip_stream_ctr;
     uint32_t xip_tag[2048][2];
     uint8_t xip_lru[2048];
@@ -475,7 +488,7 @@ struct chip {
     int rom_partition;
 
     pthread_mutex_t power_lock;
-    bool req_reset, req_bootsel, req_poweroff, req_halt;
+    bool req_reset, req_bootsel, req_poweroff;
     // Whether any of those is set, for the run loop to check without taking the lock.
     atomic_bool req_any;
     char req_reason[96];
@@ -486,6 +499,8 @@ struct chip {
     bool rp2040;
     // Raspberry Pi's own RP2350 ROM is in rom[] instead of the stand-in rom.c builds.
     bool real_rom;
+    // The A3 stepping, whose hardware the A3 and A4 boot ROMs run on; otherwise the chip is an A2.
+    bool a3;
     // The BOOTSEL button is held until then, pulling the QSPI chip select low.
     uint64_t bootsel_until;
     // Size of the bus write being passed to a peripheral, which sees only the replicated data.
@@ -515,7 +530,7 @@ void chip_irq_core(chip_t *m, int core, unsigned irq, bool level);
 void chip_dreq(chip_t *m, unsigned dreq, bool level);
 void chip_sev(chip_t *m, int from_core);
 void chip_request(chip_t *m, int what, const char *reason);
-enum { REQ_RESET, REQ_BOOTSEL, REQ_POWEROFF, REQ_HALT };
+enum { REQ_RESET, REQ_BOOTSEL, REQ_POWEROFF };
 
 uint32_t bus_read(cpu_t *c, uint32_t addr, int size);
 void bus_write(cpu_t *c, uint32_t addr, uint32_t v, int size);
@@ -552,10 +567,10 @@ void rcp_exec(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2);
 void sha256_reset(chip_t *m);
 uint32_t sha256_read(chip_t *m, uint32_t off);
 void sha256_write(chip_t *m, uint32_t off, uint32_t v);
-bool dcp_mcrr(cpu_t *c, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi);
-bool dcp_mrrc(cpu_t *c, unsigned opc1, unsigned crm, uint32_t *lo, uint32_t *hi, bool pop);
-bool dcp_mrc(cpu_t *c, unsigned crm, unsigned opc2, uint32_t *v, bool pop);
-bool dcp_cdp(cpu_t *c, unsigned opc1, unsigned crd, unsigned crn, unsigned crm, unsigned opc2);
+bool dcp_mcrr(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi);
+bool dcp_mrrc(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t *lo, uint32_t *hi, bool pop);
+bool dcp_mrc(cpu_t *c, unsigned cp, unsigned crm, unsigned opc2, uint32_t *v, bool pop);
+bool dcp_cdp(cpu_t *c, unsigned cp, unsigned opc1, unsigned crd, unsigned crn, unsigned crm, unsigned opc2);
 
 uint32_t sysctl_read(chip_t *m, uint32_t base, uint32_t off);
 void sysctl_write(chip_t *m, uint32_t base, uint32_t off, uint32_t v);
@@ -569,8 +584,9 @@ void watchdog_write(chip_t *m, uint32_t off, uint32_t v);
 void watchdog_retime(chip_t *m);
 uint32_t powman_read(chip_t *m, uint32_t off);
 void powman_write(chip_t *m, uint32_t off, uint32_t v);
-uint32_t sio_read(cpu_t *c, uint32_t off);
-void sio_write(cpu_t *c, uint32_t off, uint32_t v);
+// off is the address less SIO_BASE; an access the SIO refuses clears *ok.
+uint32_t sio_read(cpu_t *c, uint32_t off, bool *ok);
+void sio_write(cpu_t *c, uint32_t off, uint32_t v, bool *ok);
 void sio_reset(chip_t *m);
 void sio_fifo_irq(chip_t *m);
 void pl022_sync_all(chip_t *m);
