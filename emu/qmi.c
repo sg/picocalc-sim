@@ -260,11 +260,14 @@ uint32_t qmi_read(chip_t *m, uint32_t off)
         // automatically-selected burst.
         close_auto(m);
         uint32_t v = q->direct_csr & ~((1u << 1) | (1u << 10) | (1u << 11) | (1u << 16) | (1u << 17));
-        v |= 1u << 11;
+        if (q->txn >= 4)
+            v |= 1u << 10;
+        if (q->txn == 0)
+            v |= 1u << 11;
         if (q->rxn == 0)
-            v |= 1u << 17;
-        if (q->rxn >= 4)
             v |= 1u << 16;
+        if (q->rxn >= 4)
+            v |= 1u << 17;
         return v;
     }
     case 0x08: {
@@ -284,6 +287,30 @@ uint32_t qmi_read(chip_t *m, uint32_t off)
     }
 }
 
+// A 16-bit record goes out low byte first, as the boot ROM packs a command below its first address
+// byte.
+static void direct_transfer(chip_t *m, uint32_t v)
+{
+    qmi_t *q = &m->qmi;
+    bool wide = v & (1u << 18), nopush = v & (1u << 20);
+    uint32_t rx = 0;
+    int nbytes = wide ? 2 : 1;
+    for (int b = 0; b < nbytes; b++) {
+        uint8_t mosi = (uint8_t)(v >> (8 * b));
+        uint8_t miso = 0xff;
+        for (int cs = 0; cs < 2; cs++) {
+            if (!cs_asserted(q, cs))
+                continue;
+            if (!txn_open[cs])
+                dev_begin(cs);
+            miso &= cs == 0 ? flash_byte(m, mosi) : psram_byte(m, mosi);
+        }
+        rx |= (uint32_t)miso << (8 * b);
+    }
+    if (!nopush && q->rxn < 4)
+        q->direct_rx[q->rxn++] = rx;
+}
+
 void qmi_write(chip_t *m, uint32_t off, uint32_t v)
 {
     qmi_t *q = &m->qmi;
@@ -301,28 +328,24 @@ void qmi_write(chip_t *m, uint32_t off, uint32_t v)
         }
         if (!(v & 1))
             q->rxn = 0;
-        break;
-    }
-    case 0x04: {
-        bool wide = v & (1u << 18), nopush = v & (1u << 20);
-        uint32_t rx = 0;
-        int nbytes = wide ? 2 : 1;
-        for (int b = 0; b < nbytes; b++) {
-            uint8_t mosi = (uint8_t)(wide ? (v >> (8 * (1 - b))) : v);
-            uint8_t miso = 0xff;
-            for (int cs = 0; cs < 2; cs++) {
-                if (!cs_asserted(q, cs))
-                    continue;
-                if (!txn_open[cs])
-                    dev_begin(cs);
-                miso &= cs == 0 ? flash_byte(m, mosi) : psram_byte(m, mosi);
-            }
-            rx = (rx << 8) | miso;
+        if ((v & 1) && q->txn) {
+            int n = q->txn;
+            q->txn = 0;
+            for (int i = 0; i < n; i++)
+                direct_transfer(m, q->direct_tx[i]);
         }
-        if (!nopush && q->rxn < 4)
-            q->direct_rx[q->rxn++] = rx;
         break;
     }
+    case 0x04:
+        // The FIFO waits for direct mode to be enabled: the boot ROM queues a command first and
+        // then enables it and selects the chip in one write.
+        if (!(q->direct_csr & 1)) {
+            if (q->txn < 4)
+                q->direct_tx[q->txn++] = v;
+            break;
+        }
+        direct_transfer(m, v);
+        break;
     default:
         if (off >= 0x0c && off < 0x34) {
             q->m[(off - 0x0c) / 20][((off - 0x0c) % 20) / 4] = v;

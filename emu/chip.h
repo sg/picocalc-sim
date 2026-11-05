@@ -248,8 +248,8 @@ typedef struct {
 } timer_t_;
 
 typedef struct {
-    uint32_t direct_csr, direct_rx[4];
-    int rxn;
+    uint32_t direct_csr, direct_rx[4], direct_tx[4];
+    int rxn, txn;
     uint32_t m[2][5];
     uint32_t atrans[8];
     bool cs[2];
