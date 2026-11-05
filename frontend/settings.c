@@ -24,9 +24,9 @@ static char path[4096];
 // The order the file is written in; keys it does not know come after, kept for a newer
 // picocalc-sim.
 static const char *const known[] = {
-    "board",   "rom",     "flash",   "card",     "fast",   "unthrottled", "trace", "console",
-    "no-wifi", "wifi-ap", "forward", "battery",  "charging", "volume",    "mute",  "scale",
-    "screenshot-dir",
+    "board",   "rom",     "rp2350-rom", "flash",   "card",     "fast",   "unthrottled", "trace",
+    "console", "no-wifi", "wifi-ap",    "forward", "battery",  "charging", "volume",    "mute",
+    "scale",   "screenshot-dir",
 };
 
 static bool is_known(const char *key)
@@ -126,6 +126,8 @@ static void apply(const char *key, const char *v)
         o->default_board = path_value(v);
     else if (!strcmp(key, "rom"))
         o->rom_path = path_value(v);
+    else if (!strcmp(key, "rp2350-rom"))
+        o->rp2350_rom_path = path_value(v);
     else if (!strcmp(key, "flash"))
         o->flash_path = path_value(v);
     else if (!strcmp(key, "fast"))

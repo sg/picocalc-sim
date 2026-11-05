@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -117,6 +118,34 @@ void rom_build(chip_t *m)
     wr32le(r + ROM_DATA + 0x00, 0x312e0eb5u);
     wr32le(r + ROM_DATA + 0x04, 0x400e0001u);
     wr32le(r + ROM_DATA + 0x08, DEVINFO_ADDR);
+}
+
+bool rp2350_load_rom(chip_t *m, const char *path, char *err, size_t errlen)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        snprintf(err, errlen, "cannot open %s: %s", path, strerror(errno));
+        return false;
+    }
+    uint8_t image[ROM_SIZE + 1];
+    size_t n = fread(image, 1, sizeof(image), f);
+    fclose(f);
+    if (n != ROM_SIZE || image[0x10] != 'M' || image[0x11] != 'u' || image[0x12] != 2) {
+        snprintf(err, errlen, "%s is not a 32 KB RP2350 boot ROM image such as bootrom-combined.bin", path);
+        return false;
+    }
+    // Its minor version is the chip revision it was built for.
+    if (image[0x13] != 2) {
+        snprintf(err, errlen,
+                 "%s is the RP2350-A%u boot ROM; the emulated chip is an A2, and the later ROMs need the "
+                 "Arm security extension, which is not emulated yet",
+                 path, image[0x13]);
+        return false;
+    }
+    memcpy(m->rom, image, ROM_SIZE);
+    memcpy(m->rom + ROM_SIZE, image, ROM_SIZE);
+    m->real_rom = true;
+    return true;
 }
 
 // ---------------------------------------------------------------------------------------------

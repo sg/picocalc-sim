@@ -2,7 +2,8 @@
 # Boots each UF2 headless and fails if a core faults, the ROM is asked for something it lacks,
 # the firmware never draws on the panel, or its sound is not recorded.
 #   ci/boot-test.sh PICOCALC_SIM UF2...
-# PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W images.
+# PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W images, and PICOCALC_SIM_RP2350_ROM
+# Raspberry Pi's RP2350 ROM to run in place of picocalc-sim's own.
 set -u
 picocalc_sim=$1
 shift
@@ -16,12 +17,13 @@ for uf2; do
     rm -f "$work/panel.png" "$work/sound.wav"
     # unthrottled because script waits are host time and a slow runner would otherwise see less boot
     timeout 120 "$picocalc_sim" --headless --unthrottled --trace --flash none --no-card ${PICOCALC_SIM_ROM:+--rom "$PICOCALC_SIM_ROM"} \
+        ${PICOCALC_SIM_RP2350_ROM:+--rp2350-rom "$PICOCALC_SIM_RP2350_ROM"} \
         --wav "$work/sound.wav" --script "$work/boot.pcs" "$uf2" >"$work/out.log" 2>"$work/err.log"
     rc=$?
     problem=
     if [ $rc -ne 0 ]; then
         problem="exited with $rc"
-    elif grep -qE 'locked up|bus error|undefined instruction|unimplemented|unknown code|BKPT|ARM state|coprocessor instruction|divide by zero|SVC at' "$work/err.log"; then
+    elif grep -qE 'locked up|RCP|Non-secure|bus error|undefined instruction|unimplemented|unknown code|BKPT|ARM state|coprocessor instruction|divide by zero|SVC at' "$work/err.log"; then
         problem="faulted"
     elif ! lit=$(python3 - "$work/panel.png" <<'EOF'
 import collections, struct, sys, zlib

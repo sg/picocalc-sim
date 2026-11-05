@@ -109,7 +109,7 @@ void chip_sev(chip_t *m, int from_core)
 {
     for (int i = 0; i < 2; i++) {
         cpu_t *c = &m->core[i];
-        if (c->state == CPU_OFF || c->state == CPU_LOCKUP)
+        if (c->state == CPU_OFF || c->state == CPU_LOCKUP || c->state == CPU_STALL)
             continue;
         if (c->state == CPU_WFE && from_core >= 0 && c->t < m->core[from_core].t)
             c->t = m->core[from_core].t;
@@ -127,6 +127,8 @@ void chip_request(chip_t *m, int what, const char *reason)
         m->req_reset = true;
     else if (what == REQ_BOOTSEL)
         m->req_bootsel = true;
+    else if (what == REQ_HALT)
+        m->req_halt = true;
     else
         m->req_poweroff = true;
     snprintf(m->req_reason, sizeof(m->req_reason), "%s", reason);
@@ -598,6 +600,7 @@ static void mem_write(chip_t *m, cpu_t *c, uint32_t addr, uint32_t v, int size, 
         }
         if (c)
             c->cyc += 2;
+        m->bus_write_size = size;
         periph_write(m, addr, replicate(v, size), ok);
         return;
     case 0x5:
@@ -613,6 +616,7 @@ static void mem_write(chip_t *m, cpu_t *c, uint32_t addr, uint32_t v, int size, 
         }
         if (c)
             c->cyc += 1;
+        m->bus_write_size = size;
         periph_write(m, addr, replicate(v, size), ok);
         return;
     case 0xd:
@@ -795,7 +799,11 @@ void chip_reset(chip_t *m, bool watchdog)
     m->irq_lines = 0;
     memset(m->dreq, 0, sizeof(m->dreq));
     m->resets = 0x1fffffffu;
-    m->psm_frce_on = m->psm_frce_off = m->psm_wdsel = 0;
+    m->psm_frce_on = m->psm_frce_off = 0;
+    // What the watchdog resets outlives the reset it chose, which the ROM checks before it enters
+    // BOOTSEL by a watchdog reboot.
+    if (!watchdog)
+        m->psm_wdsel = 0;
     memset(m->clk, 0, sizeof(m->clk));
     for (int i = 0; i < 10; i++)
         m->clk[i].div = 1u << 16;
@@ -819,6 +827,9 @@ void chip_reset(chip_t *m, bool watchdog)
         memset(m->wd_scratch, 0, sizeof(m->wd_scratch));
         m->wd_reason = 0;
         memset(m->powman, 0, sizeof(m->powman));
+        m->bootram_write_once[0] = m->bootram_write_once[1] = 0;
+    } else if (m->psm_wdsel & (1u << 9)) {
+        // A watchdog reset that takes in boot RAM clears its write-once bits.
         m->bootram_write_once[0] = m->bootram_write_once[1] = 0;
     }
     m->wd_ctrl = 0x07000000u;
@@ -845,6 +856,9 @@ void chip_reset(chip_t *m, bool watchdog)
     memset(m->usb_regs, 0, sizeof(m->usb_regs));
     memset(m->dcp, 0, sizeof(m->dcp));
     dcp_reset();
+    rcp_reset(m);
+    if (!m->rp2040)
+        sha256_reset(m);
     if (m->rp2040)
         rp2040_reset(m, !watchdog);
     chip_update_clocks(m);
@@ -854,8 +868,14 @@ void chip_reset(chip_t *m, bool watchdog)
         cpu_t *c = &m->core[i];
         c->t = m->now;
         cpu_reset(c);
-        if (!m->rp2040)
+        if (!m->rp2040 && !m->real_rom)
             rom_core_start(c);
+    }
+    // The real ROM salts the RCP from the TRNG early in every boot, so code run under the
+    // stand-in finds it salted too.
+    if (!m->rp2040 && !m->real_rom) {
+        uint64_t s = (m->rng ^ m->boot_count) * 0x9e3779b97f4a7c15ull;
+        rcp_set_salts(m, s ^ (s >> 29), (s ^ (s >> 31)) * 0xbf58476d1ce4e5b9ull);
     }
     m->boot_count++;
 }

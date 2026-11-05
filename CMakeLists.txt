@@ -70,8 +70,10 @@ add_library(picocalc_sim_objs OBJECT
     emu/pl022.c
     emu/pwm.c
     emu/qmi.c
+    emu/rcp.c
     emu/rp2040.c
     emu/rom.c
+    emu/sha256.c
     emu/sio.c
     emu/sys.c
     emu/timer.c

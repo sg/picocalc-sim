@@ -23,6 +23,9 @@ static void usage(const char *argv0)
            "                         pico-bootrom-rp2040 or a 16 KB image (default\n"
            "                         ~/.local/share/picocalc-sim/rp2040-rom.elf or .bin); pico and\n"
            "                         pico_w need it\n"
+           "      --rp2350-rom FILE  run Raspberry Pi's RP2350 boot ROM instead of picocalc-sim's own:\n"
+           "                         the A2 bootrom-combined.bin from github.com/raspberrypi/\n"
+           "                         pico-bootrom-rp2350\n"
            "  -f, --flash FILE       flash image to use and keep (default\n"
            "                         ~/.local/share/picocalc-sim/BOARD.flash; 'none' for one kept in\n"
            "                         memory until picocalc-sim exits)\n"
@@ -111,11 +114,13 @@ int main(int argc, char **argv)
         OPT_MUTE,
         OPT_WAV,
         OPT_ROM,
+        OPT_RP2350_ROM,
     };
     static const struct option longopts[] = {
         {"board", required_argument, NULL, 'b'},
         {"flash", required_argument, NULL, 'f'},
         {"rom", required_argument, NULL, OPT_ROM},
+        {"rp2350-rom", required_argument, NULL, OPT_RP2350_ROM},
         {"erase-flash", no_argument, NULL, OPT_ERASE},
         {"card", required_argument, NULL, 'c'},
         {"no-card", no_argument, NULL, OPT_NOCARD},
@@ -151,6 +156,7 @@ int main(int argc, char **argv)
         case 'b': picocalc_sim_opts.board = optarg; break;
         case 'f': picocalc_sim_opts.flash_path = optarg; break;
         case OPT_ROM: picocalc_sim_opts.rom_path = optarg; break;
+        case OPT_RP2350_ROM: picocalc_sim_opts.rp2350_rom_path = optarg; break;
         case OPT_ERASE: picocalc_sim_opts.erase_flash = true; break;
         case 'c': card = optarg; break;
         case OPT_NOCARD: no_card = true; break;

@@ -27,7 +27,7 @@ static pthread_mutex_t lock;
 static atomic_bool stop_flag;
 static _Atomic picocalc_sim_state_t state = PICOCALC_SIM_RUNNING;
 static char state_reason[128];
-static atomic_bool power_button, bootsel_held;
+static atomic_bool power_button, bootsel_held, button_reset;
 static double speed = 1.0;
 
 static pthread_mutex_t uf2_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -111,6 +111,7 @@ static void set_state(picocalc_sim_state_t s, const char *reason)
 
 void picocalc_sim_reboot(const char *reason)
 {
+    atomic_store(&button_reset, true);
     chip_request(&chip, REQ_RESET, reason);
 }
 
@@ -224,10 +225,10 @@ bool picocalc_sim_flash_uf2(const char *path, char *err, size_t errlen)
 static void handle_requests(void)
 {
     pthread_mutex_lock(&chip.power_lock);
-    bool reset = chip.req_reset, bootsel = chip.req_bootsel, poweroff = chip.req_poweroff;
+    bool reset = chip.req_reset, bootsel = chip.req_bootsel, poweroff = chip.req_poweroff, halt = chip.req_halt;
     char reason[96];
     memcpy(reason, chip.req_reason, sizeof(reason));
-    chip.req_reset = chip.req_bootsel = chip.req_poweroff = false;
+    chip.req_reset = chip.req_bootsel = chip.req_poweroff = chip.req_halt = false;
     atomic_store(&chip.req_any, false);
     pthread_mutex_unlock(&chip.power_lock);
 
@@ -257,6 +258,14 @@ static void handle_requests(void)
             chip.core[i].state = CPU_OFF;
         return;
     }
+    if (halt) {
+        picocalc_sim_log("halted: %s", reason);
+        flash_save();
+        set_state(PICOCALC_SIM_HALTED, reason);
+        for (int i = 0; i < 2; i++)
+            chip.core[i].state = CPU_OFF;
+        return;
+    }
     if (bootsel) {
         picocalc_sim_log("BOOTSEL: %s", reason);
         flash_save();
@@ -269,10 +278,20 @@ static void handle_requests(void)
         if (chip.trace)
             picocalc_sim_log("reset: %s", reason);
         flash_save();
-        if (atomic_load(&bootsel_held))
-            chip.boot_type = 2;
         set_state(PICOCALC_SIM_RUNNING, "");
+        bool button = atomic_exchange(&button_reset, false), held = atomic_load(&bootsel_held);
+        // The reset button pulls RUN low, which resets the watchdog too, unlike its own reboots.
+        if (button) {
+            memset(chip.wd_scratch, 0, sizeof(chip.wd_scratch));
+            chip.wd_reason = 0;
+            chip.bootram_write_once[0] = chip.bootram_write_once[1] = 0;
+            chip.boot_type = held ? 2 : 0;
+        }
         chip_reset(&chip, true);
+        // A person holds BOOTSEL through the reset button and lets go once the board has started,
+        // long after the ROM has looked at it, and before any reset the ROM itself then makes.
+        if (button)
+            chip.bootsel_until = held && chip.real_rom ? chip.now + 100 * PS_PER_MS : 0;
     }
     if (atomic_exchange(&power_button, false)) {
         picocalc_sim_state_t s = atomic_load(&state);
@@ -289,7 +308,7 @@ static void run_chunk(uint64_t target)
     chip_t *m = &chip;
     for (int i = 0; i < 2; i++) {
         cpu_t *c = &m->core[i];
-        if (c->state == CPU_OFF || c->state == CPU_LOCKUP) {
+        if (c->state == CPU_OFF || c->state == CPU_LOCKUP || c->state == CPU_STALL) {
             c->t = target;
             continue;
         }
@@ -540,6 +559,14 @@ static bool start(uf2_file_t *f)
     flash_load();
     if (b->rp2040 && !load_rp2040_rom())
         return false;
+    if (!b->rp2040 && picocalc_sim_opts.rp2350_rom_path) {
+        char err[512];
+        if (!rp2350_load_rom(&chip, picocalc_sim_opts.rp2350_rom_path, err, sizeof(err))) {
+            picocalc_sim_log("%s", err);
+            return false;
+        }
+        picocalc_sim_log("boot ROM: %s", picocalc_sim_opts.rp2350_rom_path);
+    }
     picocalc_sim_machine_lock();
     bool board = picocalc_board_init();
     picocalc_sim_machine_unlock();

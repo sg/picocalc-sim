@@ -38,7 +38,7 @@ enum { FLASH_DEFAULT, FLASH_MEMORY, FLASH_FILE };
 
 // The options the machine reads only as it starts.
 struct start_options {
-    std::string board, rom, flash_file;
+    std::string board, rom, rp2350_rom, flash_file;
     int flash = FLASH_DEFAULT;
     bool fast = false, trace = false, no_wifi = false;
     std::vector<access_point> aps;
@@ -47,7 +47,8 @@ struct start_options {
     // Rows left empty are not passed on, so they change nothing.
     bool operator==(const start_options &o) const
     {
-        return board == o.board && rom == o.rom && flash == o.flash && flash_file == o.flash_file && fast == o.fast &&
+        return board == o.board && rom == o.rom && rp2350_rom == o.rp2350_rom && flash == o.flash &&
+               flash_file == o.flash_file && fast == o.fast &&
                trace == o.trace && no_wifi == o.no_wifi && named(aps) == named(o.aps) &&
                filled(forwards) == filled(o.forwards);
     }
@@ -70,7 +71,7 @@ start_options pending, applied;
 // What picocalc_sim_opts points at; kept apart from pending, so editing a setting never moves a
 // string that the machine may still read.
 struct {
-    std::string board, rom, flash, card, shots, wav;
+    std::string board, rom, rp2350_rom, flash, card, shots, wav;
     std::string aps[16], forwards[16];
 } store;
 
@@ -81,7 +82,7 @@ bool log_scroll;
 // When changed settings are next written to the settings file, or 0.
 Uint64 save_at;
 
-enum pick_kind { PICK_UF2, PICK_CARD, PICK_WAV, PICK_ROM, PICK_FLASH, PICK_SHOTS };
+enum pick_kind { PICK_UF2, PICK_CARD, PICK_WAV, PICK_ROM, PICK_RP2350_ROM, PICK_FLASH, PICK_SHOTS };
 int prompt_kind = -1;
 bool ask_path;
 std::string prompt_path;
@@ -94,6 +95,8 @@ start_options from_opts()
         s.board = o.board;
     if (o.rom_path)
         s.rom = o.rom_path;
+    if (o.rp2350_rom_path)
+        s.rp2350_rom = o.rp2350_rom_path;
     if (o.flash_path && !strcmp(o.flash_path, "none"))
         s.flash = FLASH_MEMORY;
     else if (o.flash_path) {
@@ -161,6 +164,8 @@ void remember_start_options(const start_options &was, const start_options &now)
 {
     if (now.rom != was.rom)
         remember("rom", now.rom.empty() ? nullptr : now.rom.c_str());
+    if (now.rp2350_rom != was.rp2350_rom)
+        remember("rp2350-rom", now.rp2350_rom.empty() ? nullptr : now.rp2350_rom.c_str());
     if (now.flash != was.flash || now.flash_file != was.flash_file)
         remember("flash", now.flash == FLASH_MEMORY                          ? "none"
                           : now.flash == FLASH_FILE && !now.flash_file.empty() ? now.flash_file.c_str()
@@ -188,6 +193,8 @@ void to_opts(const start_options &s)
     o.board = store.board.empty() ? nullptr : store.board.c_str();
     store.rom = s.rom;
     o.rom_path = store.rom.empty() ? nullptr : store.rom.c_str();
+    store.rp2350_rom = s.rp2350_rom;
+    o.rp2350_rom_path = store.rp2350_rom.empty() ? nullptr : store.rp2350_rom.c_str();
     store.flash = s.flash == FLASH_MEMORY ? "none" : s.flash_file;
     o.flash_path = s.flash == FLASH_DEFAULT || store.flash.empty() ? nullptr : store.flash.c_str();
     o.fast = s.fast;
@@ -314,6 +321,7 @@ void chose(int kind, const char *path)
     case PICK_CARD: insert_card(path); break;
     case PICK_WAV: record(path); break;
     case PICK_ROM: pending.rom = path; break;
+    case PICK_RP2350_ROM: pending.rp2350_rom = path; break;
     case PICK_FLASH:
         pending.flash = FLASH_FILE;
         pending.flash_file = path;
@@ -343,6 +351,7 @@ const char *pick_title(int kind)
     case PICK_CARD: return "SD card image to insert";
     case PICK_WAV: return "WAV file to record to";
     case PICK_ROM: return "RP2040 boot ROM (b2.elf or a 16 KB image)";
+    case PICK_RP2350_ROM: return "RP2350 boot ROM (the A2 bootrom-combined.bin)";
     case PICK_FLASH: return "Flash image";
     case PICK_SHOTS: return "Folder for screenshots";
     }
@@ -355,6 +364,7 @@ void pick(int kind)
     static const SDL_DialogFileFilter card[] = {{"SD card images", "img;bin"}, {"All files", "*"}};
     static const SDL_DialogFileFilter wav[] = {{"WAV audio", "wav"}};
     static const SDL_DialogFileFilter rom[] = {{"RP2040 boot ROM", "elf;bin"}, {"All files", "*"}};
+    static const SDL_DialogFileFilter rom2350[] = {{"RP2350 boot ROM", "bin"}, {"All files", "*"}};
     static const SDL_DialogFileFilter flash[] = {{"Flash images", "flash;bin"}, {"All files", "*"}};
     void *ud = (void *)(intptr_t)kind;
     switch (kind) {
@@ -364,6 +374,10 @@ void pick(int kind)
     case PICK_ROM:
         SDL_ShowOpenFileDialog(dialog_done, ud, window, rom, 2, pending.rom.empty() ? nullptr : pending.rom.c_str(),
                                false);
+        break;
+    case PICK_RP2350_ROM:
+        SDL_ShowOpenFileDialog(dialog_done, ud, window, rom2350, 2,
+                               pending.rp2350_rom.empty() ? nullptr : pending.rp2350_rom.c_str(), false);
         break;
     case PICK_FLASH:
         SDL_ShowSaveFileDialog(dialog_done, ud, window, flash, 2,
@@ -552,10 +566,16 @@ void machine_tab()
     char def[4096];
     picocalc_sim_data_path(def, sizeof(def), "rp2040-rom.elf", false);
     ImGui::BeginDisabled(!chosen.rp2040 && !pending.board.empty());
-    path_field("Boot ROM", def, &pending.rom, PICK_ROM);
+    path_field("RP2040 ROM", def, &pending.rom, PICK_ROM);
     ImGui::EndDisabled();
     ImGui::SetItemTooltip("The RP2040's own boot ROM, which picocalc-sim cannot include: b2.elf from "
                           "github.com/raspberrypi/pico-bootrom-rp2040/releases");
+    ImGui::BeginDisabled(chosen.rp2040);
+    path_field("RP2350 ROM", "picocalc-sim's own", &pending.rp2350_rom, PICK_RP2350_ROM);
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Raspberry Pi's RP2350 boot ROM, to run instead of picocalc-sim's stand-in: the A2 "
+                          "bootrom-combined.bin from github.com/raspberrypi/pico-bootrom-rp2350/releases. "
+                          "Its USB boot needs Non-secure state, which is not emulated yet.");
 
     static const char *const places[] = {"In the data folder", "In memory until picocalc-sim quits", "In a file"};
     ImGui::Combo("Flash", &pending.flash, places, 3);

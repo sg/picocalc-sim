@@ -275,17 +275,20 @@ bool gpio_in(chip_t *m, unsigned pin)
 
 uint64_t gpio_in_all(chip_t *m)
 {
-    if (m->gpio_in_valid)
-        return m->gpio_in_cache;
-    uint64_t v = 0;
-    for (unsigned pin = 0; pin < m->board->num_gpio; pin++)
-        if (gpio_in(m, pin))
-            v |= 1ull << pin;
-    // The QSPI pins idle high: chip select deasserted and data lines pulled up.
-    v |= 0xfull << 60 | 1ull << 59;
-    m->gpio_in_cache = v;
-    m->gpio_in_valid = true;
-    return v;
+    if (!m->gpio_in_valid) {
+        uint64_t v = 0;
+        for (unsigned pin = 0; pin < m->board->num_gpio; pin++)
+            if (gpio_in(m, pin))
+                v |= 1ull << pin;
+        // The QSPI pins idle high: chip select deasserted and data lines pulled up.
+        v |= 0xfull << 60 | 1ull << 59;
+        m->gpio_in_cache = v;
+        m->gpio_in_valid = true;
+    }
+    // The BOOTSEL button pulls chip select low, which is how the boot ROM sees it held.
+    if (m->now < m->bootsel_until)
+        return m->gpio_in_cache & ~(1ull << 59);
+    return m->gpio_in_cache;
 }
 
 static bool level_at(const gpio_pin_t *g, uint64_t t)

@@ -786,6 +786,10 @@ static void coprocessor(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2)
         exec_fp(c, pc, hw1, hw2);
         return;
     }
+    if (cp == 7 && !c->m->rp2040) {
+        rcp_exec(c, pc, hw1, hw2);
+        return;
+    }
     bool ok = false;
     if ((hw1 & 0x0fe0) == 0x0c40) {
         unsigned rt = (hw2 >> 12) & 0xf, rt2 = hw1 & 0xf, opc1 = (hw2 >> 4) & 0xf, crm = hw2 & 0xf;

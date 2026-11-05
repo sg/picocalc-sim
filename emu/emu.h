@@ -47,6 +47,8 @@ enum {
     CPU_WFE,
     CPU_OFF,
     CPU_LOCKUP,
+    // Held by the RCP, which stalls the coprocessor port until the core is reset.
+    CPU_STALL,
 };
 
 #define MAX_EXC 96
@@ -78,6 +80,10 @@ struct cpu {
     uint32_t active[3];
     uint32_t vtor, scr, ccr, shcsr, cfsr, hfsr, mmfar, bfar, cpacr, nsacr, aircr;
     uint32_t fpccr, fpcar, fpdscr;
+    // The MPU and SAU registers, kept so software reads back what it set; neither restricts or
+    // attributes accesses, since everything runs Secure and privileged checks are not modelled.
+    uint32_t mpu_ctrl, mpu_rnr, mpu_rbar[8], mpu_rlar[8], mpu_mair[2];
+    uint32_t sau_ctrl, sau_rnr, sau_rbar[8], sau_rlar[8], sfsr, sfar;
     uint8_t pri_mask;
 
     uint32_t s[32];

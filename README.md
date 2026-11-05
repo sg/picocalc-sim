@@ -86,13 +86,14 @@ transfers files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`)
 cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `picocalc-sim.exe`
 is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
-the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`); the
-ROM is used only for the tests and is not packed into the release. If they pass, it stages a draft
-release with `picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`.
-Pushing a commit runs nothing; `build.yml` runs the same tests on a branch when started by hand from
-the Actions page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the
-Linux binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be
-built on a headless machine and copied to a desktop.
+the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`), and
+it boots and restarts the RP2350 firmware again on Raspberry Pi's RP2350 ROM
+(`ci/fetch-rp2350-rom.sh`); the ROMs are used only for the tests and are not packed into the
+release. If they pass, it stages a draft release with `picocalc-sim-TAG-linux-x86_64.tar.gz` and
+`picocalc-sim-TAG-windows-x86_64.zip`. Pushing a commit runs nothing; `build.yml` runs the same
+tests on a branch when started by hand from the Actions page. `ci/build-linux.sh` installs the X11,
+Wayland and audio headers SDL needs, so the Linux binaries depend only on glibc 2.38 or newer
+(Ubuntu 24.04, Debian 13, Fedora 39) and can be built on a headless machine and copied to a desktop.
 
 ## Running firmware
 
@@ -151,6 +152,23 @@ build/picocalc-sim --rom b2.elf ../pcsh/build-pico/pcsh.uf2
 
 A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
 `picotool save -r 0x0 0x4000`) works too.
+
+### RP2350 boot ROM
+
+The RP2350 boards boot through picocalc-sim's own stand-in for the chip's boot ROM unless
+`--rp2350-rom FILE`, or the RP2350 ROM field in Settings, names Raspberry Pi's real one, which then
+runs the chip's own boot path, ROM functions and flash routines. Download `bootrom-combined.bin`
+from the [A2 release](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A2):
+
+```sh
+build/picocalc-sim --rp2350-rom bootrom-combined.bin ../pcsh/build-pico2/pcsh.uf2
+```
+
+Images in flash or RAM and uf2loader work on it. Its USB boot, which the BOOTSEL button, a reboot
+into BOOTSEL and an empty flash all lead to, runs in the Arm security extension's Non-secure state,
+which is not emulated yet, so the machine halts there; F12 resets it, and Flash UF2 works as
+before. Only the A2 ROM runs: the emulated chip is an RP2350 A2, and the A3 and A4 ROMs check the
+security extension as soon as they start.
 
 ### uf2loader
 
@@ -261,13 +279,13 @@ without quitting:
 - **Sound**: mute, volume, and recording to a WAV file from now on.
 - **View**: window scale, screenshot (F11), and a log of picocalc-sim's messages.
 
-Settings has the board, the RP2040 boot ROM, where the flash is kept, fast transfers, tracing, the
-radio, access points and port forwards, which take effect at the next restart, and throttling, the
-UART0 console, battery, sound and the screenshot folder, which take effect at once. Restart is the
-PicoCalc's power switch: each board's flash keeps what it holds (one board's flash is not
-another's, as if the Pico were swapped), and the UF2, `--erase-flash` and `--wav` from the command
-line apply only to the first start. If the machine cannot start, say for a missing boot ROM or a
-port already in use, the window shows why and waits for the settings to be fixed.
+Settings has the board, the RP2040 and RP2350 boot ROMs, where the flash is kept, fast transfers,
+tracing, the radio, access points and port forwards, which take effect at the next restart, and
+throttling, the UART0 console, battery, sound and the screenshot folder, which take effect at once.
+Restart is the PicoCalc's power switch: each board's flash keeps what it holds (one board's flash is
+not another's, as if the Pico were swapped), and the UF2, `--erase-flash` and `--wav` from the
+command line apply only to the first start. If the machine cannot start, say for a missing boot ROM
+or a port already in use, the window shows why and waits for the settings to be fixed.
 
 ### Settings file
 
@@ -286,13 +304,13 @@ mute = off
 scale = 3
 ```
 
-The keys are `board`, `rom`, `flash` (a file, `none` or `default`), `card` (an image or `none`),
-`fast`, `unthrottled`, `trace`, `console`, `no-wifi`, `wifi-ap` and `forward` (repeated for each),
-`battery`, `charging`, `volume`, `mute`, `scale` and `screenshot-dir`; switches take `on` or `off`.
-An option given on the command line wins for that run and is not written to the file unless it
-is then changed in the window; the board is the exception, as the one last run is always kept.
-picocalc-sim rewrites the file as settings change, keeping keys it does not know but not comments.
-Headless runs ignore it, so scripts and CI see only their own options.
+The keys are `board`, `rom`, `rp2350-rom`, `flash` (a file, `none` or `default`), `card` (an image
+or `none`), `fast`, `unthrottled`, `trace`, `console`, `no-wifi`, `wifi-ap` and `forward` (repeated
+for each), `battery`, `charging`, `volume`, `mute`, `scale` and `screenshot-dir`; switches take `on`
+or `off`. An option given on the command line wins for that run and is not written to the file
+unless it is then changed in the window; the board is the exception, as the one last run is always
+kept. picocalc-sim rewrites the file as settings change, keeping keys it does not know but not
+comments. Headless runs ignore it, so scripts and CI see only their own options.
 
 ### Options
 
@@ -300,6 +318,7 @@ Headless runs ignore it, so scripts and CI see only their own options.
 | --- | --- |
 | `-b`, `--board NAME` | `pico2`, `pico2_w`, `pimoroni_pico_plus2_w`, `pimoroni_pico_plus2`, `pico` or `pico_w` |
 | `--rom FILE` | the RP2040 boot ROM, as an ELF file or a 16 KB image (see [RP2040 boards](#rp2040-boards)) |
+| `--rp2350-rom FILE` | Raspberry Pi's RP2350 boot ROM to run instead of picocalc-sim's own (see [RP2350 boot ROM](#rp2350-boot-rom)) |
 | `-f`, `--flash FILE` | flash image to use and keep |
 | `-c`, `--card IMAGE` / `--no-card` | SD card image, or an empty slot |
 | `--console` | print UART0 output, as a serial adapter on the PicoCalc's header would show |
@@ -364,11 +383,13 @@ the command line is written again and the card stays in the slot (unlike the men
   (unaligned accesses, Thumb-2 instructions other than BL, MSR, MRS and the barriers).
 - **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP) is
   modelled by what each canned operation computes rather than its internal datapath: operands are
-  captured as doubles and the final read returns the IEEE result.
-- **Boot ROM.** On the RP2350, `emu/rom.c` stands in for the boot ROM, so no ROM file is needed.
-  Raspberry Pi publishes its own ROM under a BSD license, but running it would take parts of the
-  chip the emulator doesn't model, such as the Arm security extension. The stand-in follows
-  the real boot path (watchdog and reboot parameters, the picobin block loop, embedded and
+  captured as doubles and the final read returns the IEEE result. The redundancy coprocessor (RCP,
+  `emu/rcp.c`) follows the datasheet: salts, canaries, sequence counts, its checked assertions,
+  pseudorandom delays, and the NMI and stall an RCP fault brings on both cores.
+- **Boot ROM.** On the RP2350, `emu/rom.c` stands in for the boot ROM, so no ROM file is needed,
+  and `--rp2350-rom` runs Raspberry Pi's own, published under a BSD license, instead; its USB boot
+  needs the Arm security extension's Non-secure state, which is not emulated yet. The stand-in
+  follows the real boot path (watchdog and reboot parameters, the picobin block loop, embedded and
   standalone partition tables, ATRANS address translation, load maps, BOOTSEL when nothing
   boots), runs core 1's launch handshake, and implements the ROM API the SDK and uf2loader call:
   flash operations, partition queries, `chain_image`, `reboot`, `get_sys_info` and so on. The
@@ -379,7 +400,8 @@ the command line is written again and the card stays in the slot (unlike the men
   stepped instruction by instruction on whole system clock cycles, so a fractional divider gives
   uneven ones as on the chip, except that the counting loop of pico-examples' PWM program, which
   PIO audio drivers use, skips ahead to its next edge), 16-channel DMA, PWM, QMI
-  direct mode with a W25Q flash and an APS6404 PSRAM, TRNG, OTP chip ID, boot RAM and boot locks.
+  direct mode with a W25Q flash (busy for its datasheet's typical erase and program times) and an
+  APS6404 PSRAM, TRNG, SHA-256 accelerator, OTP chip ID, boot RAM and boot locks.
   On the RP2040 the same models sit behind its register layout (`emu/rp2040.c`), with its own
   clock tree, resets, SIO hardware divider, RTC, and the SSI and XIP cache it reaches flash through;
   XIP reads get flash data only while the SSI and the flash's continuous-read mode are set up as
@@ -451,8 +473,9 @@ Not emulated yet, or not faithfully:
 - **RISC-V** images for the RP2350 are not supported.
 - **Windows:** `picocalc-sim-mkcard.exe` reads host file names in the system code page, so files
   whose names are not plain ASCII may not copy.
-- Secure state only: TrustZone, the MPU and the redundancy coprocessor accept their
-  configuration but don't enforce it. OTP reads as unprogrammed apart from the chip ID.
+- Secure state only: the Arm security extension's Non-secure state is not emulated, so Raspberry
+  Pi's RP2350 ROM halts at its USB boot. The MPU and SAU keep their registers but don't enforce
+  them. OTP reads as unprogrammed apart from the chip ID.
 - Assumptions about the keyboard controller I could not check against hardware are marked in
   `sim/devices/southbridge.c` (hold after 300 ms, release codes).
 

@@ -547,7 +547,7 @@ static bool decode16(dop_t *d, uint32_t pc, uint16_t op)
             unsigned kind = (op >> 8) & 3;
             d->rd = d->rn = rdn, d->rm = rm;
             if (kind == 3) {
-                if (rm != 15)
+                if (rm != 15 && !(op & 4))
                     d->fn = (op & 0x80) ? h_blx : h_bx;
                 return true;
             }

@@ -23,6 +23,8 @@ typedef struct picocalc_sim_options {
     const char *default_board;
     const char *flash_path;
     const char *rom_path;
+    // Raspberry Pi's RP2350 boot ROM, run in place of picocalc-sim's stand-in when given.
+    const char *rp2350_rom_path;
     const char *card_path;
     const char *uf2_path;
     const char *script_path;

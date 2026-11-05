@@ -6,7 +6,7 @@
 // (CS0) and PSRAM (CS1), and direct mode, through which firmware sends raw commands. The flash
 // answers like a Winbond W25Q, the PSRAM like an APS6404L.
 
-enum { PH_CMD, PH_ADDR, PH_DUMMY, PH_DATA_IN, PH_DATA_OUT, PH_IGNORE };
+enum { PH_CMD, PH_ADDR, PH_DUMMY, PH_DATA_IN, PH_DATA_OUT, PH_IGNORE, PH_IGNORE_BUSY };
 
 typedef struct {
     int phase;
@@ -25,18 +25,32 @@ static void dev_begin(int cs)
     txn_open[cs] = true;
 }
 
+static bool flash_busy(chip_t *m)
+{
+    return m->now < m->qmi.flash_busy_until;
+}
+
+// Typical times from the W25Q datasheets, for which firmware polls the status register.
 static void dev_end(chip_t *m, int cs)
 {
     qspi_dev_t *d = &devs[cs];
-    if (cs == 0 && d->phase != PH_CMD && m->qmi.wel) {
+    if (cs == 0 && d->phase != PH_CMD && d->phase != PH_IGNORE_BUSY && m->qmi.wel) {
+        uint64_t busy = 0;
         switch (d->cmd) {
-        case 0x20: flash_erase(m, d->addr & ~0xfffu, 0x1000); m->qmi.wel = false; break;
-        case 0x52: flash_erase(m, d->addr & ~0x7fffu, 0x8000); m->qmi.wel = false; break;
-        case 0xd8: flash_erase(m, d->addr & ~0xffffu, 0x10000); m->qmi.wel = false; break;
+        case 0x20: flash_erase(m, d->addr & ~0xfffu, 0x1000); busy = 45 * PS_PER_MS; break;
+        case 0x52: flash_erase(m, d->addr & ~0x7fffu, 0x8000); busy = 120 * PS_PER_MS; break;
+        case 0xd8: flash_erase(m, d->addr & ~0xffffu, 0x10000); busy = 150 * PS_PER_MS; break;
         case 0x60:
-        case 0xc7: flash_erase(m, 0, m->flash_size); m->qmi.wel = false; break;
-        case 0x02: m->qmi.wel = false; break;
+        case 0xc7:
+            flash_erase(m, 0, m->flash_size);
+            busy = (uint64_t)(m->flash_size >> 20) * 2500 * PS_PER_MS;
+            break;
+        case 0x02: busy = 400 * PS_PER_US; break;
         default: break;
+        }
+        if (busy) {
+            m->qmi.wel = false;
+            m->qmi.flash_busy_until = m->now + busy;
         }
     }
     txn_open[cs] = false;
@@ -49,6 +63,11 @@ static uint8_t flash_byte(chip_t *m, uint8_t mosi)
     switch (d->phase) {
     case PH_CMD:
         d->cmd = mosi;
+        // An erase or program in progress leaves the flash answering only status reads.
+        if (flash_busy(m) && mosi != 0x05 && mosi != 0x35 && mosi != 0x15) {
+            d->phase = PH_IGNORE_BUSY;
+            return 0xff;
+        }
         switch (mosi) {
         case 0x06: q->wel = true; d->phase = PH_IGNORE; break;
         case 0x04: q->wel = false; d->phase = PH_IGNORE; break;
@@ -110,7 +129,7 @@ static uint8_t flash_byte(chip_t *m, uint8_t mosi)
     case PH_DATA_OUT: {
         int i = d->out_pos++;
         switch (d->cmd) {
-        case 0x05: return (uint8_t)(q->sr1 | (q->wel ? 2 : 0));
+        case 0x05: return (uint8_t)(q->sr1 | (q->wel ? 2 : 0) | (flash_busy(m) ? 3 : 0));
         case 0x35: return q->sr2;
         case 0x15: return q->sr3;
         case 0x9f: {

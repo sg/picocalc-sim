@@ -434,8 +434,6 @@ bool coproc_mcr(cpu_t *c, unsigned cp, unsigned opc1, unsigned crn, unsigned crm
     (void)crn;
     if (cp == 0)
         return gpioc_mcr(c, opc1, crm, opc2, v);
-    if (cp == 7)
-        return true;
     return false;
 }
 
@@ -444,10 +442,6 @@ bool coproc_mrc(cpu_t *c, unsigned cp, unsigned opc1, unsigned crn, unsigned crm
     (void)crn;
     if (cp == 0)
         return gpioc_mrc(c, opc1, crm, opc2, v);
-    if (cp == 7) {
-        *v = 0;
-        return true;
-    }
     return false;
 }
 
@@ -455,8 +449,6 @@ bool coproc_mcrr(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t lo
 {
     if (cp == 0)
         return gpioc_mcrr(c, opc1, crm, lo, hi);
-    if (cp == 7)
-        return true;
     return false;
 }
 
@@ -476,20 +468,17 @@ bool coproc_mrrc(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t *l
         *hi = (uint32_t)(v >> 32);
         return true;
     }
-    if (cp == 7) {
-        *lo = *hi = 0;
-        return true;
-    }
     return false;
 }
 
 bool coproc_cdp(cpu_t *c, unsigned cp, unsigned opc1, unsigned crd, unsigned crn, unsigned crm, unsigned opc2)
 {
     (void)c;
+    (void)cp;
     (void)opc1;
     (void)crd;
     (void)crn;
     (void)crm;
     (void)opc2;
-    return cp == 7;
+    return false;
 }

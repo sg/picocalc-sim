@@ -139,7 +139,7 @@ void chip_core1_power(chip_t *m, bool off)
     } else if (c->state == CPU_OFF) {
         c->t = m->now;
         cpu_reset(c);
-        if (!m->rp2040)
+        if (!m->rp2040 && !m->real_rom)
             rom_core_start(c);
     }
 }
@@ -173,6 +173,8 @@ static void reset_peripherals(chip_t *m, uint32_t newly)
         m->pll_usb = (pll_t){.cs = 1, .pwr = 0x2d, .fbdiv = 0, .prim = 0x77000};
     if (newly & (1u << 16))
         pwm_reset(&m->pwm);
+    if ((newly & (1u << 17)) && !m->rp2040)
+        sha256_reset(m);
     if (newly & (1u << 18))
         pl022_reset(&m->spi[0], 0);
     if (newly & (1u << 19))
@@ -365,9 +367,7 @@ uint32_t sysctl_read(chip_t *m, uint32_t base, uint32_t off)
         default: return 0;
         }
     case 0x400f8000:
-        if (off == 0x0)
-            return (m->sha256_regs[0] & 0x1300) | 0x6;
-        return off < 0x40 ? m->sha256_regs[off >> 2] : 0;
+        return sha256_read(m, off);
     case 0x40108000:
         if (off < 0x48) {
             unsigned r = (off % 12) / 4, i = off / 12;
@@ -518,8 +518,7 @@ void sysctl_write(chip_t *m, uint32_t base, uint32_t off, uint32_t v)
             m->trng_regs[1] = v;
         break;
     case 0x400f8000:
-        if (off < 0x40)
-            m->sha256_regs[off >> 2] = v;
+        sha256_write(m, off, v);
         break;
     case 0x40108000:
         if (off < 0x48) {

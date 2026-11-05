@@ -594,6 +594,16 @@ static void undefined(cpu_t *c, uint32_t pc, uint32_t op)
     take_fault(c, EXC_USAGEFAULT, pc, "undefined instruction");
 }
 
+// BXNS and BLXNS: the security extension's Non-secure state is not emulated, so the machine stops
+// there rather than running Secure code as if it were Non-secure.
+static void nonsecure_branch(cpu_t *c, uint32_t pc)
+{
+    emu_log("core %d enters Non-secure state at pc=%08x, which is not emulated yet", c->id, pc);
+    c->r[15] = pc;
+    c->state = CPU_OFF;
+    chip_request(c->m, REQ_HALT, "Non-secure state is not emulated yet");
+}
+
 static inline void branch_interworking(cpu_t *c, uint32_t v, uint32_t pc_of_insn)
 {
     if (c->ipsr && (v >> 24) == 0xff) {
@@ -749,6 +759,23 @@ static void systick_fire(chip_t *m, emu_event_t *ev)
 // ---------------------------------------------------------------------------------------------
 // System control space
 
+// MPU_RBAR and MPU_RLAR at 0xed9c and 0xeda0 reach the region RNR selects; on Armv8-M the three
+// aliases after them reach the next three in the same group of four. On Armv6-M the second is
+// RASR, and writing RBAR with VALID set selects the region.
+static uint32_t mpu_region_reg(cpu_t *c, uint32_t off, uint32_t v, bool write)
+{
+    unsigned n = (off - 0xed9c) >> 3;
+    if (!c->v8 && n)
+        return 0;
+    if (!c->v8 && write && off == 0xed9c && (v & 0x10))
+        c->mpu_rnr = v & 7;
+    unsigned region = (n ? (c->mpu_rnr & ~3u) + n : c->mpu_rnr) & 7;
+    uint32_t *reg = (off - 0xed9c) & 4 ? &c->mpu_rlar[region] : &c->mpu_rbar[region];
+    if (write)
+        *reg = (off - 0xed9c) & 4 ? (c->v8 ? v & ~0x10u : v) : (c->v8 ? v : v & ~0x1fu);
+    return !c->v8 && !((off - 0xed9c) & 4) ? *reg | (c->mpu_rnr & 0xf) : *reg;
+}
+
 uint32_t cpu_ppb_read(cpu_t *c, uint32_t off)
 {
     switch (off) {
@@ -807,10 +834,23 @@ uint32_t cpu_ppb_read(cpu_t *c, uint32_t off)
     case 0xed88: return c->cpacr;
     case 0xed8c: return c->nsacr;
     case 0xed90: return 8u << 8;
+    case 0xed94: return c->mpu_ctrl;
+    case 0xed98: return c->mpu_rnr;
+    case 0xedc0: return c->mpu_mair[0];
+    case 0xedc4: return c->mpu_mair[1];
+    case 0xedd0: return c->v8 ? c->sau_ctrl : 0;
+    case 0xedd4: return c->v8 ? 8 : 0;
+    case 0xedd8: return c->v8 ? c->sau_rnr : 0;
+    case 0xeddc: return c->v8 ? c->sau_rbar[c->sau_rnr & 7] : 0;
+    case 0xede0: return c->v8 ? c->sau_rlar[c->sau_rnr & 7] : 0;
+    case 0xede4: return c->v8 ? c->sfsr : 0;
+    case 0xede8: return c->v8 ? c->sfar : 0;
     case 0xef34: return c->fpccr;
     case 0xef38: return c->fpcar;
     case 0xef3c: return c->fpdscr;
     default:
+        if (off >= 0xed9c && off < 0xedc0)
+            return mpu_region_reg(c, off, 0, false);
         if (off >= 0xe100 && off < 0xe108)
             return c->nvic_en[(off - 0xe100) >> 2];
         if (off >= 0xe180 && off < 0xe188)
@@ -912,6 +952,34 @@ void cpu_ppb_write(cpu_t *c, uint32_t off, uint32_t v)
     case 0xed8c:
         c->nsacr = v;
         break;
+    case 0xed94:
+        c->mpu_ctrl = v & 7;
+        break;
+    case 0xed98:
+        c->mpu_rnr = v & 0xff;
+        break;
+    case 0xedc0:
+    case 0xedc4:
+        c->mpu_mair[(off - 0xedc0) >> 2] = v;
+        break;
+    case 0xedd0:
+        c->sau_ctrl = v & 3;
+        break;
+    case 0xedd8:
+        c->sau_rnr = v & 0xff;
+        break;
+    case 0xeddc:
+        c->sau_rbar[c->sau_rnr & 7] = v & ~0x1fu;
+        break;
+    case 0xede0:
+        c->sau_rlar[c->sau_rnr & 7] = v & ~0x1cu;
+        break;
+    case 0xede4:
+        c->sfsr &= ~v;
+        break;
+    case 0xede8:
+        c->sfar = v;
+        break;
     case 0xef34:
         c->fpccr = v;
         break;
@@ -922,6 +990,10 @@ void cpu_ppb_write(cpu_t *c, uint32_t off, uint32_t v)
         c->fpdscr = v;
         break;
     default:
+        if (off >= 0xed9c && off < 0xedc0) {
+            mpu_region_reg(c, off, v, true);
+            break;
+        }
         if (off >= 0xe100 && off < 0xe108) {
             c->nvic_en[(off - 0xe100) >> 2] |= v;
             c->check_exc = true;
@@ -1145,6 +1217,10 @@ static void exec16(cpu_t *c, uint32_t pc, uint16_t op)
                 break;
             case 3:
                 c->cyc++;
+                if (op & 4) {
+                    nonsecure_branch(c, pc);
+                    break;
+                }
                 if (op & 0x80)
                     r[14] = (pc + 2) | 1;
                 branch_interworking(c, vm, pc);
@@ -1340,7 +1416,7 @@ static void exec16(cpu_t *c, uint32_t pc, uint16_t op)
     case 0x1b: {
         unsigned cond = (op >> 8) & 0xf;
         if (cond == 0xe) {
-            if (pc < ROM_SIZE && !c->m->rp2040) {
+            if (pc < ROM_SIZE && !c->m->rp2040 && !c->m->real_rom) {
                 rom_hle(c, op & 0xff);
             } else {
                 undefined(c, pc, op);
@@ -1470,6 +1546,7 @@ const char *cpu_state_name(const cpu_t *c)
     case CPU_WFI: return "WFI";
     case CPU_WFE: return "WFE";
     case CPU_OFF: return "held in reset";
+    case CPU_STALL: return "stalled by the RCP";
     default: return "locked up";
     }
 }

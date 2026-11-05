@@ -230,6 +230,16 @@ bool uf2_program(chip_t *m, const uf2_file_t *f, char *err, size_t errlen)
         m->boot_type = 3;
         m->boot_param[0] = lo;
         m->boot_param[1] = hi - lo;
+        // What the RP2350 ROM's reboot() leaves in the watchdog for a RAM image (type 3), as BOOTSEL's
+        // drive has it do once a RAM UF2 is written.
+        if (m->real_rom) {
+            m->wd_scratch[2] = lo;
+            m->wd_scratch[3] = hi - lo;
+            m->wd_scratch[4] = 0xb007c0d3u;
+            m->wd_scratch[5] = (uint32_t)-(int32_t)0xb007c0d3u ^ 0xb007c0d3u;
+            m->wd_scratch[6] = 3;
+            m->wd_scratch[7] = 0xb007c0d3u;
+        }
         return true;
     }
     uint32_t pstart = 0, psize = m->flash_size;

@@ -72,6 +72,7 @@ enum {
     DREQ_XIP_STREAM,
     DREQ_XIP_QMITX,
     DREQ_XIP_QMIRX,
+    DREQ_SHA256 = 54,
     DREQ_COUNT = 64,
     DREQ_DMA_TIMER0 = 59,
     DREQ_FORCE = 63,
@@ -250,6 +251,8 @@ typedef struct {
 typedef struct {
     uint32_t direct_csr, direct_rx[4], direct_tx[4];
     int rxn, txn;
+    // The flash reports itself busy until then, after an erase or program.
+    uint64_t flash_busy_until;
     uint32_t m[2][5];
     uint32_t atrans[8];
     bool cs[2];
@@ -391,7 +394,16 @@ struct chip {
     // What ROSC's random bit and the TRNG read: the same sequence from every power-up.
     uint64_t rng;
     uint32_t glitch[16];
-    uint32_t sha256_regs[16];
+    struct {
+        uint32_t csr, sum[8], block[16], partial;
+        unsigned words, partial_bytes;
+    } sha256;
+    // The redundancy coprocessor of each core.
+    struct {
+        uint64_t salt[2];
+        bool salt_valid[2], fault[2];
+        uint8_t count[2];
+    } rcp;
     uint32_t hstx_regs[16];
 
     uint32_t wd_ctrl, wd_reason, wd_scratch[8];
@@ -463,7 +475,7 @@ struct chip {
     int rom_partition;
 
     pthread_mutex_t power_lock;
-    bool req_reset, req_bootsel, req_poweroff;
+    bool req_reset, req_bootsel, req_poweroff, req_halt;
     // Whether any of those is set, for the run loop to check without taking the lock.
     atomic_bool req_any;
     char req_reason[96];
@@ -472,6 +484,12 @@ struct chip {
     struct cyw43 *wifi;
 
     bool rp2040;
+    // Raspberry Pi's own RP2350 ROM is in rom[] instead of the stand-in rom.c builds.
+    bool real_rom;
+    // The BOOTSEL button is held until then, pulling the QSPI chip select low.
+    uint64_t bootsel_until;
+    // Size of the bus write being passed to a peripheral, which sees only the replicated data.
+    int bus_write_size;
     uint32_t sram_size;
     // XIP aliases below this one look in the cache.
     uint8_t xip_cached_top;
@@ -497,7 +515,7 @@ void chip_irq_core(chip_t *m, int core, unsigned irq, bool level);
 void chip_dreq(chip_t *m, unsigned dreq, bool level);
 void chip_sev(chip_t *m, int from_core);
 void chip_request(chip_t *m, int what, const char *reason);
-enum { REQ_RESET, REQ_BOOTSEL, REQ_POWEROFF };
+enum { REQ_RESET, REQ_BOOTSEL, REQ_POWEROFF, REQ_HALT };
 
 uint32_t bus_read(cpu_t *c, uint32_t addr, int size);
 void bus_write(cpu_t *c, uint32_t addr, uint32_t v, int size);
@@ -528,6 +546,12 @@ bool coproc_mcrr(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t lo
 bool coproc_mrrc(cpu_t *c, unsigned cp, unsigned opc1, unsigned crm, uint32_t *lo, uint32_t *hi);
 bool coproc_cdp(cpu_t *c, unsigned cp, unsigned opc1, unsigned crd, unsigned crn, unsigned crm, unsigned opc2);
 void dcp_reset(void);
+void rcp_reset(chip_t *m);
+void rcp_set_salts(chip_t *m, uint64_t salt0, uint64_t salt1);
+void rcp_exec(cpu_t *c, uint32_t pc, uint16_t hw1, uint16_t hw2);
+void sha256_reset(chip_t *m);
+uint32_t sha256_read(chip_t *m, uint32_t off);
+void sha256_write(chip_t *m, uint32_t off, uint32_t v);
 bool dcp_mcrr(cpu_t *c, unsigned opc1, unsigned crm, uint32_t lo, uint32_t hi);
 bool dcp_mrrc(cpu_t *c, unsigned opc1, unsigned crm, uint32_t *lo, uint32_t *hi, bool pop);
 bool dcp_mrc(cpu_t *c, unsigned crm, unsigned opc2, uint32_t *v, bool pop);
@@ -624,6 +648,8 @@ void cyw43_bus_out(chip_t *m, int bit);
 int cyw43_bus_in(chip_t *m);
 
 void rom_build(chip_t *m);
+// Puts Raspberry Pi's RP2350 boot ROM, a 32 KB image, in place of the stand-in.
+bool rp2350_load_rom(chip_t *m, const char *path, char *err, size_t errlen);
 void rom_hle(cpu_t *c, unsigned n);
 void rom_core_start(cpu_t *c);
 

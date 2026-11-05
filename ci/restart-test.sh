@@ -2,7 +2,8 @@
 # Restarts each UF2 part-way through its boot and fails if the boot after the restart ends in a
 # different state from a fresh launch's, which would mean something outlived the restart.
 #   ci/restart-test.sh PICOCALC_SIM UF2...
-# PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W images.
+# PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W images, and PICOCALC_SIM_RP2350_ROM
+# Raspberry Pi's RP2350 ROM to run in place of picocalc-sim's own.
 set -u
 picocalc_sim=$1
 shift
@@ -11,7 +12,8 @@ shift
 # "none" outlives a restart, so --erase-flash starts both runs from the same blank one.
 digests() {
     timeout 120 env "$@" "$picocalc_sim" --headless --unthrottled --trace --flash none --erase-flash --no-card \
-        ${PICOCALC_SIM_ROM:+--rom "$PICOCALC_SIM_ROM"} "$uf2" 2>&1 | tr -d '\r' | sed -n 's/.*state digest //p' | tr '\n' ' ' |
+        ${PICOCALC_SIM_ROM:+--rom "$PICOCALC_SIM_ROM"} \
+        ${PICOCALC_SIM_RP2350_ROM:+--rp2350-rom "$PICOCALC_SIM_RP2350_ROM"} "$uf2" 2>&1 | tr -d '\r' | sed -n 's/.*state digest //p' | tr '\n' ' ' |
         sed 's/ $//'
 }
 
