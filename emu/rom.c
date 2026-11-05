@@ -588,9 +588,10 @@ static void forget_state(void)
     memset(send_next, 0, sizeof(send_next));
 }
 
+// The ROM's FIFO accesses reach the bank its core's bus accesses do.
 static bool fifo_push(chip_t *m, int core, uint32_t v)
 {
-    sio_fifo_t *tx = &m->sio[0].fifo[core];
+    sio_fifo_t *tx = &m->sio[m->core[core].bus_ns].fifo[core];
     if (tx->count == 8)
         return false;
     tx->data[(tx->head + tx->count) & 7] = v;
@@ -602,7 +603,7 @@ static bool fifo_push(chip_t *m, int core, uint32_t v)
 
 static bool fifo_pop(chip_t *m, int core, uint32_t *v)
 {
-    sio_fifo_t *rx = &m->sio[0].fifo[1 - core];
+    sio_fifo_t *rx = &m->sio[m->core[core].bus_ns].fifo[1 - core];
     if (!rx->count)
         return false;
     *v = rx->data[rx->head];

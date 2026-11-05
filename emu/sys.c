@@ -272,13 +272,15 @@ uint32_t sysctl_read(chip_t *m, uint32_t base, uint32_t off)
         case 0xc: return 0x01ffffffu & ~m->psm_frce_off;
         default: return 0;
         }
-    case 0x40020000:
+    case 0x40020000: {
+        uint32_t mask = access_ns(m) && !m->rp2040 ? accessctrl_resets_ns_mask(m, access_priv(m)) : ~0u;
         switch (off) {
-        case 0x0: return m->resets;
+        case 0x0: return m->resets & mask;
         case 0x4: return 0;
-        case 0x8: return ~m->resets & 0x1fffffffu;
+        case 0x8: return ~m->resets & 0x1fffffffu & mask;
         default: return 0;
         }
+    }
     case 0x40048000:
         switch (off) {
         case 0x00: return m->xosc_ctrl;
@@ -308,7 +310,7 @@ uint32_t sysctl_read(chip_t *m, uint32_t base, uint32_t off)
         }
     }
     case 0x40060000:
-        return off < 0x100 ? m->accessctrl[off >> 2] : 0;
+        return accessctrl_read(m, off);
     case 0x40068000:
         if (off == 0x04)
             return 1;
@@ -436,6 +438,11 @@ void sysctl_write(chip_t *m, uint32_t base, uint32_t off, uint32_t v)
         break;
     case 0x40020000:
         if (off == 0x0) {
+            // Non-secure code reaches only the resets of the peripherals it can reach.
+            if (access_ns(m) && !m->rp2040) {
+                uint32_t mask = accessctrl_resets_ns_mask(m, access_priv(m));
+                v = (m->resets & ~mask) | (v & mask);
+            }
             uint32_t newly = v & ~m->resets & 0x1fffffffu;
             m->resets = v & 0x1fffffffu;
             reset_peripherals(m, newly);
@@ -470,15 +477,6 @@ void sysctl_write(chip_t *m, uint32_t base, uint32_t off, uint32_t v)
         chip_update_clocks(m);
         break;
     }
-    case 0x40060000:
-        // The GPIO_NSMASK registers take no password and use the upper half.
-        if (off == 0x0c)
-            m->accessctrl[3] = v;
-        else if (off == 0x10)
-            m->accessctrl[4] = v & 0xff00ffffu;
-        else if (off < 0x100 && (v >> 16) == 0xacce)
-            m->accessctrl[off >> 2] = v & 0xffff;
-        break;
     case 0x40068000:
         if (off < 0x30)
             m->busctrl[off >> 2] = v;

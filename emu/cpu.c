@@ -489,6 +489,12 @@ static void flag_secure_fault(cpu_t *c, uint32_t sfsr)
     }
 }
 
+bool cpu_attr_ns(cpu_t *c, uint32_t a)
+{
+    uint32_t lo, hi;
+    return security_check(c, a, false, !c->ns, &lo, &hi).ns;
+}
+
 bool cpu_ns_access(cpu_t *c, uint32_t a)
 {
     if (a - c->dw_lo < c->dw_size)
@@ -571,6 +577,7 @@ static uint8_t *no_pages[0x10000];
 static void switch_state(cpu_t *c, bool ns)
 {
     c->ns = ns;
+    c->bus_ns = ns || (c->id == 1 && (c->m->accessctrl[1] & 2));
     c->rpage = ns ? no_pages : c->m->rpage;
     c->wpage = ns ? no_pages : c->m->wpage;
     c->fw_size = 0;

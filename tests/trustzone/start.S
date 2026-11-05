@@ -182,6 +182,19 @@ s_bad_transition:
     .p2align 2
 1:  pop {pc}
 
+// Leaf accesses, so the BusFault handler can resume a refused one at its return address.
+    .global s_store
+    .thumb_func
+s_store:
+    str r1, [r0]
+    bx lr
+
+    .global s_load
+    .thumb_func
+s_load:
+    ldr r0, [r0]
+    bx lr
+
     .global s_add
     .thumb_func
 s_add:
@@ -287,11 +300,17 @@ ns_bell:
     str r1, [r0, #4]
     bx lr
 
-// Leaf functions, so a fault handler can resume a faulting access or branch at the return address.
+// Leaf functions, so a fault handler can resume a faulting access or branch at its return address.
     .global ns_load
     .thumb_func
 ns_load:
     ldr r0, [r0]
+    bx lr
+
+    .global ns_store
+    .thumb_func
+ns_store:
+    str r1, [r0]
     bx lr
 
     .global ns_jump

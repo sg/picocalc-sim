@@ -353,7 +353,10 @@ static void ahb_reg_write(chip_t *m, uint32_t addr, uint32_t v, bool *ok)
 {
     uint32_t off = addr & 0xfff;
     switch (addr & 0xfff00000u) {
-    case 0x50000000: dma_write(m, off, v); return;
+    case 0x50000000:
+        if (!dma_write(m, off, v))
+            *ok = false;
+        return;
     case 0x50100000:
         if ((addr & 0xf0000) == 0x10000) {
             m->usb_regs[(off >> 2) & 63] = v;
@@ -598,6 +601,11 @@ static void mem_write(chip_t *m, cpu_t *c, uint32_t addr, uint32_t v, int size, 
         }
         if (c)
             c->cyc += 2;
+        if (!m->rp2040 && (addr & 0xffffc000u) == 0x40060000u) {
+            if (!accessctrl_write(m, c, addr, replicate(v, size)))
+                *ok = false;
+            return;
+        }
         m->bus_write_size = size;
         periph_write(m, addr, replicate(v, size), ok);
         return;
@@ -642,23 +650,43 @@ static inline void touch_now(chip_t *m, cpu_t *c)
         m->now = c->t;
 }
 
+static void bus_error(cpu_t *c, uint32_t addr, bool write)
+{
+    if (c->m->trace)
+        emu_log("core %d bus error %s %08x (pc %08x)", c->id, write ? "writing" : "reading", addr, c->r[15]);
+    c->fault = true;
+    c->check_exc = true;
+    c->cfsr |= (1u << 9) | (1u << 15);
+    c->bfar = addr;
+}
+
+// What ACCESSCTRL's filters refuse never reaches its destination; the access's security and
+// privilege go with it for the peripherals that filter by them themselves.
+static inline bool bus_filter(chip_t *m, cpu_t *c, uint32_t addr)
+{
+    m->access_core = c;
+    // The SIO and the PPB have no filters, and nothing on the RP2040 does.
+    if (addr >= 0xd0000000u || m->rp2040)
+        return true;
+    if (likely(m->ac_sp_open && !c->bus_ns) && (c->ipsr || !(c->control & 1)))
+        return true;
+    return accessctrl_core_allows(c, addr);
+}
+
 static __attribute__((noinline)) uint32_t bus_read_decode(cpu_t *c, uint32_t addr, int size)
 {
     chip_t *m = c->m;
-    // Non-secure state has no pages, so each of its accesses arrives here to be checked; the
-    // timers, being peripherals, are open to it.
+    // Non-secure state has no pages, so each of its accesses arrives here to be checked.
     if (unlikely(c->ns) && !cpu_ns_access(c, addr))
         return 0;
+    if (!bus_filter(m, c, addr)) {
+        bus_error(c, addr, false);
+        return 0;
+    }
     bool ok = true;
     uint32_t v = mem_read(m, c, addr, size, &ok);
-    if (!ok) {
-        if (m->trace)
-            emu_log("core %d bus error reading %08x (pc %08x)", c->id, addr, c->r[15]);
-        c->fault = true;
-        c->check_exc = true;
-        c->cfsr |= (1u << 9) | (1u << 15);
-        c->bfar = addr;
-    }
+    if (!ok)
+        bus_error(c, addr, false);
     return v;
 }
 
@@ -667,8 +695,9 @@ uint32_t bus_read(cpu_t *c, uint32_t addr, int size)
     chip_t *m = c->m;
     touch_now(m, c);
     // The SDK reads the timers constantly (time_us_64, busy_wait), so they skip the general
-    // decode, which would arrive at the same call, and its stack frame.
-    if ((addr & 0xffff0000u) == 0x400b0000u) {
+    // decode, which would arrive at the same call, and its stack frame, while ACCESSCTRL lets any
+    // Secure access to them through.
+    if ((addr & 0xffff0000u) == 0x400b0000u && likely(m->ac_timer_open && !c->bus_ns)) {
         c->cyc += 2;
         return extract(timer_read(m, &m->timer[(addr >> 15) & 1], addr & 0xffc, false), addr, size);
     }
@@ -681,16 +710,14 @@ void bus_write(cpu_t *c, uint32_t addr, uint32_t v, int size)
     if (unlikely(c->ns) && !cpu_ns_access(c, addr))
         return;
     touch_now(m, c);
+    if (!bus_filter(m, c, addr)) {
+        bus_error(c, addr, true);
+        return;
+    }
     bool ok = true;
     mem_write(m, c, addr, v, size, &ok);
-    if (!ok) {
-        if (m->trace)
-            emu_log("core %d bus error writing %08x (pc %08x)", c->id, addr, c->r[15]);
-        c->fault = true;
-        c->check_exc = true;
-        c->cfsr |= (1u << 9) | (1u << 15);
-        c->bfar = addr;
-    }
+    if (!ok)
+        bus_error(c, addr, true);
 }
 
 uint16_t bus_fetch16_slow(cpu_t *c, uint32_t addr)
@@ -716,6 +743,8 @@ uint16_t bus_fetch16_slow(cpu_t *c, uint32_t addr)
 uint32_t sys_read(chip_t *m, uint32_t addr, int size, bool *ok)
 {
     bool k = true;
+    m->access_core = NULL;
+    m->access_seccfg = 3;
     uint32_t v = mem_read(m, NULL, addr, size, &k);
     if (ok)
         *ok = k;
@@ -725,9 +754,37 @@ uint32_t sys_read(chip_t *m, uint32_t addr, int size, bool *ok)
 void sys_write(chip_t *m, uint32_t addr, uint32_t v, int size, bool *ok)
 {
     bool k = true;
+    m->access_core = NULL;
+    m->access_seccfg = 3;
     mem_write(m, NULL, addr, v, size, &k);
     if (ok)
         *ok = k;
+}
+
+uint32_t dma_bus_read(chip_t *m, uint32_t addr, int size, uint32_t seccfg, bool *ok)
+{
+    if (!m->rp2040) {
+        if (!accessctrl_dma_allows(m, addr, seccfg)) {
+            *ok = false;
+            return 0;
+        }
+        m->access_core = NULL;
+        m->access_seccfg = seccfg;
+    }
+    return mem_read(m, NULL, addr, size, ok);
+}
+
+void dma_bus_write(chip_t *m, uint32_t addr, uint32_t v, int size, uint32_t seccfg, bool *ok)
+{
+    if (!m->rp2040) {
+        if (!accessctrl_dma_allows(m, addr, seccfg)) {
+            *ok = false;
+            return;
+        }
+        m->access_core = NULL;
+        m->access_seccfg = seccfg;
+    }
+    mem_write(m, NULL, addr, v, size, ok);
 }
 
 void chip_init(chip_t *m, const board_info_t *b)
@@ -858,6 +915,8 @@ void chip_reset(chip_t *m, bool watchdog)
     for (int i = 0; i < 3; i++)
         pio_reset(&m->pio[i], i);
     dma_reset(&m->dma);
+    if (!m->rp2040)
+        accessctrl_reset(m, true);
     pwm_reset(&m->pwm);
     qmi_reset(m);
     m->xip_ctrl = 0x83;

@@ -17,8 +17,13 @@ static uint64_t timer_next[4];
 void dma_reset(dma_t *d)
 {
     memset(d, 0, sizeof(*d));
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < 16; i++) {
         d->ch[i].ctrl = (uint32_t)i << 13;
+        d->seccfg[i] = 3;
+    }
+    for (int i = 0; i < 4; i++)
+        d->seccfg_irq[i] = 3;
+    d->seccfg_misc = 0x3ff;
     running = rekick = false;
 }
 
@@ -73,7 +78,7 @@ static void transfer_one(chip_t *m, int ch)
     uint32_t ctrl = c->ctrl;
     uint32_t size = 1u << ((ctrl >> 2) & 3);
     bool ok = true;
-    uint32_t v = sys_read(m, c->read_addr, (int)size, &ok);
+    uint32_t v = dma_bus_read(m, c->read_addr, (int)size, d->seccfg[ch], &ok);
     if (ctrl & (1u << 24)) {
         if (size == 4)
             v = __builtin_bswap32(v);
@@ -84,10 +89,13 @@ static void transfer_one(chip_t *m, int ch)
         if (((d->sniff_ctrl >> 1) & 0xf) == 0 && ((d->sniff_ctrl >> 1) & 0x3f) == (uint32_t)ch)
             d->sniff_data += v;
     }
-    if (ok)
-        sys_write(m, c->write_addr, v, (int)size, &ok);
-    if (!ok)
+    if (!ok) {
         c->ctrl |= (1u << 31) | (1u << 30);
+    } else {
+        dma_bus_write(m, c->write_addr, v, (int)size, d->seccfg[ch], &ok);
+        if (!ok)
+            c->ctrl |= (1u << 31) | (1u << 29);
+    }
     unsigned ring = (ctrl >> 8) & 0xf;
     bool ring_write = ctrl & (1u << 12);
     c->read_addr = step_addr(c->read_addr, size, ctrl & (1u << 4), ctrl & (1u << 5), ring, !ring_write);
@@ -249,8 +257,12 @@ static uint32_t regs_read(chip_t *m, uint32_t off, bool peek)
     case 0x464: return 0;
     case 0x468: return 16;
     default:
-        if (off >= 0x480 && off < 0x4d4)
-            return d->seccfg[((off - 0x480) >> 2) & 15];
+        if (off >= 0x480 && off < 0x4c0)
+            return d->seccfg[(off - 0x480) >> 2];
+        if (off >= 0x4c0 && off < 0x4d0)
+            return d->seccfg_irq[(off - 0x4c0) >> 2];
+        if (off == 0x4d0)
+            return d->seccfg_misc;
         if (off >= 0x800 && off < 0xc00) {
             dma_ch_t *c = &d->ch[(off - 0x800) >> 6];
             return (off & 4) ? c->count_reload : 0;
@@ -259,13 +271,31 @@ static uint32_t regs_read(chip_t *m, uint32_t off, bool peek)
     }
 }
 
-static void regs_write(chip_t *m, uint32_t off, uint32_t v)
+// The security levels are written from Secure privileged code; Non-secure privileged code may only
+// change an unlocked Non-secure channel's privilege, and unprivileged writes are bus errors.
+static bool seccfg_write(chip_t *m, uint32_t *r, uint32_t v, uint32_t bits)
+{
+    if (!access_priv(m))
+        return false;
+    if (*r & 4)
+        return true;
+    if (!access_ns(m))
+        *r = v & bits;
+    else if (bits != 0x3ff && !(*r & 2))
+        *r = (*r & ~1u) | (v & 1);
+    return true;
+}
+
+static bool regs_write(chip_t *m, uint32_t off, uint32_t v)
 {
     dma_t *d = &m->dma;
     if (off < 0x400) {
         int ch = (int)(off >> 6);
         dma_ch_t *c = &d->ch[ch];
         bool trig = false;
+        // Programming a channel locks its security level.
+        if (!m->rp2040)
+            d->seccfg[ch] |= 4;
         switch (off & 0x3f) {
         case 0x00:
         case 0x14:
@@ -294,7 +324,7 @@ static void regs_write(chip_t *m, uint32_t off, uint32_t v)
             trigger(m, ch);
         timers_arm(m);
         dma_kick(m);
-        return;
+        return true;
     }
     switch (off) {
     case 0x400:
@@ -329,11 +359,16 @@ static void regs_write(chip_t *m, uint32_t off, uint32_t v)
                 d->ch[ch].ctrl &= ~CH_BUSY;
         break;
     default:
-        if (off >= 0x480 && off < 0x4d4)
-            d->seccfg[((off - 0x480) >> 2) & 15] = v;
+        if (off >= 0x480 && off < 0x4c0)
+            return seccfg_write(m, &d->seccfg[(off - 0x480) >> 2], v, 7);
+        if (off >= 0x4c0 && off < 0x4d0)
+            return seccfg_write(m, &d->seccfg_irq[(off - 0x4c0) >> 2], v, 3);
+        if (off == 0x4d0)
+            return seccfg_write(m, &d->seccfg_misc, v, 0x3ff);
         break;
     }
     update_irq(m);
+    return true;
 }
 
 // The RP2040's DMA: 12 channels, CTRL fields packed lower (no reversed increments), the DREQs
@@ -380,27 +415,24 @@ uint32_t dma_read(chip_t *m, uint32_t off, bool peek)
     return regs_read(m, global_off(off), peek);
 }
 
-void dma_write(chip_t *m, uint32_t off, uint32_t v)
+bool dma_write(chip_t *m, uint32_t off, uint32_t v)
 {
-    if (!m->rp2040) {
-        regs_write(m, off, v);
-        return;
-    }
+    if (!m->rp2040)
+        return regs_write(m, off, v);
     if (off < 0x400) {
         unsigned ch = off >> 6, r = off & 0x3f;
         if (ch >= 12)
-            return;
+            return true;
         if (is_ctrl(r)) {
             m->rp.dma_ctrl[ch] = v & 0x00ffffffu;
             v = ctrl_in(v);
         } else if (is_count(r) && (v >> 28)) {
             v = 0x0fffffffu;
         }
-        regs_write(m, off, v);
-        return;
+        return regs_write(m, off, v);
     }
     off = global_off(off);
     if (off == 0x450 || off == 0x464)
         v &= 0xfff;
-    regs_write(m, off, v);
+    return regs_write(m, off, v);
 }

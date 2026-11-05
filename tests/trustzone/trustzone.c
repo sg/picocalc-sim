@@ -26,6 +26,9 @@
 #define SIO_GPIO_OUT 0xd0000010u
 #define SIO_GPIO_OUT_SET 0xd0000018u
 #define SIO_GPIO_OE_SET 0xd0000020u
+#define SIO_FIFO_ST 0xd0000050u
+#define SIO_FIFO_WR 0xd0000054u
+#define SIO_FIFO_RD 0xd0000058u
 #define SIO_SPINLOCK_ST 0xd000005cu
 #define SIO_SPINLOCK5 0xd0000114u
 #define SIO_DOORBELL_IN_SET 0xd0000188u
@@ -51,6 +54,25 @@
 #define SFSR 0xe000ede4u
 #define SFAR 0xe000ede8u
 
+#define ACCESSCTRL 0x40060000u
+#define AC_PASSWORD 0xacce0000u
+#define AC_LOCK (ACCESSCTRL + 0x00)
+#define AC_FORCE_CORE_NS (ACCESSCTRL + 0x04)
+#define AC_CFGRESET (ACCESSCTRL + 0x08)
+#define AC_RESETS (ACCESSCTRL + 0x64)
+#define AC_IO_BANK0 (ACCESSCTRL + 0x68)
+#define AC_SPI0 (ACCESSCTRL + 0x90)
+#define AC_UART0 (ACCESSCTRL + 0xa0)
+#define IO_BANK0_GPIO_CTRL(n) (0x40028004u + 8u * (n))
+#define RESETS_RESET 0x40020000u
+#define RESETS_SET (RESETS_RESET + 0x2000u)
+#define TIMER0_TIMERAWL 0x400b0028u
+#define BOOTRAM 0x400e0000u
+#define SPI0_SSPCR0 0x40080000u
+#define CORE1_STACK_TOP 0x20041000u
+#define DMA_CH(n) (0x50000000u + 0x40u * (n))
+#define DMA_SECCFG_CH(n) (0x50000480u + 4u * (n))
+
 #define IRQ_NS_TEST 46
 #define IRQ_S_TEST 47
 #define IRQ_SIO_BELL_NS 28
@@ -60,9 +82,12 @@ NSDATA volatile uint32_t systick_from_ns, ns_step, ns_msp, ns_pendsv_count, ns_u
 NSDATA volatile uint32_t ns_irq_regs = 0xffffffffu, ns_irq_ipsr, ns_irq_lr;
 NSDATA volatile uint32_t ns_handler_ipsr, ns_handler_sg_ipsr;
 NSDATA volatile uint32_t ns_bell_seen, ns_lock_claim, ns_lock_st, ns_gpio_out, ns_dcp_x;
+NSDATA volatile uint32_t ns_uart_cr, ns_gpio3_ctrl, ns_gpio5_ctrl, ns_resets;
+NSDATA volatile uint32_t dma_scratch;
 
 uint32_t resume_to;
 volatile uint32_t s_irq_ipsr_after, s_irq_ns_result;
+volatile uint32_t core1_go, core1_lock_st, core1_faults, core1_done;
 static unsigned passes, fails;
 
 extern int sg_add(int a, int b);
@@ -71,6 +96,9 @@ extern uint32_t call_ns(void *fn, uint32_t arg);
 extern uint32_t pend_and_check(uint32_t word, uint32_t bits);
 extern void s_bad_transition(uint32_t target);
 extern uint32_t ns_load(uint32_t a);
+extern void ns_store(uint32_t a, uint32_t v);
+extern void s_store(uint32_t a, uint32_t v);
+extern uint32_t s_load(uint32_t a);
 extern void ns_jump(uint32_t a);
 extern void s_add(void);
 extern uint32_t ns_vectors[];
@@ -136,8 +164,8 @@ void s_unexpected(uint32_t ipsr)
         ;
 }
 
-// Resumes Secure code where the test asked and Non-secure code at the faulting leaf function's
-// return address.
+// BusFaults resume at the faulting leaf function's return address, as do Non-secure code's
+// SecureFaults; Secure code's resume where the test asked.
 void s_on_fault(uint32_t *frame, uint32_t exc_return)
 {
     uint32_t ipsr;
@@ -146,13 +174,14 @@ void s_on_fault(uint32_t *frame, uint32_t exc_return)
     if (ipsr == 5) {
         bf_count++;
         REG(CFSR) = 0xff00;
-    } else {
-        sf_sfsr = REG(SFSR);
-        sf_sfar = REG(SFAR);
-        REG(SFSR) = 0xff;
-        sf_count++;
-        sf_from_ns = !from_secure;
+        frame[6] = frame[5] & ~1u;
+        return;
     }
+    sf_sfsr = REG(SFSR);
+    sf_sfar = REG(SFAR);
+    REG(SFSR) = 0xff;
+    sf_count++;
+    sf_from_ns = !from_secure;
     frame[6] = (from_secure ? resume_to : frame[5]) & ~1u;
 }
 
@@ -241,6 +270,25 @@ NSTEXT uint32_t ns_dcp(uint32_t x)
     __asm volatile("mrrc p5, #0, %0, %1, c8" : "=r"(lo), "=r"(hi));
     ns_dcp_x = lo;
     return hi;
+}
+
+// Peripherals Non-secure code reaches only once Secure code grants them, and only the GPIOs,
+// resets and permissions that grant covers.
+NSTEXT uint32_t ns_peripherals(uint32_t granted)
+{
+    ns_uart_cr = ns_load(UART0_CR);
+    if (!granted)
+        return 0;
+    ns_store(AC_UART0, AC_PASSWORD | 0x03);
+    ns_store(ACCESSCTRL_GPIO_NSMASK0, 0xffffffffu);
+    ns_gpio5_ctrl = ns_load(IO_BANK0_GPIO_CTRL(5));
+    ns_store(IO_BANK0_GPIO_CTRL(5), 2);
+    ns_store(IO_BANK0_GPIO_CTRL(3), 5);
+    ns_gpio3_ctrl = ns_load(IO_BANK0_GPIO_CTRL(3));
+    ns_resets = ns_load(RESETS_RESET);
+    ns_store(RESETS_SET, 1u << 18);
+    ns_load(BOOTRAM);
+    return 0;
 }
 
 NSTEXT uint32_t ns_from_handler(uint32_t x)
@@ -363,6 +411,119 @@ static void test_dcp(void)
     check("Secure DCP (coprocessor 4) untouched", lo | (hi << 16), 0x44441234u);
 }
 
+static uint32_t dma_copy(unsigned ch, uint32_t seccfg, uint32_t src)
+{
+    REG(DMA_SECCFG_CH(ch)) = seccfg;
+    REG(DMA_CH(ch) + 0x00) = src;
+    REG(DMA_CH(ch) + 0x04) = (uint32_t)&dma_scratch;
+    REG(DMA_CH(ch) + 0x08) = 1;
+    REG(DMA_CH(ch) + 0x0c) = 1 | (2u << 2) | (ch << 13) | (0x3fu << 17) | (1u << 23);
+    while (REG(DMA_CH(ch) + 0x0c) & (1u << 26))
+        ;
+    return REG(DMA_CH(ch) + 0x0c) & 0xe0000000u;
+}
+
+// Core 1 stays in Secure state, but with FORCE_CORE_NS set the bus sees it as Non-secure.
+void core1_main(void)
+{
+    REG(SHCSR) |= 1u << 17;
+    while (!core1_go)
+        ;
+    core1_lock_st = REG(SIO_SPINLOCK_ST);
+    unsigned before = bf_count;
+    s_load(SPI0_SSPCR0);
+    core1_faults = bf_count - before;
+    core1_done = 1;
+    for (;;)
+        __asm volatile("wfe");
+}
+
+// The boot ROM's core 1 launch handshake, as the SDK's multicore_launch_core1_raw does it, which
+// must happen before FORCE_CORE_NS gives core 1 the other bank's FIFOs.
+static void launch_core1(void (*entry)(void))
+{
+    const uint32_t cmds[6] = {0, 0, 1, (uint32_t)0x20000000, CORE1_STACK_TOP, (uint32_t)entry};
+    unsigned i = 0;
+    while (i < 6) {
+        uint32_t cmd = cmds[i];
+        if (!cmd) {
+            while (REG(SIO_FIFO_ST) & 1)
+                (void)REG(SIO_FIFO_RD);
+            __asm volatile("sev");
+        }
+        while (!(REG(SIO_FIFO_ST) & 2))
+            ;
+        REG(SIO_FIFO_WR) = cmd;
+        __asm volatile("sev");
+        while (!(REG(SIO_FIFO_ST) & 1))
+            __asm volatile("wfe");
+        i = REG(SIO_FIFO_RD) == cmd ? i + 1 : 0;
+    }
+}
+
+static void test_force_core_ns(void)
+{
+    launch_core1(core1_main);
+    (void)REG(SIO_SPINLOCK5 + 4);
+    (void)NS_REG(SIO_SPINLOCK5 + 8);
+    REG(AC_FORCE_CORE_NS) = AC_PASSWORD | 2;
+    core1_go = 1;
+    while (!core1_done)
+        ;
+    check("FORCE_CORE_NS gives core 1 the Non-secure SIO bank", core1_lock_st, 1u << 7);
+    check("FORCE_CORE_NS keeps core 1 from Secure-only peripherals", core1_faults, 1);
+    REG(SIO_SPINLOCK5 + 4) = 1;
+    NS_REG(SIO_SPINLOCK5 + 8) = 1;
+    REG(AC_FORCE_CORE_NS) = AC_PASSWORD;
+}
+
+static void test_accessctrl(void)
+{
+    unsigned faults = bf_count;
+    call_ns(ns_peripherals, 0);
+    check("Non-secure access to a Secure-only peripheral is a BusFault", bf_count - faults, 1);
+    s_store(AC_SPI0, 0xfe);
+    check("ACCESSCTRL write without the password is a BusFault", bf_count - faults, 2);
+    check("  and changes nothing", REG(AC_SPI0), 0xfc);
+
+    REG(AC_UART0) = AC_PASSWORD | 0xfe;
+    REG(AC_IO_BANK0) = AC_PASSWORD | 0xfe;
+    REG(AC_RESETS) = AC_PASSWORD | 0xfe;
+    REG(IO_BANK0_GPIO_CTRL(5)) = 5;
+    REG(RESETS_CLR) = 1u << 18;
+    faults = bf_count;
+    call_ns(ns_peripherals, 1);
+    check("granted peripheral read by Non-secure code", ns_uart_cr, 0x301);
+    check("Non-secure code may grant its own unprivileged code", REG(AC_UART0), 0xff);
+    check("Non-secure write to GPIO_NSMASK0 ignored", REG(ACCESSCTRL_GPIO_NSMASK0), 1u << 3);
+    check("Secure-only GPIO reads as zero to Non-secure code", ns_gpio5_ctrl, 0);
+    check("Secure-only GPIO ignores Non-secure writes", REG(IO_BANK0_GPIO_CTRL(5)), 5);
+    check("Non-secure GPIO written by Non-secure code", ns_gpio3_ctrl, 5);
+    uint32_t ns_view = (1u << 6) | (1u << 21) | (1u << 26);
+    check("RESETS shows Non-secure code its own peripherals", ns_resets, REG(RESETS_RESET) & ns_view);
+    check("RESETS ignores Non-secure resets of Secure-only ones", REG(RESETS_RESET) & (1u << 18), 0);
+    check("boot RAM is a BusFault to Non-secure code", bf_count - faults, 1);
+
+    REG(IO_BANK0_GPIO_CTRL(3)) = 1;
+    check("Secure-only SPI0 can't be selected on a Non-secure GPIO", REG(IO_BANK0_GPIO_CTRL(3)) & 0x1f, 0x1f);
+    REG(IO_BANK0_GPIO_CTRL(3)) = 2;
+    check("granted UART0 can", REG(IO_BANK0_GPIO_CTRL(3)) & 0x1f, 2);
+    REG(IO_BANK0_GPIO_CTRL(6)) = 1;
+    REG(ACCESSCTRL_GPIO_NSMASK0) = (1u << 3) | (1u << 6);
+    check("granting a GPIO deselects a Secure-only function", REG(IO_BANK0_GPIO_CTRL(6)) & 0x1f, 0x1f);
+
+    check("Secure DMA channel reads a Secure-only timer", dma_copy(0, 3, TIMER0_TIMERAWL), 0);
+    check("  and its level locks", REG(DMA_SECCFG_CH(0)), 7);
+    check("Non-secure DMA channel reads SRAM", dma_copy(1, 1, (uint32_t)&ns_step), 0);
+    check("Non-secure DMA channel can't read the timer", dma_copy(2, 1, TIMER0_TIMERAWL), 0xc0000000u);
+
+    REG(AC_LOCK) = AC_PASSWORD | 1;
+    REG(AC_UART0) = AC_PASSWORD | 0xfc;
+    REG(AC_CFGRESET) = AC_PASSWORD | 1;
+    check("LOCK holds core 0's DMA and its own bits", REG(AC_LOCK), 5);
+    check("  and makes core 0's writes no-ops", REG(AC_UART0), 0xff);
+}
+
 void s_main(void)
 {
     REG(RESETS_CLR) = 1u << 26;
@@ -376,6 +537,8 @@ void s_main(void)
     test_exceptions();
     test_sio();
     test_dcp();
+    test_force_core_ns();
+    test_accessctrl();
     check("no unexpected Non-secure exception", ns_unexpected, 0);
     puts_(fails ? "TZ FAIL: " : "TZ PASS: ");
     putdec(passes);

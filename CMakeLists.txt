@@ -54,6 +54,7 @@ target_compile_options(picocalc_sim_lwip PRIVATE -w)
 
 # Everything but main(), so the Windows build can link two programs without compiling twice.
 add_library(picocalc_sim_objs OBJECT
+    emu/accessctrl.c
     emu/chip.c
     emu/cpu.c
     emu/cyw43.c

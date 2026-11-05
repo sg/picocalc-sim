@@ -85,6 +85,9 @@ struct cpu {
     // or SecureFault.
     uint8_t fault_exc;
     bool ns;
+    // Whether the core's bus accesses are Non-secure: in Non-secure state, or on core 1 while
+    // ACCESSCTRL's FORCE_CORE_NS is set.
+    bool bus_ns;
     uint32_t cyc;
     uint32_t fetch_line;
     uint64_t t;
@@ -142,6 +145,12 @@ void cpu_wake(cpu_t *c, bool event);
 bool cpu_irq_wakes(cpu_t *c);
 // Whether Non-secure state may access a; if not, a SecureFault is flagged.
 bool cpu_ns_access(cpu_t *c, uint32_t a);
+// Whether the SAU and IDAU make a load or store to a Non-secure.
+bool cpu_attr_ns(cpu_t *c, uint32_t a);
+static inline bool cpu_privileged(const cpu_t *c)
+{
+    return c->ipsr != 0 || !((c->ns ? c->control_ns : c->control) & 1);
+}
 void cpu_undefined(cpu_t *c, uint32_t pc, uint32_t op);
 const char *cpu_state_name(const cpu_t *c);
 void cpu_dump(const cpu_t *c);

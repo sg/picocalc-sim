@@ -292,13 +292,13 @@ static inline __attribute__((always_inline)) uint32_t sio_read_bank(cpu_t *c, ui
     }
 }
 
-// Non-secure state always reaches the Non-secure bank, which Secure state reaches through
-// SIO_NONSEC_BASE, a mirror that is a bus error to Non-secure state.
+// Non-secure accesses always reach the Non-secure bank, which Secure ones reach through
+// SIO_NONSEC_BASE, a mirror that is a bus error to Non-secure accesses.
 uint32_t sio_read(cpu_t *c, uint32_t off, bool *ok)
 {
-    if (likely(!c->ns && !(off & 0x20000)) || c->m->rp2040)
+    if (likely(!c->bus_ns && !(off & 0x20000)) || c->m->rp2040)
         return sio_read_bank(c, off & 0xfff, 0, ok);
-    if (c->ns && (off & 0x20000)) {
+    if (c->bus_ns && (off & 0x20000)) {
         *ok = false;
         return 0;
     }
@@ -397,11 +397,11 @@ static inline __attribute__((always_inline)) void sio_write_bank(cpu_t *c, uint3
 
 void sio_write(cpu_t *c, uint32_t off, uint32_t v, bool *ok)
 {
-    if (likely(!c->ns && !(off & 0x20000)) || c->m->rp2040) {
+    if (likely(!c->bus_ns && !(off & 0x20000)) || c->m->rp2040) {
         sio_write_bank(c, off & 0xfff, v, 0, ok);
         return;
     }
-    if (c->ns && (off & 0x20000)) {
+    if (c->bus_ns && (off & 0x20000)) {
         *ok = false;
         return;
     }

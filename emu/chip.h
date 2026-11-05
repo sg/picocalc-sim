@@ -32,6 +32,7 @@ enum {
     IRQ_USBCTRL = 14,
     IRQ_PIO0_0 = 15,
     IRQ_IO_BANK0 = 21,
+    IRQ_IO_BANK0_NS = 22,
     IRQ_IO_QSPI = 23,
     IRQ_SIO_FIFO = 25,
     IRQ_SIO_BELL = 26,
@@ -206,7 +207,7 @@ typedef struct {
     uint32_t intr, inte[4], intf[4];
     uint32_t timer[4];
     uint32_t sniff_ctrl, sniff_data;
-    uint32_t seccfg[16], misc[8];
+    uint32_t seccfg[16], seccfg_irq[4], seccfg_misc, misc[8];
     emu_event_t ev;
     bool running;
 } dma_t;
@@ -391,6 +392,14 @@ struct chip {
     uint32_t syscfg[8];
     uint32_t busctrl[12];
     uint32_t accessctrl[64];
+    // Both timers take any Secure access from either core, so bus_read's quick path to them need
+    // not filter; and every endpoint takes Secure privileged accesses from either core, also when
+    // the SAU makes memory Non-secure, so those need no filtering at all.
+    bool ac_timer_open, ac_sp_open;
+    // Who made the bus access a peripheral is handling, for the ones that filter by its security and
+    // privilege themselves: a core, or else the DMA or the simulator at the given SECCFG level.
+    cpu_t *access_core;
+    uint32_t access_seccfg;
     uint32_t ticks[18];
     // tick_ps's last answer for each tick generator, keyed on what it was computed from.
     struct {
@@ -639,7 +648,37 @@ bool pio_drives(chip_t *m, int idx, unsigned pin, bool *level);
 
 void dma_reset(dma_t *d);
 uint32_t dma_read(chip_t *m, uint32_t off, bool peek);
-void dma_write(chip_t *m, uint32_t off, uint32_t v);
+// Returns false for a write the DMA refuses with a bus error.
+bool dma_write(chip_t *m, uint32_t off, uint32_t v);
+// A DMA channel's transfer, filtered at the channel's security level by ACCESSCTRL.
+uint32_t dma_bus_read(chip_t *m, uint32_t addr, int size, uint32_t seccfg, bool *ok);
+void dma_bus_write(chip_t *m, uint32_t addr, uint32_t v, int size, uint32_t seccfg, bool *ok);
+
+void accessctrl_reset(chip_t *m, bool full);
+uint32_t accessctrl_read(chip_t *m, uint32_t off);
+// Returns false for the bus error ACCESSCTRL gives a write it refuses; c is NULL for the DMA.
+bool accessctrl_write(chip_t *m, cpu_t *c, uint32_t addr, uint32_t data);
+// Whether the bus filters let a core's load or store, or a DMA channel's transfer, through.
+bool accessctrl_core_allows(cpu_t *c, uint32_t a);
+bool accessctrl_dma_allows(chip_t *m, uint32_t a, uint32_t seccfg);
+// The RESETS bits of the peripherals Non-secure code of that privilege can reach.
+uint32_t accessctrl_resets_ns_mask(chip_t *m, bool priv);
+bool accessctrl_ns_reaches(chip_t *m, unsigned ep, bool priv);
+// Whether function f may be selected on a pin, which it may not if the pin is Non-secure and
+// the peripheral is not.
+bool accessctrl_func_allowed(chip_t *m, unsigned pin, unsigned f);
+bool gpio_ns(const chip_t *m, unsigned pin);
+void gpio_security_changed(chip_t *m);
+
+static inline bool access_ns(const chip_t *m)
+{
+    return m->access_core ? m->access_core->bus_ns : !(m->access_seccfg & 2);
+}
+
+static inline bool access_priv(const chip_t *m)
+{
+    return m->access_core ? cpu_privileged(m->access_core) : (m->access_seccfg & 1);
+}
 void dma_kick(chip_t *m);
 
 void pwm_reset(pwm_t *p);

@@ -392,7 +392,15 @@ the command line is written again and the card stays in the slot (unlike the men
   one state to the other, which stack and clear the Secure registers before a Non-secure handler
   runs. Non-secure code is always stepped one instruction at a time, as each access it makes is
   checked against the SAU and IDAU; Secure code keeps the blocks and native code.
-  `tests/trustzone` checks all this from both states.
+- **ACCESSCTRL.** Its bus filters refuse, with a bus error, core and DMA accesses from a manager,
+  security level or privilege an endpoint does not admit, at the datasheet's reset permissions (boot
+  RAM is Secure only); its own registers want the password and a privileged writer, Non-secure code
+  may pass on only what it was granted, and LOCK, CFGRESET and FORCE_CORE_NS work. GPIO_NSMASK
+  decides what Non-secure code sees of the SIO GPIO registers and the IO bank and pads, including
+  RP2350-E3 on an A2 in QFN-60; which GPIOs' interrupts go to IO_IRQ_BANK0_NS; and that Secure-only
+  peripherals cannot be selected on Non-secure GPIOs. RESETS shows Non-secure code only its
+  peripherals' resets, and DMA channels transfer at their SECCFG levels, which lock once a channel
+  is programmed. `tests/trustzone` checks this and the security extension from both states.
 - **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP), whose
   Secure and Non-secure instances are coprocessors 4 and 5, is modelled by what each canned
   operation computes rather than its internal datapath: operands are captured as doubles and the
@@ -487,10 +495,12 @@ Not emulated yet, or not faithfully:
 - **RISC-V** images for the RP2350 are not supported.
 - **Windows:** `picocalc-sim-mkcard.exe` reads host file names in the system code page, so files
   whose names are not plain ASCII may not copy.
-- Privilege is not enforced, so unprivileged code can do whatever privileged code can. The MPU is
-  consulted only by TT, not by loads, stores or fetches. ACCESSCTRL keeps its registers and its
-  GPIO_NSMASK masks the Non-secure SIO, but its bus filters don't refuse any access yet. OTP reads
-  as unprogrammed apart from the chip ID.
+- Privilege matters only to ACCESSCTRL and TT: otherwise unprivileged code can do whatever
+  privileged code can. The MPU is consulted only by TT, not by loads, stores or fetches. ACCESSCTRL
+  does not filter instruction fetches, or Secure loads and stores that the cores make straight to
+  SRAM, ROM or cached XIP; PIO blocks still see Secure-only GPIOs and each other, DMA channels still
+  see Secure-only peripherals' DREQs, and the DMA's own MPU and the security of its registers and
+  interrupts are not modelled. OTP reads as unprogrammed apart from the chip ID.
 - Assumptions about the keyboard controller I could not check against hardware are marked in
   `sim/devices/southbridge.c` (hold after 300 ms, release codes).
 
