@@ -344,6 +344,30 @@ typedef struct {
     bool flash_crm;
 } rp2040_t;
 
+// The USB controller's registers and the state behind them, for device mode; host mode keeps its
+// registers but moves nothing on the bus.
+typedef struct {
+    uint32_t addr_endp[16];
+    uint32_t main_ctrl, sof_wr, sof_rd, sie_ctrl, sie_status, int_ep_ctrl;
+    uint32_t buff_status, buff_which, ep_abort, ep_abort_done, ep_stall_arm, nak_poll, stall_nak;
+    uint32_t muxing, pwr, phy_direct, phy_override, phy_trim, linestate_tuning, inte, intf;
+    uint32_t sof_ts_last, ep_tx_error, ep_rx_error, sm_watchdog;
+    // INTR sources that have no SIE_STATUS bit of their own to clear.
+    bool sof_irq, conn_irq, susp_irq;
+    bool connected, suspended, listening, pullup;
+    unsigned line;
+    // Each double-buffered endpoint's buffer select; a second finished buffer waiting for its
+    // BUFF_STATUS bit to be cleared, and which buffer it was; and the odd buffers of endpoints that
+    // interrupt every two.
+    uint32_t buf_sel, queued, queued_which, odd_done;
+    // When the bus last carried anything, which suspends the device 3 ms later.
+    uint64_t activity_t;
+    emu_event_t idle_ev;
+    // The far end of the cable: whether a host is there and what it drives.
+    bool host_present, host_reset;
+    struct usb_host *host;
+} usb_t;
+
 // The RP2350 clock generators, in register order.
 enum { CLK_GPOUT0, CLK_GPOUT1, CLK_GPOUT2, CLK_GPOUT3, CLK_REF, CLK_SYS, CLK_PERI, CLK_HSTX, CLK_USB, CLK_ADC };
 
@@ -482,7 +506,7 @@ struct chip {
     uint32_t xip_mru[1024];
 
     uint32_t adc_cs, adc_result, adc_fcs, adc_div, adc_inte, adc_intf;
-    uint32_t usb_regs[64];
+    usb_t usb;
 
     struct {
         uint64_t x_bits, y_bits;
@@ -694,6 +718,24 @@ void xipctrl_write(chip_t *m, uint32_t off, uint32_t v);
 void xip_flush(chip_t *m);
 void flash_erase(chip_t *m, uint32_t off, uint32_t len);
 void flash_program(chip_t *m, uint32_t off, const uint8_t *src, uint32_t len);
+
+// Answers to a host's transaction: a handshake, or USB_NONE for no answer at all.
+enum { USB_ACK, USB_NAK, USB_STALL, USB_NONE };
+void usb_reset(chip_t *m);
+uint32_t usb_read(chip_t *m, uint32_t off, bool peek);
+void usb_write(chip_t *m, uint32_t off, uint32_t v, unsigned alias);
+void usb_clocks_changed(chip_t *m);
+// The bus as the host drives it. usb_bus_in's buf holds up to 1023 bytes, the largest packet.
+void usb_bus_attach(chip_t *m, bool present);
+void usb_bus_reset(chip_t *m, bool active);
+void usb_bus_sof(chip_t *m, unsigned frame);
+int usb_bus_setup(chip_t *m, unsigned addr, const uint8_t pkt[8]);
+int usb_bus_in(chip_t *m, unsigned addr, unsigned ep, uint8_t *buf, unsigned *len, unsigned *pid);
+int usb_bus_out(chip_t *m, unsigned addr, unsigned ep, unsigned pid, const uint8_t *data, unsigned len);
+void usbhost_init(chip_t *m);
+void usbhost_free(chip_t *m);
+// The device's pull-up has appeared on D+ or gone.
+void usbhost_pullup(chip_t *m, bool on);
 
 void cyw43_init(chip_t *m);
 void cyw43_free(chip_t *m);

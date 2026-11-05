@@ -1149,7 +1149,7 @@ uint32_t rp2040_periph_read(chip_t *m, uint32_t addr, bool peek, bool *ok)
     case 0x50000000: return dma_read(m, off, peek);
     case 0x50100000:
         if ((addr & 0xf0000) == 0x10000)
-            return m->usb_regs[(off >> 2) & 63];
+            return usb_read(m, off, peek);
         break;
     case 0x50200000: return pio_read(m, &m->pio[0], off, peek);
     case 0x50300000: return pio_read(m, &m->pio[1], off, peek);
@@ -1242,12 +1242,6 @@ void rp2040_periph_write(chip_t *m, uint32_t addr, uint32_t v, bool *ok)
     }
     switch (addr & 0xfff00000u) {
     case 0x50000000: dma_write(m, off, v); return;
-    case 0x50100000:
-        if ((addr & 0xf0000) == 0x10000) {
-            m->usb_regs[(off >> 2) & 63] = v;
-            return;
-        }
-        break;
     case 0x50200000: pio_write(m, &m->pio[0], off, v); return;
     case 0x50300000: pio_write(m, &m->pio[1], off, v); return;
     case 0x50400000: return;

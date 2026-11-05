@@ -133,6 +133,20 @@ void picocalc_sim_bootsel_button(bool held)
     atomic_store(&bootsel_held, held);
 }
 
+void picocalc_sim_usb_plug(bool plugged)
+{
+    picocalc_sim_machine_lock();
+    if (chip_ready && plugged != (chip.usb.host != NULL)) {
+        if (plugged)
+            usbhost_init(&chip);
+        else
+            usbhost_free(&chip);
+        gpio_refresh_mask(&chip, 1ull << 24);
+        picocalc_sim_log("usb: cable %s", plugged ? "plugged into a host" : "unplugged");
+    }
+    picocalc_sim_machine_unlock();
+}
+
 // ---------------------------------------------------------------------------------------------
 // Flash persistence
 
@@ -487,8 +501,10 @@ static void teardown(void)
     picocalc_sim_machine_lock();
     picocalc_board_free();
     picocalc_sim_machine_unlock();
-    if (chip_ready)
+    if (chip_ready) {
         cyw43_free(&chip);
+        usbhost_free(&chip);
+    }
     devices_detach_all();
     if (net_up)
         picocalc_sim_net_shutdown();
@@ -535,6 +551,8 @@ static bool start(uf2_file_t *f)
         return false;
     chip_init(&chip, b);
     chip_ready = true;
+    if (picocalc_sim_opts.usb)
+        usbhost_init(&chip);
     chip.trace = picocalc_sim_opts.trace;
     g_fast_bus = picocalc_sim_opts.fast;
     if (!picocalc_sim_opts.flash_path) {

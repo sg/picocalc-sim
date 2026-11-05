@@ -53,6 +53,8 @@ static void usage(const char *argv0)
            "                         let connections to HOSTPORT on the host (127.0.0.1 unless ADDR is\n"
            "                         given; * for all interfaces) reach the firmware's TCP PORT; repeatable\n"
            "      --no-wifi          leave the W boards' radio out, as if it never answered\n"
+           "      --usb              plug the board's USB port into a host that enumerates the device the\n"
+           "                         firmware presents and logs what it finds\n"
            "      --trace            log faults, unknown ROM calls and bus errors\n"
            "\n"
            "In the window, the menus change these settings and restart the machine. F11 saves a\n"
@@ -110,6 +112,7 @@ int main(int argc, char **argv)
         OPT_WIFI_AP,
         OPT_FORWARD,
         OPT_NO_WIFI,
+        OPT_USB,
         OPT_VOLUME,
         OPT_MUTE,
         OPT_WAV,
@@ -138,6 +141,7 @@ int main(int argc, char **argv)
         {"wifi-ap", required_argument, NULL, OPT_WIFI_AP},
         {"forward", required_argument, NULL, OPT_FORWARD},
         {"no-wifi", no_argument, NULL, OPT_NO_WIFI},
+        {"usb", no_argument, NULL, OPT_USB},
         {"volume", required_argument, NULL, OPT_VOLUME},
         {"mute", no_argument, NULL, OPT_MUTE},
         {"wav", required_argument, NULL, OPT_WAV},
@@ -180,6 +184,7 @@ int main(int argc, char **argv)
                 picocalc_sim_opts.forwards[picocalc_sim_opts.forward_count++] = optarg;
             break;
         case OPT_NO_WIFI: picocalc_sim_opts.no_wifi = true; break;
+        case OPT_USB: picocalc_sim_opts.usb = true; break;
         case OPT_VOLUME: {
             int v = atoi(optarg);
             picocalc_sim_opts.volume = v < 0 ? 0 : v > 100 ? 100 : v;

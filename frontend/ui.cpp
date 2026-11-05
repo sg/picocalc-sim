@@ -595,6 +595,12 @@ void machine_tab()
         remember_on("unthrottled", picocalc_sim_opts.unthrottled);
     if (ImGui::Checkbox("Print what the firmware sends on UART0", &picocalc_sim_opts.console))
         remember_on("console", picocalc_sim_opts.console);
+    if (ImGui::Checkbox("USB port plugged into a host", &picocalc_sim_opts.usb)) {
+        picocalc_sim_usb_plug(picocalc_sim_opts.usb);
+        remember_on("usb", picocalc_sim_opts.usb);
+    }
+    ImGui::SetItemTooltip("The host resets and enumerates the USB device the firmware presents, and the Log shows "
+                          "what it found");
 }
 
 void wifi_tab()

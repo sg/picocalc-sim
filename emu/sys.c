@@ -54,6 +54,7 @@ void chip_update_clocks(chip_t *m)
         rp2040_update_clocks(m);
         timer_retime(m);
         watchdog_retime(m);
+        usb_clocks_changed(m);
         return;
     }
 
@@ -109,6 +110,7 @@ void chip_update_clocks(chip_t *m)
     m->adc_hz = (m->clk[CLK_ADC].ctrl & (1u << 11)) ? div_int(aux_usb_like(m, m->clk[CLK_ADC].ctrl), m->clk[CLK_ADC].div, 0x000f0000u) : 0;
     timer_retime(m);
     watchdog_retime(m);
+    usb_clocks_changed(m);
 }
 
 static uint64_t fc0_source_hz(chip_t *m, uint32_t src)
@@ -186,7 +188,7 @@ static void reset_peripherals(chip_t *m, uint32_t newly)
     if (newly & (1u << 27))
         pl011_reset(&m->uart[1], 1);
     if (newly & (1u << 28))
-        memset(m->usb_regs, 0, sizeof(m->usb_regs));
+        usb_reset(m);
     if (newly & (3u << 14))
         chip_update_clocks(m);
 }

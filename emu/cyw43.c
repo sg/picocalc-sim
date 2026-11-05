@@ -590,8 +590,10 @@ static int32_t get_var(cyw43_t *w, const char *name, uint8_t *buf, size_t len)
         put_string(tmp, sizeof(tmp), "wl0: picocalc-sim CYW43439 model 7.95.61 FWID 01-picocalc-sim\n");
     } else if (!strcmp(name, "mcast_list")) {
         memcpy(tmp, w->mcast, sizeof(w->mcast));
-    } else if (!strcmp(name, "ccgpioin") || !strcmp(name, "bss") || !strcmp(name, "maxassoc") ||
-               !strcmp(name, "clmload_status")) {
+    } else if (!strcmp(name, "ccgpioin")) {
+        // The W boards sense VBUS on the radio's GPIO 2.
+        wr32(tmp, w->m->usb.host_present ? 1u << 2 : 0);
+    } else if (!strcmp(name, "bss") || !strcmp(name, "maxassoc") || !strcmp(name, "clmload_status")) {
         wr32(tmp, 0);
     } else {
         var_t *v = find_var(w, name, false);

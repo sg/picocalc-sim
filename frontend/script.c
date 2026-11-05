@@ -10,6 +10,7 @@
 // Drives the keyboard from a file, one command per line:
 //   wait <ms>            type <text>          key <chord>
 //   screenshot <file>    restart              quit [code]          # comment
+//   usb on|off           (plugs the board's USB port into a host, or unplugs it)
 // type takes the rest of the line with C escapes (\n \t \e \b \\); key takes chords such as
 // ctrl+c, shift+up, brk or f6.
 
@@ -81,6 +82,9 @@ static void *script_thread(void *arg)
             picocalc_sim_request_restart();
             while (picocalc_sim_machine_starts() == n && !picocalc_sim_quit_requested(NULL))
                 picocalc_sim_sleep_ns(10000000ull);
+        } else if (!strcmp(cmd, "usb") && (!strcmp(rest, "on") || !strcmp(rest, "off"))) {
+            picocalc_sim_opts.usb = !strcmp(rest, "on");
+            picocalc_sim_usb_plug(picocalc_sim_opts.usb);
         } else if (!strcmp(cmd, "quit")) {
             fclose(f);
             picocalc_sim_request_quit(*rest ? atoi(rest) : 0);

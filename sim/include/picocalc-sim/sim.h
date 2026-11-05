@@ -40,6 +40,8 @@ typedef struct picocalc_sim_options {
     int battery;
     bool charging;
     bool no_wifi;
+    // A host on the far end of the board's USB cable.
+    bool usb;
     const char *wifi_aps[16];
     int wifi_ap_count;
     const char *forwards[16];
@@ -82,6 +84,8 @@ void picocalc_sim_power_button(void);
 void picocalc_sim_bootsel_button(bool held);
 // Writes a UF2 file into flash as BOOTSEL's mass-storage drive would, then reboots.
 bool picocalc_sim_flash_uf2(const char *path, char *err, size_t errlen);
+// Plugs the board's USB port into a host, or unplugs it, while the machine runs.
+void picocalc_sim_usb_plug(bool plugged);
 
 void picocalc_sim_request_quit(int code);
 bool picocalc_sim_quit_requested(int *code);

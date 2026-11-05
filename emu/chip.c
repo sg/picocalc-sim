@@ -336,7 +336,7 @@ static uint32_t ahb_reg_read(chip_t *m, uint32_t addr, bool peek, bool *ok)
     case 0x50000000: return dma_read(m, off, peek);
     case 0x50100000:
         if ((addr & 0xf0000) == 0x10000)
-            return m->usb_regs[(off >> 2) & 63];
+            return usb_read(m, off, peek);
         break;
     case 0x50200000: return pio_read(m, &m->pio[0], off, peek);
     case 0x50300000: return pio_read(m, &m->pio[1], off, peek);
@@ -357,12 +357,6 @@ static void ahb_reg_write(chip_t *m, uint32_t addr, uint32_t v, bool *ok)
         if (!dma_write(m, off, v))
             *ok = false;
         return;
-    case 0x50100000:
-        if ((addr & 0xf0000) == 0x10000) {
-            m->usb_regs[(off >> 2) & 63] = v;
-            return;
-        }
-        break;
     case 0x50200000: pio_write(m, &m->pio[0], off, v); return;
     case 0x50300000: pio_write(m, &m->pio[1], off, v); return;
     case 0x50400000: pio_write(m, &m->pio[2], off, v); return;
@@ -389,6 +383,11 @@ static void periph_write(chip_t *m, uint32_t addr, uint32_t v, bool *ok)
 {
     if (!m->rp2040 && addr >= 0x40130000u && addr < 0x40140000u)
         return;
+    // The USB controller's write-one-to-clear bits need the alias itself, not a read-modify-write.
+    if ((addr & 0xffff0000u) == 0x50110000u) {
+        usb_write(m, addr & 0xffc, v, (addr >> 12) & 3);
+        return;
+    }
     uint32_t a = addr & ~0x3003u;
     unsigned alias = (addr >> 12) & 3;
     bool apb = (addr >> 28) == 4;
@@ -922,7 +921,7 @@ void chip_reset(chip_t *m, bool watchdog)
     m->xip_ctrl = 0x83;
     xip_flush(m);
     m->adc_cs = m->adc_result = m->adc_fcs = m->adc_div = m->adc_inte = m->adc_intf = 0;
-    memset(m->usb_regs, 0, sizeof(m->usb_regs));
+    usb_reset(m);
     memset(m->dcp, 0, sizeof(m->dcp));
     dcp_reset();
     rcp_reset(m);

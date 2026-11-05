@@ -84,14 +84,15 @@ builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver 
 board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-test.sh`), transfers
 files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`), and runs `tests/trustzone`,
 a bare-metal check of the security extension, which none of that firmware uses
-(`ci/trustzone-test.sh`; `tests/trustzone/build.sh` rebuilds its UF2 with `arm-none-eabi-gcc`), then
+(`ci/trustzone-test.sh`; `tests/trustzone/build.sh` rebuilds its UF2 with `arm-none-eabi-gcc`), and
+checks that the boot ROMs' USB boot enumerates on the emulated cable (`ci/usb-test.sh`), then
 cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `picocalc-sim.exe`
 is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
 the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`), and
-it boots and restarts the RP2350 firmware and runs the TrustZone test again on Raspberry Pi's A2 and
-A4 RP2350 ROMs (`ci/fetch-rp2350-rom.sh`); the ROMs are used only for the tests and are not packed
-into the release. If they pass, it stages a draft release with
+it boots and restarts the RP2350 firmware and runs the TrustZone and USB tests again on Raspberry
+Pi's A2 and A4 RP2350 ROMs (`ci/fetch-rp2350-rom.sh`); the ROMs are used only for the tests and are
+not packed into the release. If they pass, it stages a draft release with
 `picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`. Pushing a commit
 runs nothing; `build.yml` runs the same tests on a branch when started by hand from the Actions
 page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux
@@ -169,10 +170,10 @@ build/picocalc-sim --rp2350-rom bootrom-combined.bin ../pcsh/build-pico2/pcsh.uf
 ```
 
 Images in flash or RAM and uf2loader work on it. Its USB boot, which the BOOTSEL button, a reboot
-into BOOTSEL and an empty flash all lead to, runs in Non-secure state as on the chip and waits for a
-USB host that never connects (see [Status](#status)); F12 resets the board, and Flash UF2 writes an
-image as before. The emulated chip becomes the stepping the ROM was built for: an A2 with the A2
-ROM, and an A3 with the A3 or A4 ROM, since A4 changed only the ROM.
+into BOOTSEL and an empty flash all lead to, runs in Non-secure state as on the chip, and a host on
+the cable enumerates it as the RP2350 Boot device (see [USB](#usb)); F12 resets the board, and Flash
+UF2 writes an image as before. The emulated chip becomes the stepping the ROM was built for: an A2
+with the A2 ROM, and an A3 with the A3 or A4 ROM, since A4 changed only the ROM.
 
 ### uf2loader
 
@@ -236,6 +237,26 @@ ftp -p 127.0.0.1 2121
 `--no-wifi` leaves the radio out, as if it never answered. `PICOCALC_SIM_WIFI_DEBUG=1` logs the
 driver's ioctls, the chip's events and every bus command.
 
+### USB
+
+`--usb`, or USB port plugged into a host in Settings, connects the board's USB port to a computer.
+The cable brings VBUS, which the board senses (GPIO24 on the Pico, Pico 2 and Pimoroni Plus 2, the
+radio's WL_GPIO2 on the W boards). When the firmware connects its USB device, the host waits for the
+connection to settle, resets the port and enumerates the device as Linux does: it reads the device,
+configuration and string descriptors, gives the device an address and sets its configuration. It
+logs what it found and then keeps the bus awake with a start-of-frame packet every millisecond:
+
+```
+usb: 2e8a:000f "RP2350 Boot" from "Raspberry Pi", serial "E3502C418F3B1D5A", USB 2.10; interfaces 0 mass storage, 1 vendor-specific
+```
+
+That is Raspberry Pi's RP2350 ROM in BOOTSEL; the RP2040's ROM gives `2e8a:0003 "RP2 Boot"`, and
+firmware built with the SDK's USB stdio gives its CDC serial port. The host does nothing with the
+interfaces yet, so the boot ROM's drive and a firmware's serial port go unused. A device that
+disconnects, as across a reset, is enumerated again when it reconnects. The cable can be plugged
+and unplugged while the firmware runs, from Settings or a script's `usb on` and `usb off`.
+`PICOCALC_SIM_USB_DEBUG=1` logs each request and its outcome.
+
 ### Sound
 
 Sound is what the mainboard's audio circuit makes of GP26 (left) and GP27 (right): per its
@@ -285,7 +306,8 @@ without quitting:
 
 Settings has the board, the RP2040 and RP2350 boot ROMs, where the flash is kept, fast transfers,
 tracing, the radio, access points and port forwards, which take effect at the next restart, and
-throttling, the UART0 console, battery, sound and the screenshot folder, which take effect at once.
+throttling, the UART0 console, the USB cable, battery, sound and the screenshot folder, which take
+effect at once.
 Restart is the PicoCalc's power switch: each board's flash keeps what it holds (one board's flash is
 not another's, as if the Pico were swapped), and the UF2, `--erase-flash` and `--wav` from the
 command line apply only to the first start. If the machine cannot start, say for a missing boot ROM
@@ -310,11 +332,11 @@ scale = 3
 
 The keys are `board`, `rom`, `rp2350-rom`, `flash` (a file, `none` or `default`), `card` (an image
 or `none`), `fast`, `unthrottled`, `trace`, `console`, `no-wifi`, `wifi-ap` and `forward` (repeated
-for each), `battery`, `charging`, `volume`, `mute`, `scale` and `screenshot-dir`; switches take `on`
-or `off`. An option given on the command line wins for that run and is not written to the file
-unless it is then changed in the window; the board is the exception, as the one last run is always
-kept. picocalc-sim rewrites the file as settings change, keeping keys it does not know but not
-comments. Headless runs ignore it, so scripts and CI see only their own options.
+for each), `usb`, `battery`, `charging`, `volume`, `mute`, `scale` and `screenshot-dir`; switches
+take `on` or `off`. An option given on the command line wins for that run and is not written to the
+file unless it is then changed in the window; the board is the exception, as the one last run is
+always kept. picocalc-sim rewrites the file as settings change, keeping keys it does not know but
+not comments. Headless runs ignore it, so scripts and CI see only their own options.
 
 ### Options
 
@@ -335,6 +357,7 @@ comments. Headless runs ignore it, so scripts and CI see only their own options.
 | `--wifi-ap SSID[:PASSWORD]` | a virtual access point (repeatable); without one, any network joins |
 | `--forward [ADDR:]HOSTPORT:PORT` | let host connections to HOSTPORT reach the firmware's TCP PORT (repeatable) |
 | `--no-wifi` | leave the W boards' radio out |
+| `--usb` | plug the board's USB port into a host that enumerates the firmware's device (see [USB](#usb)) |
 | `--trace` | log faults, unknown ROM calls and bus errors, and dump the cores on exit |
 
 ### Scripts and headless runs
@@ -355,7 +378,8 @@ quit 0
 `type` takes the rest of the line with C escapes and holds Shift wherever the PicoCalc needs it.
 `key` takes chords such as `ctrl+alt+del`, `shift+up`, `brk` or `f6`. `restart` stops the
 machine and starts it again as a fresh launch with the same options would, so the UF2 given on
-the command line is written again and the card stays in the slot (unlike the menu's Restart). `quit N` sets the exit code.
+the command line is written again and the card stays in the slot (unlike the menu's Restart).
+`usb on` and `usb off` plug the USB cable in and pull it out. `quit N` sets the exit code.
 
 ## How it works
 
@@ -448,6 +472,13 @@ the command line is written again and the card stays in the slot (unlike the men
   pace the host. Frames go to `sim/net`, which answers ARP, DHCP, DNS and ping itself, relays UDP
   through a host socket per firmware port, and terminates TCP at a copy of lwIP running as the
   far end of every connection, each relayed over a host socket.
+- **USB.** `emu/usb.c` is the controller as a full-speed device. Its write-one-to-clear bits clear
+  through the atomic aliases as well, and it reads the endpoint and buffer control words in DPRAM
+  and writes them back as each transaction completes, with double buffering, interrupts per buffer
+  or per two, stalls, NAKs, aborts, and suspend after 3 ms without bus activity. `emu/usbhost.c` is
+  the host on the cable. Each of its transactions happens at once but is followed by the time its
+  packets would take at 12 Mb/s, and one the device NAKs is retried sooner or later depending on how
+  long the device has had nothing.
 - **Sound.** `emu/pinwave.c` records the waveform of the audio pins without touching the chip: a
   PWM output as its slice settings, so a fast carrier costs nothing per cycle, and any other
   driver as edges stamped with the time the core or PIO state machine made them. It integrates
@@ -486,11 +517,11 @@ Not emulated yet, or not faithfully:
   at 12 mA fast slew; other pad settings are interpolated, and quad mode is unmeasured. A read
   that lands within a fraction of a nanosecond of a change, which varies from read to read on the
   board, gives the same answer every time here.
-- **USB** enumerates nothing: the controller's registers exist but no host is connected, so the
-  RP2350 ROM's USB boot waits in Non-secure state as on a board with nothing plugged in.
+- **USB** has the controller only in device mode (host mode keeps its registers but moves nothing),
+  and the host on the cable only enumerates: no class driver uses the device's interfaces. The
+  stand-in RP2350 ROM has no USB boot; Raspberry Pi's has.
 - **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
-  RP2040, and the ROM's USB boot waits for a host that never comes, as on a Pico with nothing
-  plugged in. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
+  RP2040. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
   flash reads give zeros; what a real RP2040 returns there is unverified.
 - **RISC-V** images for the RP2350 are not supported.
 - **Windows:** `picocalc-sim-mkcard.exe` reads host file names in the system code page, so files
