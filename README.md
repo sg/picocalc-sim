@@ -365,7 +365,9 @@ the command line is written again and the card stays in the slot (unlike the men
 - **Coprocessors.** The GPIO coprocessor is complete. The double-precision coprocessor (DCP) is
   modelled by what each canned operation computes rather than its internal datapath: operands are
   captured as doubles and the final read returns the IEEE result.
-- **Boot ROM.** Raspberry Pi's RP2350 ROM can't be redistributed, so `emu/rom.c` replaces it. It follows
+- **Boot ROM.** On the RP2350, `emu/rom.c` stands in for the boot ROM, so no ROM file is needed.
+  Raspberry Pi publishes its own ROM under a BSD license, but running it would take parts of the
+  chip the emulator doesn't model, such as the Arm security extension. The stand-in follows
   the real boot path (watchdog and reboot parameters, the picobin block loop, embedded and
   standalone partition tables, ATRANS address translation, load maps, BOOTSEL when nothing
   boots), runs core 1's launch handshake, and implements the ROM API the SDK and uf2loader call:
