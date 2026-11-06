@@ -10,6 +10,8 @@ import sys
 import time
 
 USBIP_VERSION = 0x0111
+URB_SHORT_NOT_OK = 0x1
+EPIPE, EREMOTEIO = -32, -121
 
 
 class Client:
@@ -109,6 +111,12 @@ def endpoints(cfg, klass):
     return iface, eps
 
 
+def clear_halt(c, ep):
+    c.control(0x02, 1, 0, ep, 0)
+
+
+# One command as Linux's usb-storage runs it: a reply shorter than asked for ends the data stage
+# with -EREMOTEIO, and a halted pipe is cleared before the CSW is read.
 def scsi(c, eps, cb, length, data_in=True, data=b""):
     c.tag = getattr(c, "tag", 0) + 1
     cbw = struct.pack("<IIIBBB", 0x43425355, c.tag, length, 0x80 if data_in else 0, 0, len(cb)) + cb.ljust(16, b"\0")
@@ -118,12 +126,19 @@ def scsi(c, eps, cb, length, data_in=True, data=b""):
     got = b""
     if length:
         if data_in:
-            status, got, _ = c.xfer(eps["in"], True, length)
+            status, got, _ = c.xfer(eps["in"], True, length, flags=URB_SHORT_NOT_OK)
+            if status == EREMOTEIO:
+                status = 0
         else:
             status, _, _ = c.xfer(eps["out"], False, length, data=data)
-        if status:
+        if status == EPIPE:
+            clear_halt(c, (0x80 | eps["in"]) if data_in else eps["out"])
+        elif status:
             raise RuntimeError("SCSI data stage failed: %d" % status)
     status, csw, _ = c.xfer(eps["in"], True, 13)
+    if status == EPIPE:
+        clear_halt(c, 0x80 | eps["in"])
+        status, csw, _ = c.xfer(eps["in"], True, 13)
     if status or len(csw) != 13 or struct.unpack("<I", csw[:4])[0] != 0x53425355:
         raise RuntimeError("bad CSW")
     return csw[12], got
@@ -136,8 +151,14 @@ def drive(c, cfg, uf2):
     st, cap = scsi(c, eps, bytes([0x25] + [0] * 9), 8)
     blocks = struct.unpack(">I", cap[:4])[0] + 1
     st, mbr = scsi(c, eps, bytes([0x28, 0, 0, 0, 0, 0, 0, 0, 1, 0]), 512)
-    print("drive: %s %s, %u MB, sector 0 ends %02x%02x" % (inq[8:16].decode().strip(), inq[16:32].decode().strip(),
-                                                           blocks >> 11, mbr[510], mbr[511]))
+    # Linux asks for 192 bytes of every mode page to find write protection; the boot ROMs send
+    # less, then halt the pipe before the CSW.
+    st, modes = scsi(c, eps, bytes([0x1A, 0, 0x3F, 0, 192, 0]), 192)
+    if st or len(modes) < 4:
+        raise RuntimeError("MODE SENSE failed")
+    print("drive: %s %s, %u MB, sector 0 ends %02x%02x, %s" % (inq[8:16].decode().strip(), inq[16:32].decode().strip(),
+                                                               blocks >> 11, mbr[510], mbr[511],
+                                                               "read only" if modes[2] & 0x80 else "writable"))
     if mbr[510:512] != b"\x55\xaa":
         raise RuntimeError("sector 0 has no signature")
     if not uf2:

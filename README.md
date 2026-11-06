@@ -337,6 +337,10 @@ disconnects, as one restarting into a new UF2 does, ends the import as unpluggin
 computer then attaches again. One computer at a time can have it, isochronous transfers are not
 carried, and `PICOCALC_SIM_USB_DEBUG=1` logs each URB.
 
+Attached to Linux 6.8 this way, the Pico 2's and Pico's boot ROMs mount as drives that a UF2 can be
+copied onto, picotool reads and loads them over PICOBOOT and sends running firmware back to
+BOOTSEL, and `tests/usbserial` appears as `/dev/ttyACM0`.
+
 ### Sound
 
 Sound is what the mainboard's audio circuit makes of GP26 (left) and GP27 (right): per its
@@ -616,8 +620,8 @@ Not emulated yet, or not faithfully:
   and the host on the cable drives only a CDC ACM serial port and a mass storage drive, the first of
   each: other interfaces are for a computer attached over USB/IP, and the drive is read only to
   mount it and written only to copy a UF2. USB/IP carries no isochronous transfers, and has been
-  checked here with `usbip list` and a client of its own (`ci/usbip-client.py`) rather than a kernel
-  attach. The stand-in RP2350 ROM (`--rp2350-rom stand-in`) has no USB boot.
+  checked with Linux's own attach but not yet usbip-win2's. The stand-in RP2350 ROM
+  (`--rp2350-rom stand-in`) has no USB boot.
 - **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
   RP2040. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
   flash reads give zeros; what a real RP2040 returns there is unverified.

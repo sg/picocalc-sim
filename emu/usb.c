@@ -486,13 +486,14 @@ static bool token_ok(chip_t *m, unsigned addr)
 }
 
 // Whether the endpoint takes the transaction (USB_ACK) or what it answers instead. An aborted
-// endpoint ignores its buffer control word, stall included.
-static int refuse(chip_t *m, const ep_t *e, uint16_t half, unsigned ep, bool out)
+// endpoint ignores its buffer control word, stall included. The one stall bit, in buffer 0's half,
+// stalls the endpoint whichever buffer is selected.
+static int refuse(chip_t *m, const ep_t *e, uint32_t bc, uint16_t half, unsigned ep, bool out)
 {
     usb_t *u = &m->usb;
     bool aborted = u->ep_abort & (1u << e->bit);
     bool armed = ep != 0 || (u->ep_stall_arm & (out ? 2u : 1u));
-    if (!aborted && (half & BC_STALL) && armed) {
+    if (!aborted && (bc & BC_STALL) && armed) {
         if (e->int_stall)
             u->stall_nak |= 1u << e->bit;
         return USB_STALL;
@@ -581,7 +582,7 @@ int usb_bus_in(chip_t *m, unsigned addr, unsigned ep, uint8_t *buf, unsigned *le
     uint32_t bc = rd32le(m->usb_dpram + e.bc_off);
     unsigned sel = select_buffer(m, &e, bc);
     uint16_t half = (uint16_t)(bc >> (16 * sel));
-    int r = refuse(m, &e, half, ep, false);
+    int r = refuse(m, &e, bc, half, ep, false);
     if (r != USB_ACK) {
         irq_update(m);
         return r;
@@ -608,7 +609,7 @@ int usb_bus_out(chip_t *m, unsigned addr, unsigned ep, unsigned pid, const uint8
     uint32_t bc = rd32le(m->usb_dpram + e.bc_off);
     unsigned sel = select_buffer(m, &e, bc);
     uint16_t half = (uint16_t)(bc >> (16 * sel));
-    int r = refuse(m, &e, half, ep, true);
+    int r = refuse(m, &e, bc, half, ep, true);
     if (r != USB_ACK) {
         irq_update(m);
         return r;
