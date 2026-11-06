@@ -363,7 +363,7 @@ chords its keyboard controller uses for them:
 | Insert | Shift+Enter |
 | Pause | Shift+Esc (Brk) |
 | F6-F10 | Shift+F1-F5 |
-| **F11** | screenshot (emulator only) |
+| **F11** | screenshot of the LCD, into the screenshot folder (emulator only) |
 | **F12** | the Pico's reset; **Shift+F12** resets into BOOTSEL |
 
 Drop a UF2 file on the window to flash it, or a `.img` file to insert it as the SD card. Holding a
@@ -383,7 +383,8 @@ without quitting:
   another goes in, as the firmware may still hold the old card's tables.
 - **Sound**: mute, volume, and recording to a WAV file from now on.
 - **View**: window scale, screenshot (F11), a log of picocalc-sim's messages, and the USB serial
-  terminal (see [USB](#usb)).
+  terminal (see [USB](#usb)). A screenshot is saved as `picocalc-DATE-TIME-N.png`, and a notice
+  over the LCD gives its file name and full path for a few seconds, or why it could not be saved.
 
 Settings has the board, the RP2040 and RP2350 boot ROMs, where the flash is kept, fast transfers,
 tracing, the radio, access points and port forwards, which take effect at the next restart, and

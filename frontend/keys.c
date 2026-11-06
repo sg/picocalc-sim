@@ -1,8 +1,13 @@
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "picocalc-sim/bus.h"
 #include "picocalc-sim/devices.h"
@@ -187,37 +192,70 @@ bool picocalc_sim_keys_chord(const char *spec, unsigned hold_ms)
     return true;
 }
 
-bool picocalc_sim_screenshot(const char *path)
+bool picocalc_sim_screenshot(const char *path, char *why, size_t whylen)
 {
     static uint32_t pixels[PICOCALC_SIM_LCD_WIDTH * PICOCALC_SIM_LCD_HEIGHT];
+    char reason[256];
     picocalc_sim_machine_lock();
     bool have = picocalc_sim_picocalc.lcd != NULL;
     if (have)
         st7365p_render(picocalc_sim_picocalc.lcd, pixels, southbridge_lcd_backlight(picocalc_sim_picocalc.sb));
     picocalc_sim_machine_unlock();
+    errno = 0;
     if (!have) {
+        snprintf(reason, sizeof(reason), "the machine is stopped");
         picocalc_sim_log("no screenshot while the machine is stopped");
-        return false;
+    } else if (!picocalc_sim_png_write(path, pixels, PICOCALC_SIM_LCD_WIDTH, PICOCALC_SIM_LCD_HEIGHT)) {
+        // Creating a file fails with ENOENT only when its folder is missing.
+        snprintf(reason, sizeof(reason), "%s",
+                 errno == ENOENT ? "the folder does not exist"
+                 : errno         ? strerror(errno)
+                                 : "the file could not be written");
+        picocalc_sim_log("cannot write %s: %s", path, reason);
+    } else {
+        picocalc_sim_log("screenshot: %s", path);
+        return true;
     }
-    if (!picocalc_sim_png_write(path, pixels, PICOCALC_SIM_LCD_WIDTH, PICOCALC_SIM_LCD_HEIGHT)) {
-        picocalc_sim_log("cannot write %s", path);
-        return false;
-    }
-    picocalc_sim_log("screenshot: %s", path);
-    return true;
+    if (why)
+        snprintf(why, whylen, "%s", reason);
+    return false;
 }
 
-const char *picocalc_sim_screenshot_auto(void)
+bool picocalc_sim_screenshot_auto(char *path, size_t pathlen, char *why, size_t whylen)
 {
-    static char path[1024];
     static int counter;
+    const char *dir = picocalc_sim_opts.screenshot_dir && *picocalc_sim_opts.screenshot_dir
+                          ? picocalc_sim_opts.screenshot_dir
+                          : ".";
+    // The full path, so that it can be found again whatever folder picocalc-sim was started in.
+    char full[1024];
+#ifdef _WIN32
+    const char *sep = "\\";
+    if (_fullpath(full, dir, sizeof(full)))
+        dir = full;
+#else
+    const char *sep = "/";
+    char *real = realpath(dir, NULL), cwd[768];
+    if (real) {
+        snprintf(full, sizeof(full), "%s", real);
+        free(real);
+        dir = full;
+    } else if (dir[0] != '/' && getcwd(cwd, sizeof(cwd))) {
+        // realpath needs the folder to exist; one that does not still gets a full path to report.
+        snprintf(full, sizeof(full), "%s/%s", strcmp(cwd, "/") ? cwd : "", dir);
+        dir = full;
+    }
+#endif
+    size_t n = strlen(dir);
+    if (n > 0 && (dir[n - 1] == '/' || dir[n - 1] == sep[0]))
+        sep = "";
     time_t now = time(NULL);
     struct tm tm;
     localtime_r(&now, &tm);
     char stamp[32];
     strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
-    snprintf(path, sizeof(path), "%s/picocalc-%s-%d.png", picocalc_sim_opts.screenshot_dir, stamp, ++counter);
-    return picocalc_sim_screenshot(path) ? path : NULL;
+    snprintf(path, pathlen, "%s%spicocalc-%s-%d.png", dir, sep, stamp, ++counter);
+    return picocalc_sim_screenshot(path, why, whylen);
 }
 
 const char *picocalc_sim_window_title(void)

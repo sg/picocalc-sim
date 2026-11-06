@@ -18,6 +18,8 @@ float ui_side_width(void);
 // True when the event belongs to the UI, such as a key typed into one of its text fields.
 bool ui_event(const SDL_Event *e);
 void ui_drop_file(const char *path);
+// Saves a screenshot and shows over the LCD where it went, or why it failed.
+void ui_screenshot(void);
 // Must come before every restart, so that a failed one can show what went wrong.
 void ui_restarting(void);
 // Lays out this frame's UI and returns the height of the menu bar in render pixels.

@@ -331,6 +331,13 @@ void choose_shots(const char *dir)
     remember("screenshot-dir", dir);
 }
 
+// What the last screenshot came to, shown over the LCD until `until`.
+struct {
+    bool ok;
+    std::string why, path;
+    Uint64 until;
+} shot_note;
+
 void chose(int kind, const char *path)
 {
     switch (kind) {
@@ -782,7 +789,7 @@ void menu_bar()
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Screenshot", "F11", false, running))
-            picocalc_sim_screenshot_auto();
+            ui_screenshot();
         ImGui::MenuItem("Log", nullptr, &show_log);
         if (ImGui::MenuItem("USB serial terminal", nullptr, show_terminal))
             set_terminal(!show_terminal);
@@ -1164,6 +1171,38 @@ void path_popup()
     ImGui::EndPopup();
 }
 
+void screenshot_note()
+{
+    Uint64 now = SDL_GetTicks();
+    if (now >= shot_note.until)
+        return;
+    std::string title = shot_note.ok ? "Screenshot saved" : "Screenshot failed: " + shot_note.why;
+    const char *name = base_name(shot_note.path.c_str());
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGuiStyle &style = ImGui::GetStyle();
+    float margin = 8 * content_scale, lcd_width = vp->Size.x - terminal_width();
+    float text = std::max({ImGui::CalcTextSize(title.c_str()).x, ImGui::CalcTextSize(name).x,
+                           ImGui::CalcTextSize(shot_note.path.c_str()).x});
+    float width = std::min(text + 2 * style.WindowPadding.x + 1, lcd_width - 2 * margin);
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + lcd_width - margin, vp->Pos.y + menu_height + margin),
+                            ImGuiCond_Always, ImVec2(1, 0));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, vp->Size.y - menu_height - 2 * margin));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, std::min(1.0f, (shot_note.until - now) / 500.0f));
+    // Never takes a click or the keyboard, so that the PicoCalc keeps both while it shows.
+    ImGui::Begin("##screenshot", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoSavedSettings);
+    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    ImGui::PushStyleColor(ImGuiCol_Text, shot_note.ok ? ImVec4(0.45f, 0.85f, 0.45f, 1) : ImVec4(1, 0.45f, 0.4f, 1));
+    ImGui::TextWrapped("%s", title.c_str());
+    ImGui::PopStyleColor();
+    ImGui::TextWrapped("%s", name);
+    note(shot_note.path.c_str());
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
+
 void stopped_panel()
 {
     ImGuiViewport *vp = ImGui::GetMainViewport();
@@ -1291,6 +1330,15 @@ void ui_drop_file(const char *path)
         flash_uf2(path);
 }
 
+void ui_screenshot(void)
+{
+    char path[1100], why[256];
+    shot_note.ok = picocalc_sim_screenshot_auto(path, sizeof(path), why, sizeof(why));
+    shot_note.path = path;
+    shot_note.why = shot_note.ok ? "" : why;
+    shot_note.until = SDL_GetTicks() + (shot_note.ok ? 4000 : 8000);
+}
+
 void ui_restarting(void)
 {
     start_mark = picocalc_sim_log_count();
@@ -1329,6 +1377,7 @@ float ui_frame(void)
         keys_window();
     if (show_about)
         about_window();
+    screenshot_note();
     erase_popup();
     path_popup();
     ImGui::Render();

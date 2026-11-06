@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -109,7 +110,10 @@ bool picocalc_sim_png_write(const char *path, const uint32_t *argb, int width, i
              chunk(f, "IEND", NULL, 0);
         ok = (fclose(f) == 0) && ok;
     }
+    // The caller reports why a write failed.
+    int err = errno;
     free(raw);
     free(z);
+    errno = err;
     return ok;
 }

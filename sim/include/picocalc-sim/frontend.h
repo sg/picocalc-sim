@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -14,9 +15,10 @@ bool picocalc_sim_frontend_sdl_available(void);
 void picocalc_sim_script_start(const char *path);
 
 bool picocalc_sim_png_write(const char *path, const uint32_t *argb, int width, int height);
-bool picocalc_sim_screenshot(const char *path);
-// A timestamped PNG in the screenshot directory; returns the path written, or NULL.
-const char *picocalc_sim_screenshot_auto(void);
+// Saves the LCD as a PNG; on failure, why (if not NULL) says what went wrong.
+bool picocalc_sim_screenshot(const char *path, char *why, size_t whylen);
+// A timestamped PNG in the screenshot directory: path gets its full path, written or not.
+bool picocalc_sim_screenshot_auto(char *path, size_t pathlen, char *why, size_t whylen);
 
 // Physical key presses on the PicoCalc keyboard, as a person would make them.
 void picocalc_sim_keys_press(uint8_t key);

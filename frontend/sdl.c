@@ -236,7 +236,7 @@ int picocalc_sim_frontend_sdl_run(void)
                 if (e.key.repeat || ui_took || !picocalc_sim_machine_running())
                     break;
                 if (e.key.key == SDLK_F11)
-                    picocalc_sim_screenshot_auto();
+                    ui_screenshot();
                 else if (e.key.key == SDLK_F12) {
                     // The BOOTSEL button on the Pico, held while the reset button is pressed.
                     picocalc_sim_bootsel_button((e.key.mod & SDL_KMOD_SHIFT) != 0);

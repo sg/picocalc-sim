@@ -104,7 +104,7 @@ static void *script_thread(void *arg)
                 picocalc_sim_log("script line %d: unknown key '%s'", lineno, rest);
             picocalc_sim_sleep_ns(KEY_GAP_MS * 1000000ull);
         } else if (!strcmp(cmd, "screenshot")) {
-            picocalc_sim_screenshot(rest);
+            picocalc_sim_screenshot(rest, NULL, 0);
         } else if (!strcmp(cmd, "restart")) {
             unsigned n = picocalc_sim_machine_starts();
             picocalc_sim_request_restart();
