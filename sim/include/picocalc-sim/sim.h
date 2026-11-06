@@ -93,6 +93,9 @@ void picocalc_sim_usb_plug(bool plugged);
 // host has the port open, and fewer than len while its buffer is full.
 size_t picocalc_sim_usb_serial_send(const uint8_t *data, size_t len);
 bool picocalc_sim_usb_serial_is_open(void);
+// Copies a UF2 onto the boot ROM's drive once the host has mounted it, as dragging it onto the
+// drive would; false, with a reason, if the cable is unplugged or the file is no UF2.
+bool picocalc_sim_usb_drive_copy(const char *path, char *err, size_t errlen);
 // Terminals on that port, a bit each; the host keeps the port open while any is attached.
 enum { PICOCALC_SIM_TERMINAL_CONSOLE = 1, PICOCALC_SIM_TERMINAL_WINDOW = 2 };
 void picocalc_sim_usb_serial_attach(unsigned terminal, bool on);

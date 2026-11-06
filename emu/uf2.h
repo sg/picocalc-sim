@@ -28,6 +28,9 @@ typedef struct {
 } uf2_file_t;
 
 bool uf2_load(const char *path, uf2_file_t *out, char *err, size_t errlen);
+// The file's bytes as they are, for copying onto a boot ROM's drive; NULL, with a reason, unless it
+// is whole 512-byte UF2 blocks.
+uint8_t *uf2_read_raw(const char *path, size_t *len, char *err, size_t errlen);
 void uf2_free(uf2_file_t *f);
 // The board the image was built for, from its binary info ("pico2_w" and so on), or NULL.
 const char *uf2_board_hint(const uf2_file_t *f);

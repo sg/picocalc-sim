@@ -723,8 +723,10 @@ static int sys_info(cpu_t *c, uint32_t out, uint32_t words, uint32_t flags)
     if (flags & 0x1) {
         supported |= 1;
         data[n++] = m->board->num_gpio > 30 ? 0 : 1;
-        data[n++] = 0xa3d4c6e1u;
-        data[n++] = 0x5b7f02c9u;
+        // The chip ID is the OTP's CHIPID rows, which the real ROM copies out at boot.
+        bool ok = true;
+        data[n++] = sys_read(m, 0x40130000u, 4, &ok);
+        data[n++] = sys_read(m, 0x40130004u, 4, &ok);
     }
     if (flags & 0x2) {
         supported |= 2;

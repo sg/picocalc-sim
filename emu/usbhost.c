@@ -3,19 +3,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "chip.h"
-#include "picocalc-sim/sim.h"
+#include "usbhost.h"
 
 // A computer on the far end of the board's USB cable. When a device pulls D+ up it waits for the
 // connection to settle, resets the port and enumerates the device much as Linux does, then logs
 // what it found and keeps the bus awake with start-of-frame packets. A CDC ACM serial port on the
 // device is opened while a terminal is attached to it (--usb-console or the window's terminal), as
-// Linux's cdc_acm does while a program has the tty open. Each transaction takes the bus time a full-speed packet would, and one
-// the device NAKs is tried again a little later, less often the longer the device has nothing.
+// Linux's cdc_acm does while a program has the tty open, and a drive is mounted as an OS would
+// (usbmsc.c). Each transaction takes the bus time a full-speed packet would, and one the device
+// NAKs is tried again a little later, less often the longer the device has nothing.
 
-enum { H_DETACHED, H_DEBOUNCE, H_RESET, H_RECOVERY, H_CONTROL, H_CONFIGURED, H_FAILED };
 enum { CT_SETUP, CT_DATA, CT_STATUS };
-enum { R_OK, R_STALL, R_ERROR };
 
 // What the host asks for, in order; the steps past STRINGS run only for the strings the device has.
 enum {
@@ -33,46 +31,8 @@ enum {
     S_LINE_STATE,
 };
 
-#define MAX_DATA 4096
-#define TX_SIZE 4096
-
-// The device's serial port: its interfaces and bulk endpoints, and what is waiting to go out.
-// dtr is the line state asked for: set while the port is open or being opened.
-typedef struct {
-    bool found, open, dtr;
-    uint8_t comm_if, data_if, in_ep, out_ep;
-    unsigned in_mps, out_mps;
-    unsigned in_toggle, out_toggle, in_naks, out_naks, errors;
-    emu_event_t in_ev, out_ev;
-    uint8_t tx[TX_SIZE];
-    unsigned tx_head, tx_len;
-} serial_t;
-
-typedef struct usb_host {
-    chip_t *m;
-    emu_event_t ev, sof_ev;
-    int state, step, attempts;
-    unsigned frame, addr, mps0;
-    bool debug;
-    // The control transfer in progress.
-    uint8_t setup[8];
-    uint8_t data[MAX_DATA];
-    unsigned want, got;
-    int stage, errors;
-    unsigned toggle, naks;
-    uint64_t deadline;
-    uint8_t dev[18];
-    unsigned cfg_len;
-    uint8_t cfg[MAX_DATA];
-    uint16_t langid;
-    char str[3][128];
-    serial_t ser;
-} usb_host_t;
-
-static void hlog(usb_host_t *h, const char *fmt, ...) __attribute__((format(PICOCALC_SIM_PRINTF_FORMAT, 2, 3)));
-
 // Debug logs carry the emulated time, to line them up with what the firmware did.
-static void hlog(usb_host_t *h, const char *fmt, ...)
+void usbhost_log(usb_host_t *h, const char *fmt, ...)
 {
     char buf[512];
     va_list ap;
@@ -87,16 +47,16 @@ static void hlog(usb_host_t *h, const char *fmt, ...)
 
 // A transaction carrying n data bytes: token, data and handshake packets with their sync fields,
 // CRCs and gaps, at 12 Mb/s with a sixth more for bit stuffing.
-static uint64_t bus_time(unsigned n)
+uint64_t usbhost_bus_time(unsigned n)
 {
     uint64_t bits = (uint64_t)(n + 12) * 8 * 7 / 6 + 40;
     return bits * PS_PER_US / 12;
 }
 
-static uint64_t nak_delay(unsigned naks)
+uint64_t usbhost_nak_delay(unsigned naks)
 {
     if (naks < 8)
-        return bus_time(0);
+        return usbhost_bus_time(0);
     if (naks < 100)
         return 125 * PS_PER_US;
     return PS_PER_MS;
@@ -114,7 +74,7 @@ static void serial_close(usb_host_t *h, const char *why)
 {
     serial_t *s = &h->ser;
     if (s->open && why)
-        hlog(h, "serial port closed: %s", why);
+        usbhost_log(h, "serial port closed: %s", why);
     s->open = false;
     s->tx_len = 0;
     ev_cancel(h->m, &s->in_ev);
@@ -128,6 +88,8 @@ static void stop_bus(usb_host_t *h)
 {
     serial_close(h, NULL);
     h->ser.found = h->ser.dtr = false;
+    msc_stop(h);
+    h->ctl_done = NULL;
     ev_cancel(h->m, &h->ev);
     ev_cancel(h->m, &h->sof_ev);
 }
@@ -137,6 +99,8 @@ static void start_reset(usb_host_t *h)
     chip_t *m = h->m;
     serial_close(h, "the port was reset");
     h->ser.found = h->ser.dtr = false;
+    msc_stop(h);
+    h->ctl_done = NULL;
     ev_cancel(m, &h->sof_ev);
     usb_bus_reset(m, true);
     h->state = H_RESET;
@@ -159,8 +123,8 @@ static void control(usb_host_t *h, uint8_t type, uint8_t req, uint16_t value, ui
     h->deadline = m->now + 5 * PS_PER_S;
     h->state = H_CONTROL;
     if (h->debug)
-        hlog(h, "addr %u setup %02x %02x %04x %04x %04x", h->addr, type, req, value, index, len);
-    ev_schedule(m, &h->ev, m->now + bus_time(0));
+        usbhost_log(h, "addr %u setup %02x %02x %04x %04x %04x", h->addr, type, req, value, index, len);
+    ev_schedule(m, &h->ev, m->now + usbhost_bus_time(0));
 }
 
 static void get_descriptor(usb_host_t *h, unsigned type, unsigned index, uint16_t lang, uint16_t len)
@@ -248,7 +212,7 @@ static void serial_in(chip_t *m, emu_event_t *ev)
     uint8_t buf[1023];
     unsigned n = 0, pid = 0;
     int r = usb_bus_in(m, h->addr, s->in_ep & 15, buf, &n, &pid);
-    uint64_t t = bus_time(n);
+    uint64_t t = usbhost_bus_time(n);
     switch (r) {
     case USB_ACK:
         s->in_naks = 0;
@@ -258,7 +222,7 @@ static void serial_in(chip_t *m, emu_event_t *ev)
             return;
         }
         if (h->debug)
-            hlog(h, "serial in: %u bytes, DATA%u%s", n, pid, pid == s->in_toggle ? "" : " (a repeat, dropped)");
+            usbhost_log(h, "serial in: %u bytes, DATA%u%s", n, pid, pid == s->in_toggle ? "" : " (a repeat, dropped)");
         if (pid == s->in_toggle) {
             s->in_toggle ^= 1;
             if (n)
@@ -267,8 +231,8 @@ static void serial_in(chip_t *m, emu_event_t *ev)
         break;
     case USB_NAK:
         if (h->debug && s->in_naks == 99)
-            hlog(h, "serial in: the device has NAKed 100 times running");
-        t = nak_delay(++s->in_naks);
+            usbhost_log(h, "serial in: the device has NAKed 100 times running");
+        t = usbhost_nak_delay(++s->in_naks);
         break;
     case USB_STALL: serial_close(h, "the device stalled its bulk IN endpoint"); return;
     default:
@@ -292,11 +256,11 @@ static void serial_out(chip_t *m, emu_event_t *ev)
     for (unsigned i = 0; i < n; i++)
         pkt[i] = s->tx[(s->tx_head + i) % TX_SIZE];
     int r = usb_bus_out(m, h->addr, s->out_ep & 15, s->out_toggle, pkt, n);
-    uint64_t t = bus_time(n);
+    uint64_t t = usbhost_bus_time(n);
     switch (r) {
     case USB_ACK:
         if (h->debug)
-            hlog(h, "serial out: %u bytes, DATA%u", n, s->out_toggle);
+            usbhost_log(h, "serial out: %u bytes, DATA%u", n, s->out_toggle);
         s->out_naks = 0;
         s->errors = 0;
         s->out_toggle ^= 1;
@@ -307,8 +271,8 @@ static void serial_out(chip_t *m, emu_event_t *ev)
         break;
     case USB_NAK:
         if (h->debug && s->out_naks == 99)
-            hlog(h, "serial out: the device has NAKed 100 times running");
-        t = nak_delay(++s->out_naks);
+            usbhost_log(h, "serial out: the device has NAKed 100 times running");
+        t = usbhost_nak_delay(++s->out_naks);
         break;
     case USB_STALL: serial_close(h, "the device stalled its bulk OUT endpoint"); return;
     default:
@@ -327,8 +291,8 @@ static void serial_open(usb_host_t *h)
     s->open = true;
     s->tx_len = 0;
     s->in_naks = s->out_naks = s->errors = 0;
-    hlog(h, "serial port open (CDC ACM, interfaces %u and %u)", s->comm_if, s->data_if);
-    ev_schedule(h->m, &s->in_ev, h->m->now + bus_time(0));
+    usbhost_log(h, "serial port open (CDC ACM, interfaces %u and %u)", s->comm_if, s->data_if);
+    ev_schedule(h->m, &s->in_ev, h->m->now + usbhost_bus_time(0));
 }
 
 bool usbhost_serial_is_open(chip_t *m)
@@ -367,7 +331,7 @@ size_t usbhost_serial_send(chip_t *m, const uint8_t *data, size_t len)
     for (; n < len && s->tx_len < TX_SIZE; n++)
         s->tx[(s->tx_head + s->tx_len++) % TX_SIZE] = data[n];
     if (n && !s->out_ev.queued)
-        ev_schedule(m, &s->out_ev, m->now + bus_time(0));
+        ev_schedule(m, &s->out_ev, m->now + usbhost_bus_time(0));
     return n;
 }
 
@@ -380,7 +344,7 @@ static void report(usb_host_t *h)
         if (d[1] == 4 && d[0] >= 9 && d[3] == 0 && o < sizeof(ifs))
             o += (size_t)snprintf(ifs + o, sizeof(ifs) - o, "%s%u %s", o ? ", " : "", d[2], class_name(d[5]));
     }
-    hlog(h, "%04x:%04x \"%s\" from \"%s\", serial \"%s\", USB %x.%02x; interfaces %s",
+    usbhost_log(h, "%04x:%04x \"%s\" from \"%s\", serial \"%s\", USB %x.%02x; interfaces %s",
          h->dev[8] | h->dev[9] << 8, h->dev[10] | h->dev[11] << 8, h->str[1], h->str[0], h->str[2], h->dev[3],
          h->dev[2], ifs[0] ? ifs : "none");
 }
@@ -391,16 +355,18 @@ static void fail(usb_host_t *h, const char *what)
 {
     if (++h->attempts < 8) {
         if (h->debug)
-            hlog(h, "%s failed; resetting the port", what);
+            usbhost_log(h, "%s failed; resetting the port", what);
         h->step = S_FIRST_DESC;
         serial_close(h, "the port was reset");
         h->ser.dtr = false;
+        msc_stop(h);
+        h->ctl_done = NULL;
         ev_cancel(h->m, &h->sof_ev);
         h->state = H_DEBOUNCE;
         ev_schedule(h->m, &h->ev, h->m->now + 100 * PS_PER_MS);
         return;
     }
-    hlog(h, "enumeration failed: %s; port disabled", what);
+    usbhost_log(h, "enumeration failed: %s; port disabled", what);
     stop_bus(h);
     h->state = H_FAILED;
 }
@@ -419,7 +385,7 @@ static void serial_follow(usb_host_t *h)
         next_step(h);
     } else if (!want && s->dtr) {
         if (s->open)
-            hlog(h, "serial port closed");
+            usbhost_log(h, "serial port closed");
         serial_close(h, NULL);
         s->dtr = false;
         h->step = S_LINE_STATE;
@@ -481,7 +447,7 @@ static void step_done(usb_host_t *h, int r)
         "SET_CONTROL_LINE_STATE",
     };
     if (h->debug)
-        hlog(h, "%s: %s, %u bytes", names[h->step], r == R_OK ? "ok" : r == R_STALL ? "stalled" : "error", h->got);
+        usbhost_log(h, "%s: %s, %u bytes", names[h->step], r == R_OK ? "ok" : r == R_STALL ? "stalled" : "error", h->got);
     // A device may refuse the strings it has no use for, or the serial port's settings.
     bool optional = (h->step >= S_MANUFACTURER && h->step <= S_SERIAL) || h->step >= S_LINE_CODING;
     if (r != R_OK && !(optional && r == R_STALL)) {
@@ -548,6 +514,7 @@ static void step_done(usb_host_t *h, int r)
         h->ser.in_toggle = h->ser.out_toggle = 0;
         h->state = H_CONFIGURED;
         serial_follow(h);
+        msc_configured(h);
         return;
     case S_LINE_STATE:
         h->state = H_CONFIGURED;
@@ -562,6 +529,32 @@ static void step_done(usb_host_t *h, int r)
 }
 
 // One transaction of the control transfer, then the next after the bus time it took.
+// The end of a control transfer: the class driver that asked for it is told, or enumeration goes on.
+static void control_done(usb_host_t *h, int r)
+{
+    void (*done)(usb_host_t *, int) = h->ctl_done;
+    if (!done) {
+        if (r == R_OK)
+            h->state = H_RECOVERY;
+        step_done(h, r);
+        return;
+    }
+    h->ctl_done = NULL;
+    h->state = H_CONFIGURED;
+    done(h, r);
+    serial_follow(h);
+}
+
+bool usbhost_control(usb_host_t *h, uint8_t type, uint8_t req, uint16_t value, uint16_t index, uint16_t len,
+                     void (*done)(usb_host_t *h, int result))
+{
+    if (h->state != H_CONFIGURED)
+        return false;
+    h->ctl_done = done;
+    control(h, type, req, value, index, len);
+    return true;
+}
+
 static void control_step(usb_host_t *h)
 {
     chip_t *m = h->m;
@@ -569,15 +562,15 @@ static void control_step(usb_host_t *h)
     unsigned n = 0, pid = 0;
     bool in_data = h->setup[0] & 0x80;
     int r;
-    uint64_t t = bus_time(0);
+    uint64_t t = usbhost_bus_time(0);
     if (m->now > h->deadline) {
-        step_done(h, R_ERROR);
+        control_done(h, R_ERROR);
         return;
     }
     switch (h->stage) {
     case CT_SETUP:
         r = usb_bus_setup(m, h->addr, h->setup);
-        t = bus_time(8);
+        t = usbhost_bus_time(8);
         if (r == USB_ACK) {
             h->toggle = 1;
             h->stage = h->want ? CT_DATA : CT_STATUS;
@@ -586,11 +579,11 @@ static void control_step(usb_host_t *h)
     case CT_DATA:
         if (in_data) {
             r = usb_bus_in(m, h->addr, 0, buf, &n, &pid);
-            t = bus_time(n);
+            t = usbhost_bus_time(n);
             if (r != USB_ACK)
                 break;
             if (n > h->mps0) {
-                step_done(h, R_ERROR);
+                control_done(h, R_ERROR);
                 return;
             }
             // A packet with the toggle already seen repeats one whose ACK went astray.
@@ -605,7 +598,7 @@ static void control_step(usb_host_t *h)
         } else {
             n = h->want - h->got < h->mps0 ? h->want - h->got : h->mps0;
             r = usb_bus_out(m, h->addr, 0, h->toggle, h->data + h->got, n);
-            t = bus_time(n);
+            t = usbhost_bus_time(n);
             if (r == USB_ACK) {
                 h->got += n;
                 h->toggle ^= 1;
@@ -621,13 +614,12 @@ static void control_step(usb_host_t *h)
         } else {
             r = usb_bus_in(m, h->addr, 0, buf, &n, &pid);
             if (r == USB_ACK && n) {
-                step_done(h, R_ERROR);
+                control_done(h, R_ERROR);
                 return;
             }
         }
         if (r == USB_ACK) {
-            h->state = H_RECOVERY;
-            step_done(h, R_OK);
+            control_done(h, R_OK);
             return;
         }
         break;
@@ -636,12 +628,12 @@ static void control_step(usb_host_t *h)
     case USB_ACK: h->naks = 0; break;
     case USB_NAK:
         h->naks++;
-        t = nak_delay(h->naks);
+        t = usbhost_nak_delay(h->naks);
         break;
-    case USB_STALL: step_done(h, R_STALL); return;
+    case USB_STALL: control_done(h, R_STALL); return;
     default:
         if (++h->errors >= 3) {
-            step_done(h, R_ERROR);
+            control_done(h, R_ERROR);
             return;
         }
         break;
@@ -676,7 +668,7 @@ void usbhost_pullup(chip_t *m, bool on)
         if (h->state != H_DETACHED)
             return;
         if (h->debug)
-            hlog(h, "device connected");
+            usbhost_log(h, "device connected");
         h->state = H_DEBOUNCE;
         h->step = S_FIRST_DESC;
         h->attempts = 0;
@@ -688,7 +680,7 @@ void usbhost_pullup(chip_t *m, bool on)
     if (h->state == H_DETACHED)
         return;
     if (h->state == H_CONFIGURED || h->debug)
-        hlog(h, "device disconnected");
+        usbhost_log(h, "device disconnected");
     stop_bus(h);
     if (h->state == H_RESET)
         usb_bus_reset(m, false);
@@ -708,6 +700,7 @@ void usbhost_init(chip_t *m)
     h->ser.in_ev.ctx = h;
     h->ser.out_ev.fn = serial_out;
     h->ser.out_ev.ctx = h;
+    msc_init(h);
     m->usb.host = h;
     usb_bus_attach(m, true);
     // The cable brings VBUS, which the boards without a radio sense on GPIO24.
@@ -727,5 +720,6 @@ void usbhost_free(chip_t *m)
     if (!m->board->wifi)
         m->gpio[24].ext_driven = false;
     m->usb.host = NULL;
+    free(h->msc.copy);
     free(h);
 }

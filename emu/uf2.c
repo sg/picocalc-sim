@@ -10,6 +10,42 @@
 #define UF2_FLAG_NOT_MAIN_FLASH 0x00000001u
 #define UF2_FLAG_FAMILY_ID 0x00002000u
 
+uint8_t *uf2_read_raw(const char *path, size_t *len, char *err, size_t errlen)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        snprintf(err, errlen, "cannot open %s", path);
+        return NULL;
+    }
+    size_t cap = 0, n = 0;
+    uint8_t *data = NULL;
+    for (;;) {
+        if (n == cap) {
+            cap = cap ? cap * 2 : 1 << 20;
+            uint8_t *more = cap <= (64u << 20) ? realloc(data, cap) : NULL;
+            if (!more) {
+                snprintf(err, errlen, "%s is too big to be a UF2", path);
+                free(data);
+                fclose(f);
+                return NULL;
+            }
+            data = more;
+        }
+        size_t got = fread(data + n, 1, cap - n, f);
+        n += got;
+        if (got == 0)
+            break;
+    }
+    fclose(f);
+    if (n < 512 || n % 512 || rd32le(data) != UF2_MAGIC0 || rd32le(data + 4) != UF2_MAGIC1) {
+        snprintf(err, errlen, "%s is not a UF2 file", path);
+        free(data);
+        return NULL;
+    }
+    *len = n;
+    return data;
+}
+
 bool uf2_load(const char *path, uf2_file_t *out, char *err, size_t errlen)
 {
     memset(out, 0, sizeof(*out));

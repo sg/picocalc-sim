@@ -157,6 +157,15 @@ size_t picocalc_sim_usb_serial_send(const uint8_t *data, size_t len)
 
 static atomic_uint serial_terminals;
 
+static const char *base_name(const char *path)
+{
+    const char *b = path;
+    for (const char *p = path; *p; p++)
+        if (*p == '/' || *p == '\\')
+            b = p + 1;
+    return b;
+}
+
 void picocalc_sim_usb_serial_attach(unsigned terminal, bool on)
 {
     picocalc_sim_machine_lock();
@@ -186,6 +195,25 @@ int picocalc_sim_usb_serial_state(char *product, size_t cap)
         *product = 0;
     picocalc_sim_machine_unlock();
     return s;
+}
+
+bool picocalc_sim_usb_drive_copy(const char *path, char *err, size_t errlen)
+{
+    size_t len;
+    uint8_t *data = uf2_read_raw(path, &len, err, errlen);
+    if (!data)
+        return false;
+    picocalc_sim_machine_lock();
+    bool plugged = chip_ready && chip.usb.host;
+    bool ok = plugged && usbhost_drive_copy(&chip, data, len, base_name(path));
+    picocalc_sim_machine_unlock();
+    if (!plugged) {
+        free(data);
+        snprintf(err, errlen, "the USB cable is unplugged");
+    } else if (!ok) {
+        snprintf(err, errlen, "the drive is busy copying another UF2");
+    }
+    return ok;
 }
 
 bool picocalc_sim_usb_serial_is_open(void)
@@ -304,6 +332,16 @@ static void handle_requests(void)
     pthread_mutex_unlock(&uf2_lock);
     if (path[0]) {
         char err[256];
+        // With a boot ROM's drive mounted, the file goes onto the drive and the ROM writes it.
+        if (usbhost_drive_mounted(&chip)) {
+            size_t len;
+            uint8_t *data = uf2_read_raw(path, &len, err, sizeof(err));
+            if (!data)
+                picocalc_sim_log("%s", err);
+            else if (!usbhost_drive_copy(&chip, data, len, base_name(path)))
+                picocalc_sim_log("the drive is busy copying another UF2");
+            return;
+        }
         if (program_uf2_locked(path, err, sizeof(err))) {
             set_state(PICOCALC_SIM_RUNNING, "");
             chip_reset(&chip, true);

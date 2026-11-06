@@ -12,6 +12,7 @@
 //   screenshot <file>    restart              quit [code]          # comment
 //   usb on|off           (plugs the board's USB port into a host, or unplugs it)
 //   usb send <text>      (sends text to the firmware's USB serial port, which --usb-console opens)
+//   usb copy <file>      (copies a UF2 onto the boot ROM's drive once it is mounted)
 // type and usb send take the rest of the line with C escapes (\n \r \t \e \b \\); key takes
 // chords such as ctrl+c, shift+up, brk or f6.
 
@@ -114,6 +115,10 @@ static void *script_thread(void *arg)
             picocalc_sim_usb_plug(picocalc_sim_opts.usb);
         } else if (!strcmp(cmd, "usb") && !strncmp(rest, "send ", 5)) {
             usb_send(lineno, rest + 5);
+        } else if (!strcmp(cmd, "usb") && !strncmp(rest, "copy ", 5)) {
+            char err[256];
+            if (!picocalc_sim_usb_drive_copy(rest + 5, err, sizeof(err)))
+                picocalc_sim_log("script line %d: %s", lineno, err);
         } else if (!strcmp(cmd, "quit")) {
             fclose(f);
             picocalc_sim_request_quit(*rest ? atoi(rest) : 0);

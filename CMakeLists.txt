@@ -81,6 +81,7 @@ add_library(picocalc_sim_objs OBJECT
     emu/uf2.c
     emu/usb.c
     emu/usbhost.c
+    emu/usbmsc.c
     sim/src/runtime.c
     sim/net/net.c
     sim/net/tcp.c

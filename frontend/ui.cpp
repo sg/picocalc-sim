@@ -722,6 +722,8 @@ void menu_bar()
         ImGui::Separator();
         if (ImGui::MenuItem("Flash UF2...", nullptr, false, running))
             pick(PICK_UF2);
+        ImGui::SetItemTooltip("Writes it into flash as the BOOTSEL drive would, then resets; with a boot ROM's drive "
+                              "mounted on the USB cable, copies it onto that drive for the ROM to write");
         if (ImGui::MenuItem("Erase flash and restart..."))
             ask_erase = true;
         ImGui::Separator();

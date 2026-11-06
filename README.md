@@ -88,7 +88,8 @@ a bare-metal check of the security extension, which none of that firmware uses
 checks that the boot ROMs' USB boot enumerates on the emulated cable (`ci/usb-test.sh`) and that
 `tests/usbserial`, a self-checking USB serial port built with the Pico SDK, gets a line from the
 terminal and sends 100 back over `--usb-console` (`ci/usbserial-test.sh`;
-`tests/usbserial/build.sh` rebuilds its UF2s), then
+`tests/usbserial/build.sh` rebuilds its UF2s), and that the boot ROMs write that firmware when it is
+copied onto their drive and restart into it (`ci/usbdrive-test.sh`), then
 cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `picocalc-sim.exe`
 is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
@@ -174,9 +175,10 @@ build/picocalc-sim --rp2350-rom bootrom-combined.bin ../pcsh/build-pico2/pcsh.uf
 
 Images in flash or RAM and uf2loader work on it. Its USB boot, which the BOOTSEL button, a reboot
 into BOOTSEL and an empty flash all lead to, runs in Non-secure state as on the chip, and a host on
-the cable enumerates it as the RP2350 Boot device (see [USB](#usb)); F12 resets the board, and Flash
-UF2 writes an image as before. The emulated chip becomes the stepping the ROM was built for: an A2
-with the A2 ROM, and an A3 with the A3 or A4 ROM, since A4 changed only the ROM.
+the cable enumerates it as the RP2350 Boot device and mounts its drive, onto which Flash UF2 then
+copies an image for the ROM to write (see [USB](#usb)); F12 resets the board. The emulated chip
+becomes the stepping the ROM was built for: an A2 with the A2 ROM, and an A3 with the A3 or A4 ROM,
+since A4 changed only the ROM.
 
 ### uf2loader
 
@@ -288,8 +290,21 @@ serial port. Closing it drops DTR, as closing a terminal program does.
 A script's `usb send TEXT` sends text to the port, with C escapes (`\r` for Enter). With no terminal
 on it the port stays closed, as on a computer with no terminal program open. Firmware that puts its
 console on UART0 instead, as the PicoCalc's PicoMite build does for the PicoCalc's own USB-C serial
-port, prints nothing here; `--console` shows UART0. The boot ROM's drive and other interfaces go
-unused.
+port, prints nothing here; `--console` shows UART0.
+
+A drive on the device, a mass storage interface such as the BOOTSEL drive of Raspberry Pi's boot
+ROMs, is mounted as an OS would mount it: the host asks what it is, waits for it to be ready, reads
+its capacity and FAT volume, and logs the volume's label and INFO_UF2.TXT:
+
+```
+usb: drive "RP2350" (RPI RP2350, 128 MB), INFO_UF2.TXT "UF2 Bootloader v1.1; Model: Raspberry Pi RP2350; Board-ID: RP2350"
+```
+
+While it is mounted, Flash UF2 and dropping a UF2 on the window copy the file onto it, as dragging it
+onto the drive on a computer would, and the boot ROM writes the flash itself and restarts into it.
+A script's `usb copy FILE` does the same once the drive has mounted. A UF2 the ROM does not take,
+such as one built for the other chip, leaves it in BOOTSEL, and the host says so. Without a mounted
+drive, Flash UF2 writes the flash directly as before. The ROMs' PICOBOOT interface goes unused.
 
 ### Sound
 
@@ -417,9 +432,9 @@ quit 0
 `key` takes chords such as `ctrl+alt+del`, `shift+up`, `brk` or `f6`. `restart` stops the
 machine and starts it again as a fresh launch with the same options would, so the UF2 given on
 the command line is written again and the card stays in the slot (unlike the menu's Restart).
-`usb on` and `usb off` plug the USB cable in and pull it out, and `usb send TEXT` sends text (with
-`type`'s escapes, plus `\r`) to the firmware's USB serial port, which `--usb-console` opens. `quit N`
-sets the exit code.
+`usb on` and `usb off` plug the USB cable in and pull it out, `usb send TEXT` sends text (with
+`type`'s escapes, plus `\r`) to the firmware's USB serial port, which `--usb-console` opens, and
+`usb copy FILE` copies a UF2 onto a boot ROM's drive once it is mounted. `quit N` sets the exit code.
 
 ## How it works
 
@@ -520,7 +535,10 @@ sets the exit code.
   packets would take at 12 Mb/s, and one the device NAKs is retried sooner or later depending on how
   long the device has had nothing. On a CDC ACM port it keeps a bulk IN transfer waiting, as Linux's
   cdc_acm does, and sends from a 4 KB buffer that `frontend/serial.c` fills from the terminal or
-  the window's `frontend/terminal.c`, a VT100 emulator the window draws cell by cell.
+  the window's `frontend/terminal.c`, a VT100 emulator the window draws cell by cell. `emu/usbmsc.c`
+  is its mass storage driver: SCSI commands over the bulk-only transport, with the stalls, halt
+  clearing and data toggles that transport has, a FAT reader for mounting, and 64 KB writes for a
+  copy.
 - **Sound.** `emu/pinwave.c` records the waveform of the audio pins without touching the chip: a
   PWM output as its slice settings, so a fast carrier costs nothing per cycle, and any other
   driver as edges stamped with the time the core or PIO state machine made them. It integrates
@@ -561,8 +579,9 @@ Not emulated yet, or not faithfully:
   that lands within a fraction of a nanosecond of a change, which varies from read to read on the
   board, gives the same answer every time here.
 - **USB** has the controller only in device mode (host mode keeps its registers but moves nothing),
-  and the host on the cable drives only a CDC ACM serial port, and only the first: the boot ROM's
-  drive and other interfaces go unused. The stand-in RP2350 ROM has no USB boot; Raspberry Pi's has.
+  and the host on the cable drives only a CDC ACM serial port and a mass storage drive, the first of
+  each: the boot ROMs' PICOBOOT interface and others go unused, and the drive is read only to mount
+  it and written only to copy a UF2. The stand-in RP2350 ROM has no USB boot; Raspberry Pi's has.
 - **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
   RP2040. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
   flash reads give zeros; what a real RP2040 returns there is unverified.
