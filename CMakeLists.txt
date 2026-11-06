@@ -99,6 +99,20 @@ add_library(picocalc_sim_objs OBJECT
     frontend/serial.c
     frontend/settings.c
     frontend/terminal.c)
+# Raspberry Pi's RP2350 boot ROMs from roms/rp2350, built in for --rp2350-rom A2 and A4.
+set(PICOCALC_SIM_GENERATED ${CMAKE_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${PICOCALC_SIM_GENERATED})
+foreach(rev A2 A4)
+    string(TOLOWER ${rev} lower)
+    set(rom ${CMAKE_SOURCE_DIR}/roms/rp2350/${rev}/bootrom-combined.bin)
+    set(out ${PICOCALC_SIM_GENERATED}/rp2350_rom_${lower}.c)
+    add_custom_command(OUTPUT ${out}
+        COMMAND ${CMAKE_COMMAND} -DIN=${rom} -DOUT=${out} -DNAME=rp2350_rom_${lower}
+                -P ${CMAKE_SOURCE_DIR}/cmake/EmbedBinary.cmake
+        DEPENDS ${rom} ${CMAKE_SOURCE_DIR}/cmake/EmbedBinary.cmake
+        VERBATIM)
+    target_sources(picocalc_sim_objs PRIVATE ${out})
+endforeach()
 target_include_directories(picocalc_sim_objs PUBLIC emu sim/include)
 target_compile_options(picocalc_sim_objs PUBLIC -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(picocalc_sim_objs PUBLIC picocalc_sim_lwip Threads::Threads m)

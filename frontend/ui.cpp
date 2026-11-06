@@ -868,11 +868,24 @@ void machine_tab()
     ImGui::SetItemTooltip("The RP2040's own boot ROM, which picocalc-sim cannot include: b2.elf from "
                           "github.com/raspberrypi/pico-bootrom-rp2040/releases");
     ImGui::BeginDisabled(chosen.rp2040);
-    path_field("RP2350 ROM", "picocalc-sim's own", &pending.rp2350_rom, PICK_RP2350_ROM);
-    ImGui::EndDisabled();
-    ImGui::SetItemTooltip("Raspberry Pi's RP2350 boot ROM, to run instead of picocalc-sim's stand-in: "
-                          "bootrom-combined.bin from the A2 or A4 release at "
+    // The stand-in, one of Raspberry Pi's ROMs built in, or one from a file, which stays the choice
+    // while its path is still empty.
+    static bool rom_from_file;
+    const std::string &r = pending.rp2350_rom;
+    bool a2 = r == "A2" || r == "a2", a4 = r == "A4" || r == "a4";
+    int kind = a2 ? 1 : a4 ? 2 : !r.empty() || rom_from_file ? 3 : 0;
+    static const char *const kinds[] = {"picocalc-sim's own", "Raspberry Pi's A2, built in", "Raspberry Pi's A4, built in",
+                                        "Raspberry Pi's, from a file"};
+    if (ImGui::Combo("RP2350 ROM", &kind, kinds, 4)) {
+        rom_from_file = kind == 3;
+        pending.rp2350_rom = kind == 1 ? "A2" : kind == 2 ? "A4" : kind == 3 && !a2 && !a4 ? r : "";
+    }
+    ImGui::SetItemTooltip("Raspberry Pi's RP2350 boot ROM runs the chip's own boot path in place of picocalc-sim's "
+                          "stand-in: its A2 and A4 releases are built in, or another bootrom-combined.bin from "
                           "github.com/raspberrypi/pico-bootrom-rp2350/releases");
+    if (kind == 3)
+        path_field("ROM file", "bootrom-combined.bin", &pending.rp2350_rom, PICK_RP2350_ROM);
+    ImGui::EndDisabled();
 
     static const char *const places[] = {"In the data folder", "In memory until picocalc-sim quits", "In a file"};
     ImGui::Combo("Flash", &pending.flash, places, 3);
@@ -1101,6 +1114,7 @@ void about_window()
                 SDL_VERSIONNUM_MICRO(v));
     ImGui::Text("Dear ImGui %s (MIT license)", IMGUI_VERSION);
     ImGui::TextUnformatted("lwIP (BSD license)");
+    ImGui::TextUnformatted("Raspberry Pi's RP2350 boot ROMs A2 and A4 (BSD license)");
     ImGui::End();
 }
 

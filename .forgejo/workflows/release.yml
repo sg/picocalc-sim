@@ -79,7 +79,7 @@ jobs:
         run: |
           (cd src/roms/rp2350 && sha256sum -c SHA256SUMS)
           for rev in A2 A4; do
-            export PICOCALC_SIM_RP2350_ROM=src/roms/rp2350/$rev/bootrom-combined.bin
+            export PICOCALC_SIM_RP2350_ROM=$rev
             src/ci/boot-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
@@ -111,6 +111,8 @@ jobs:
           strip -o "pkg/$name/picocalc-sim" build/picocalc-sim
           strip -o "pkg/$name/picocalc-sim-mkcard" build/tools/mkcard/picocalc-sim-mkcard
           cp src/README.md "pkg/$name/"
+          # The licence of the RP2350 boot ROMs built in, which their binaries must carry.
+          cp src/roms/rp2350/LICENSE.TXT "pkg/$name/LICENSE-RP2350-BOOTROM.TXT"
           tar -C pkg -czf "dist/$name.tar.gz" "$name"
 
           name="picocalc-sim-$TAG-windows-x86_64"
@@ -119,6 +121,7 @@ jobs:
           x86_64-w64-mingw32-strip -o "pkg/$name/picocalc-sim-console.exe" build-win/picocalc-sim-console.exe
           x86_64-w64-mingw32-strip -o "pkg/$name/picocalc-sim-mkcard.exe" build-win/tools/mkcard/picocalc-sim-mkcard.exe
           cp src/README.md "pkg/$name/"
+          cp src/roms/rp2350/LICENSE.TXT "pkg/$name/LICENSE-RP2350-BOOTROM.TXT"
           (cd pkg && python3 -m zipfile -c "../dist/$name.zip" "$name")
 
       - name: Stage a draft release

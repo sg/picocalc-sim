@@ -70,7 +70,7 @@ jobs:
         run: |
           (cd src/roms/rp2350 && sha256sum -c SHA256SUMS)
           for rev in A2 A4; do
-            export PICOCALC_SIM_RP2350_ROM=src/roms/rp2350/$rev/bootrom-combined.bin
+            export PICOCALC_SIM_RP2350_ROM=$rev
             src/ci/boot-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2

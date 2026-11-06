@@ -120,16 +120,39 @@ void rom_build(chip_t *m)
     wr32le(r + ROM_DATA + 0x08, DEVINFO_ADDR);
 }
 
-bool rp2350_load_rom(chip_t *m, const char *path, char *err, size_t errlen)
+// Raspberry Pi's ROMs as built in from roms/rp2350.
+extern const uint8_t rp2350_rom_a2[ROM_SIZE], rp2350_rom_a4[ROM_SIZE];
+
+const uint8_t *rp2350_builtin_rom(const char *spec)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) {
-        snprintf(err, errlen, "cannot open %s: %s", path, strerror(errno));
-        return false;
-    }
+    if ((spec[0] == 'A' || spec[0] == 'a') && spec[1] && !spec[2])
+        return spec[1] == '2' ? rp2350_rom_a2 : spec[1] == '4' ? rp2350_rom_a4 : NULL;
+    return NULL;
+}
+
+bool rp2350_load_rom(chip_t *m, const char *spec, char *err, size_t errlen)
+{
+    const char *path = spec;
     uint8_t image[ROM_SIZE + 1];
-    size_t n = fread(image, 1, sizeof(image), f);
-    fclose(f);
+    size_t n = ROM_SIZE;
+    const uint8_t *builtin = rp2350_builtin_rom(spec);
+    if (builtin) {
+        memcpy(image, builtin, ROM_SIZE);
+    } else {
+        FILE *f = fopen(path, "rb");
+        bool stepping = (spec[0] == 'A' || spec[0] == 'a') && spec[1] >= '0' && spec[1] <= '9' && !spec[2];
+        if (!f && stepping) {
+            snprintf(err, errlen, "no RP2350-%c%c boot ROM is built in, only A2 and A4; another needs its "
+                                  "bootrom-combined.bin", 'A', spec[1]);
+            return false;
+        }
+        if (!f) {
+            snprintf(err, errlen, "cannot open %s: %s", path, strerror(errno));
+            return false;
+        }
+        n = fread(image, 1, sizeof(image), f);
+        fclose(f);
+    }
     if (n != ROM_SIZE || image[0x10] != 'M' || image[0x11] != 'u' || image[0x12] != 2) {
         snprintf(err, errlen, "%s is not a 32 KB RP2350 boot ROM image such as bootrom-combined.bin", path);
         return false;

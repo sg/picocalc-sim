@@ -662,7 +662,10 @@ static bool start(uf2_file_t *f)
             picocalc_sim_log("%s", err);
             return false;
         }
-        picocalc_sim_log("boot ROM: %s", picocalc_sim_opts.rp2350_rom_path);
+        if (rp2350_builtin_rom(picocalc_sim_opts.rp2350_rom_path))
+            picocalc_sim_log("boot ROM: Raspberry Pi's RP2350-A%c, built in", picocalc_sim_opts.rp2350_rom_path[1]);
+        else
+            picocalc_sim_log("boot ROM: %s", picocalc_sim_opts.rp2350_rom_path);
     }
     picocalc_sim_machine_lock();
     bool board = picocalc_board_init();

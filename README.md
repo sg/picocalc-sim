@@ -87,23 +87,22 @@ a bare-metal check of the security extension, which none of that firmware uses
 (`ci/trustzone-test.sh`; `tests/trustzone/build.sh` rebuilds its UF2 with `arm-none-eabi-gcc`), and
 checks that the boot ROMs' USB boot enumerates on the emulated cable (`ci/usb-test.sh`) and that
 `tests/usbserial`, a self-checking USB serial port built with the Pico SDK, gets a line from the
-terminal and sends 100 back over `--usb-console` (`ci/usbserial-test.sh`;
-`tests/usbserial/build.sh` rebuilds its UF2s), and that the boot ROMs write that firmware when it is
-copied onto their drive and restart into it (`ci/usbdrive-test.sh`), and that both work over USB/IP
-from a client that imports and enumerates the device as Linux's does (`ci/usbip-test.sh` with
-`ci/usbip-client.py`), then
-cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `picocalc-sim.exe`
-is windowed and the other two are console programs) and runs the same tests on
+terminal and sends 100 back over `--usb-console` (`ci/usbserial-test.sh`; `tests/usbserial/build.sh`
+rebuilds its UF2s), and that the boot ROMs write that firmware when it is copied onto their drive
+and restart into it (`ci/usbdrive-test.sh`), and that both work over USB/IP from a client that
+imports and enumerates the device as Linux's does (`ci/usbip-test.sh` with `ci/usbip-client.py`),
+then cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that
+`picocalc-sim.exe` is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
 the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`), and
 it boots and restarts the RP2350 firmware and runs the TrustZone and USB tests again on Raspberry
-Pi's A2 and A4 RP2350 ROMs in `roms/rp2350`, first checking them against their hashes; the RP2040
-ROM is used only for the tests, and no ROM is packed into the release. If they pass, it stages a draft release with
-`picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`. Pushing a commit
-runs nothing; `build.yml` runs the same tests on a branch when started by hand from the Actions
-page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux
-binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be built on
-a headless machine and copied to a desktop.
+Pi's A2 and A4 RP2350 ROMs built into picocalc-sim, first checking `roms/rp2350` against its hashes;
+the RP2040 ROM is used only for the tests and is never packed. If they pass, it stages a draft
+release with `picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`.
+Pushing a commit runs nothing; `build.yml` runs the same tests on a branch when started by hand from
+the Actions page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the
+Linux binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be
+built on a headless machine and copied to a desktop.
 
 ## Running firmware
 
@@ -166,14 +165,15 @@ A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
 ### RP2350 boot ROM
 
 The RP2350 boards boot through picocalc-sim's own stand-in for the chip's boot ROM unless
-`--rp2350-rom FILE`, or the RP2350 ROM field in Settings, names Raspberry Pi's real one, which then
-runs the chip's own boot path, ROM functions and flash routines. Both of Raspberry Pi's releases of
-it are in [roms/rp2350](roms/rp2350), under Raspberry Pi's BSD licence: `bootrom-combined.bin` from
-the [A2](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A2) and
-[A4](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A4) releases, unchanged.
+`--rp2350-rom`, or the RP2350 ROM field in Settings, picks Raspberry Pi's real one, which then runs
+the chip's own boot path, ROM functions and flash routines. Its A2 and A4 releases are built into
+picocalc-sim, from [roms/rp2350](roms/rp2350): `--rp2350-rom A2` or `--rp2350-rom A4`. A path
+instead names another `bootrom-combined.bin` from Raspberry Pi's
+[releases](https://github.com/raspberrypi/pico-bootrom-rp2350/releases). Raspberry Pi publishes
+them under a BSD licence, which the release archives carry as `LICENSE-RP2350-BOOTROM.TXT`.
 
 ```sh
-build/picocalc-sim --rp2350-rom roms/rp2350/A4/bootrom-combined.bin ../pcsh/build-pico2/pcsh.uf2
+build/picocalc-sim --rp2350-rom A4 ../pcsh/build-pico2/pcsh.uf2
 ```
 
 Images in flash or RAM and uf2loader work on it. Its USB boot, which the BOOTSEL button, a reboot
@@ -320,7 +320,7 @@ use. It listens on 127.0.0.1 unless ADDR is given (`*` for every interface), and
 in:
 
 ```sh
-build/picocalc-sim --rp2350-rom roms/rp2350/A4/bootrom-combined.bin --flash none --erase-flash --usbip 3240
+build/picocalc-sim --rp2350-rom A4 --flash none --erase-flash --usbip 3240
 sudo modprobe vhci-hcd
 sudo usbip --tcp-port 3240 attach -r 127.0.0.1 -b 1-1
 ```
@@ -409,14 +409,14 @@ mute = off
 scale = 3
 ```
 
-The keys are `board`, `rom`, `rp2350-rom`, `flash` (a file, `none` or `default`), `card` (an image
-or `none`), `fast`, `unthrottled`, `trace`, `console`, `no-wifi`, `wifi-ap` and `forward` (repeated
-for each), `usb`, `usb-terminal`, `usbip`, `battery`, `charging`, `volume`, `mute`, `scale` and
-`screenshot-dir`; switches take `on` or `off`. An option given on the command line wins for that run
-and is not written to the file unless it is then changed in the window; the board is the exception,
-as the one last run is always kept. picocalc-sim rewrites the file as settings change, keeping keys
-it does not know but not comments. Headless runs ignore it, so scripts and CI see only their own
-options.
+The keys are `board`, `rom`, `rp2350-rom` (`A2`, `A4` or a file), `flash` (a file, `none` or
+`default`), `card` (an image or `none`), `fast`, `unthrottled`, `trace`, `console`, `no-wifi`,
+`wifi-ap` and `forward` (repeated for each), `usb`, `usb-terminal`, `usbip`, `battery`, `charging`,
+`volume`, `mute`, `scale` and `screenshot-dir`; switches take `on` or `off`. An option given on the
+command line wins for that run and is not written to the file unless it is then changed in the
+window; the board is the exception, as the one last run is always kept. picocalc-sim rewrites the
+file as settings change, keeping keys it does not know but not comments. Headless runs ignore it, so
+scripts and CI see only their own options.
 
 ### Options
 
@@ -424,7 +424,7 @@ options.
 | --- | --- |
 | `-b`, `--board NAME` | `pico2`, `pico2_w`, `pimoroni_pico_plus2_w`, `pimoroni_pico_plus2`, `pico` or `pico_w` |
 | `--rom FILE` | the RP2040 boot ROM, as an ELF file or a 16 KB image (see [RP2040 boards](#rp2040-boards)) |
-| `--rp2350-rom FILE` | Raspberry Pi's RP2350 boot ROM to run instead of picocalc-sim's own (see [RP2350 boot ROM](#rp2350-boot-rom)) |
+| `--rp2350-rom A2\|A4\|FILE` | Raspberry Pi's RP2350 boot ROM to run instead of picocalc-sim's own, built in or from a file (see [RP2350 boot ROM](#rp2350-boot-rom)) |
 | `-f`, `--flash FILE` | flash image to use and keep |
 | `-c`, `--card IMAGE` / `--no-card` | SD card image, or an empty slot |
 | `--console` | print UART0 output, as a serial adapter on the PicoCalc's header would show |
@@ -518,7 +518,7 @@ the command line is written again and the card stays in the slot (unlike the men
   and stall an RCP fault brings on both cores, and the zeroed reads and ignored checks Non-secure
   code gets.
 - **Boot ROM.** On the RP2350, `emu/rom.c` stands in for the boot ROM, so no ROM file is needed,
-  and `--rp2350-rom` runs Raspberry Pi's own, published under a BSD license, instead. The stand-in
+  and `--rp2350-rom` runs Raspberry Pi's own, built in or from a file, instead. The stand-in
   follows the real boot path (watchdog and reboot parameters, the picobin block loop, embedded and
   standalone partition tables, ATRANS address translation, load maps, BOOTSEL when nothing
   boots), runs core 1's launch handshake, and implements the ROM API the SDK and uf2loader call:

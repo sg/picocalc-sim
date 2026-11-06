@@ -758,7 +758,9 @@ int cyw43_bus_in(chip_t *m);
 
 void rom_build(chip_t *m);
 // Puts Raspberry Pi's RP2350 boot ROM, a 32 KB image, in place of the stand-in.
-bool rp2350_load_rom(chip_t *m, const char *path, char *err, size_t errlen);
+// spec is A2 or A4 for the ROMs built in, or else a bootrom-combined.bin file.
+bool rp2350_load_rom(chip_t *m, const char *spec, char *err, size_t errlen);
+const uint8_t *rp2350_builtin_rom(const char *spec);
 void rom_hle(cpu_t *c, unsigned n);
 void rom_core_start(cpu_t *c);
 
