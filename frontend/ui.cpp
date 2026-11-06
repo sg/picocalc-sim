@@ -1321,6 +1321,11 @@ bool ui_event(const SDL_Event *e)
     return key && wanted;
 }
 
+bool ui_wants_keyboard(void)
+{
+    return ImGui::GetIO().WantCaptureKeyboard;
+}
+
 void ui_drop_file(const char *path)
 {
     size_t n = strlen(path);

@@ -23,6 +23,11 @@ int picocalc_sim_frontend_sdl_run(void)
 
 #include <SDL3/SDL.h>
 
+#ifdef SDL_PLATFORM_WINDOWS
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 #include "ui.h"
 
 bool picocalc_sim_frontend_sdl_available(void)
@@ -34,10 +39,15 @@ typedef struct {
     SDL_Keycode sym;
     uint8_t key;
     bool synth_shift;
+    // Typed from a character rather than a key; the oldest such is let go first. A character the
+    // PicoCalc has no key for holds a place with key 0, so that its key-up lets go of nothing.
+    bool from_char;
+    unsigned seq;
 } held_t;
 
 static held_t held[32];
 static int nheld;
+static unsigned held_seq;
 
 // Host keys the PicoCalc has no key for are sent as the Shift chords its keyboard uses for them.
 static bool map_key(SDL_Keycode sym, uint8_t *key, bool *shift)
@@ -85,36 +95,114 @@ static bool map_key(SDL_Keycode sym, uint8_t *key, bool *shift)
     }
 }
 
+static void press(SDL_Keycode sym, uint8_t key, bool shift, bool from_char)
+{
+    if (nheld == (int)(sizeof(held) / sizeof(held[0])))
+        return;
+    bool synth = key && shift && !southbridge_shift_held(picocalc_sim_picocalc.sb);
+    if (synth)
+        picocalc_sim_keys_press(PC_KEY_LSHIFT);
+    if (key)
+        picocalc_sim_keys_press(key);
+    held[nheld++] = (held_t){sym, key, synth, from_char, held_seq++};
+}
+
+static void release(int i)
+{
+    if (held[i].key)
+        picocalc_sim_keys_release(held[i].key);
+    if (held[i].synth_shift)
+        picocalc_sim_keys_release(PC_KEY_LSHIFT);
+    held[i] = held[--nheld];
+}
+
 static void key_down(SDL_Keycode sym)
 {
     uint8_t key;
     bool shift;
-    if (!map_key(sym, &key, &shift) || nheld == (int)(sizeof(held) / sizeof(held[0])))
-        return;
-    bool synth = shift && !southbridge_shift_held(picocalc_sim_picocalc.sb);
-    if (synth)
-        picocalc_sim_keys_press(PC_KEY_LSHIFT);
-    picocalc_sim_keys_press(key);
-    held[nheld++] = (held_t){sym, key, synth};
+    if (map_key(sym, &key, &shift))
+        press(sym, key, shift, false);
 }
 
 static void key_up(SDL_Keycode sym)
 {
     for (int i = 0; i < nheld; i++) {
-        if (held[i].sym != sym)
-            continue;
-        picocalc_sim_keys_release(held[i].key);
-        if (held[i].synth_shift)
-            picocalc_sim_keys_release(PC_KEY_LSHIFT);
-        held[i] = held[--nheld];
-        return;
+        if (!held[i].from_char && held[i].sym == sym) {
+            release(i);
+            return;
+        }
     }
 }
+
+#ifdef SDL_PLATFORM_WINDOWS
+// Remote Desktop in its Unicode mode, and other tools that type for a person, send characters as
+// VK_PACKET keystrokes, which carry no scancode for SDL to report a key from. TranslateMessage
+// turns each into a WM_CHAR with the character, so the PicoCalc is typed from that instead.
+static bool char_due;
+static int ups_due;
+
+static void char_up(void)
+{
+    int oldest = -1;
+    for (int i = 0; i < nheld; i++)
+        if (held[i].from_char && (oldest < 0 || held[i].seq < held[oldest].seq))
+            oldest = i;
+    if (oldest >= 0)
+        release(oldest);
+}
+
+static bool SDLCALL windows_message(void *userdata, MSG *msg)
+{
+    (void)userdata;
+    switch (msg->message) {
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+        if (msg->wParam != VK_PACKET) {
+            // The character of an ordinary key is SDL's to make text of.
+            char_due = false;
+            ups_due = 0;
+            return true;
+        }
+        // Bit 30 is set on the repeats of a key held down, which the PicoCalc's keyboard lacks.
+        if (!(msg->lParam & (1L << 30))) {
+            TranslateMessage(msg);
+            char_due = true;
+        }
+        return false;
+    case WM_KEYUP:
+    case WM_SYSKEYUP:
+        if (msg->wParam != VK_PACKET)
+            return true;
+        if (char_due)
+            ups_due++;
+        else
+            char_up();
+        return false;
+    case WM_CHAR:
+        if (!char_due)
+            return true;
+        char_due = false;
+        // A text field or the terminal takes the character as text, through SDL.
+        bool to_ui = ui_wants_keyboard() || !picocalc_sim_machine_running();
+        uint8_t key = 0;
+        bool shift = false;
+        if (to_ui || msg->wParam >= 0x80 || !picocalc_sim_keys_for_char((char)msg->wParam, &key, &shift))
+            key = 0;
+        press(0, key, shift, true);
+        // A key let go before its character came, as a fast injection can, is let go now.
+        for (; ups_due > 0; ups_due--)
+            char_up();
+        return to_ui;
+    default:
+        return true;
+    }
+}
+#endif
 
 static void release_all(void)
 {
     while (nheld)
-        key_up(held[nheld - 1].sym);
+        release(nheld - 1);
 }
 
 // A key held through the power switch is down as the PicoCalc starts, which is how uf2loader is
@@ -198,6 +286,9 @@ int picocalc_sim_frontend_sdl_run(void)
         picocalc_sim_log("SDL could not start (%s); running headless", SDL_GetError());
         return picocalc_sim_frontend_headless_run();
     }
+#ifdef SDL_PLATFORM_WINDOWS
+    SDL_SetWindowsMessageHook(windows_message, NULL);
+#endif
     SDL_Window *window = create_window();
     if (!window) {
         picocalc_sim_log("SDL window failed (%s); running headless", SDL_GetError());

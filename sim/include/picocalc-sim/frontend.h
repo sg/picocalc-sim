@@ -23,6 +23,8 @@ bool picocalc_sim_screenshot_auto(char *path, size_t pathlen, char *why, size_t 
 // Physical key presses on the PicoCalc keyboard, as a person would make them.
 void picocalc_sim_keys_press(uint8_t key);
 void picocalc_sim_keys_release(uint8_t key);
+// The PicoCalc key that types c, and whether Shift has to be held for it; false if it has none.
+bool picocalc_sim_keys_for_char(char c, uint8_t *key, bool *shift);
 // Types one character, pressing Shift around it when the PicoCalc needs it; false if it has no key.
 bool picocalc_sim_keys_type_char(char c, unsigned hold_ms, unsigned gap_ms);
 // Presses a chord such as "ctrl+alt+del", "shift+up", "brk" or "enter".

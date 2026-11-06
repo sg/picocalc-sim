@@ -48,8 +48,7 @@ void picocalc_sim_keys_release(uint8_t key)
 static const char shifted_from[] = "1234567890-=[]\\;',./`";
 static const char shifted_to[] = "!@#$%^&*()_+{}|:\"<>?~";
 
-// The physical key that produces c, and whether Shift has to be held for it.
-static bool key_for_char(char c, uint8_t *key, bool *shift)
+bool picocalc_sim_keys_for_char(char c, uint8_t *key, bool *shift)
 {
     *shift = false;
     if (c >= 'a' && c <= 'z') {
@@ -97,7 +96,7 @@ bool picocalc_sim_keys_type_char(char c, unsigned hold_ms, unsigned gap_ms)
 {
     uint8_t key;
     bool shift;
-    if (!key_for_char(c, &key, &shift))
+    if (!picocalc_sim_keys_for_char(c, &key, &shift))
         return false;
     // Caps Lock flips letters, so typing a given case may need Shift the other way.
     picocalc_sim_machine_lock();
@@ -167,7 +166,7 @@ bool picocalc_sim_keys_chord(const char *spec, unsigned hold_ms)
                     break;
                 }
             }
-            if (!found && strlen(tok) == 1 && !key_for_char(tok[0], &key, &need_shift))
+            if (!found && strlen(tok) == 1 && !picocalc_sim_keys_for_char(tok[0], &key, &need_shift))
                 return false;
             if (!found && strlen(tok) != 1)
                 return false;

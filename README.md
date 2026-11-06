@@ -371,7 +371,9 @@ chords its keyboard controller uses for them:
 | **F12** | the Pico's reset; **Shift+F12** resets into BOOTSEL |
 
 Drop a UF2 file on the window to flash it, or a `.img` file to insert it as the SD card. Holding a
-key does not auto-repeat, as on the real keyboard. Key mapping assumes a US layout. When the
+key does not auto-repeat, as on the real keyboard. Key mapping assumes a US layout. On Windows,
+characters that Remote Desktop and similar tools send as Unicode rather than as keys are typed with
+the PicoCalc keys for them. When the
 firmware powers the PicoCalc off, any key powers it back on. A key held while the machine restarts
 is still down as it powers on. Keys go to the PicoCalc except while one of picocalc-sim's own text
 fields has them.
