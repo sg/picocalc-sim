@@ -61,6 +61,11 @@ jobs:
       - name: Enumerate the RP2040 ROM's USB boot on the emulated cable
         run: src/ci/usb-test.sh build/picocalc-sim pico 2e8a:0003
 
+      - name: Talk to a USB serial port over the USB console
+        run: |
+          src/ci/usbserial-test.sh build/picocalc-sim src/tests/usbserial/usbserial-pico2.uf2
+          src/ci/usbserial-test.sh build/picocalc-sim src/tests/usbserial/usbserial-pico.uf2
+
       - name: Boot, restart and enumerate the RP2350 firmware and USB boot on Raspberry Pi's A2 and A4 ROMs
         run: |
           for rev in A2 A4; do
@@ -70,6 +75,7 @@ jobs:
             src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
             src/ci/usb-test.sh build/picocalc-sim pico2 2e8a:000f
+            src/ci/usbserial-test.sh build/picocalc-sim src/tests/usbserial/usbserial-pico2.uf2
           done
 
       - name: Build for Windows
@@ -83,6 +89,7 @@ jobs:
           src/ci/wifi-test.sh build-win/picocalc-sim-wine build-win/picocalc-sim-mkcard-wine fw/picocalc-ftpserver-*.uf2
           src/ci/trustzone-test.sh build-win/picocalc-sim-wine src/tests/trustzone/trustzone.uf2
           src/ci/usb-test.sh build-win/picocalc-sim-wine pico 2e8a:0003
+          src/ci/usbserial-test.sh build-win/picocalc-sim-wine src/tests/usbserial/usbserial-pico2.uf2
 
       - name: Pack the binaries
         run: |

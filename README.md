@@ -85,7 +85,10 @@ board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-
 files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`), and runs `tests/trustzone`,
 a bare-metal check of the security extension, which none of that firmware uses
 (`ci/trustzone-test.sh`; `tests/trustzone/build.sh` rebuilds its UF2 with `arm-none-eabi-gcc`), and
-checks that the boot ROMs' USB boot enumerates on the emulated cable (`ci/usb-test.sh`), then
+checks that the boot ROMs' USB boot enumerates on the emulated cable (`ci/usb-test.sh`) and that
+`tests/usbserial`, a self-checking USB serial port built with the Pico SDK, gets a line from the
+terminal and sends 100 back over `--usb-console` (`ci/usbserial-test.sh`;
+`tests/usbserial/build.sh` rebuilds its UF2s), then
 cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `picocalc-sim.exe`
 is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
@@ -251,11 +254,32 @@ usb: 2e8a:000f "RP2350 Boot" from "Raspberry Pi", serial "E3502C418F3B1D5A", USB
 ```
 
 That is Raspberry Pi's RP2350 ROM in BOOTSEL; the RP2040's ROM gives `2e8a:0003 "RP2 Boot"`, and
-firmware built with the SDK's USB stdio gives its CDC serial port. The host does nothing with the
-interfaces yet, so the boot ROM's drive and a firmware's serial port go unused. A device that
-disconnects, as across a reset, is enumerated again when it reconnects. The cable can be plugged
-and unplugged while the firmware runs, from Settings or a script's `usb on` and `usb off`.
-`PICOCALC_SIM_USB_DEBUG=1` logs each request and its outcome.
+firmware built with the SDK's USB stdio gives its CDC serial port. A device that disconnects, as
+across a reset, is enumerated again when it reconnects. A device that is slow to answer as it
+starts, such as MicroPython formatting its flash on first boot, is retried as Linux would, up to 8
+times. The cable can be plugged and unplugged while the firmware runs, from Settings or a script's
+`usb on` and `usb off`. `PICOCALC_SIM_USB_DEBUG=1` logs each request and each packet on the serial
+port, with the emulated time.
+
+`--usb-console` plugs the cable in and makes the terminal picocalc-sim runs in a serial terminal on
+the firmware's USB serial port, the CDC ACM interface that the SDK's USB stdio, TinyUSB's CDC class
+and MicroPython present. The host opens the port as Linux does when a program opens it: 115200
+baud, 8N1, then DTR and RTS, which the SDK's USB stdio waits for before it sends anything. What the
+firmware sends is printed, and what is typed goes to it key by key and unechoed, since the firmware
+echoes it. Ctrl+C goes to the firmware; Ctrl+] quits picocalc-sim. Input piped in rather than typed
+waits for the port to open, and output to a file or pipe loses its carriage returns:
+
+```sh
+build/picocalc-sim --usb-console RPI_PICO2-20260824-v1.29.0.uf2
+>>> print(6*7)
+42
+```
+
+A script's `usb send TEXT` sends text to the port, with C escapes (`\r` for Enter). Without
+`--usb-console` the port stays closed, as on a computer with no terminal program open. Firmware
+that puts its console on UART0 instead, as the PicoCalc's PicoMite build does for the PicoCalc's
+own USB-C serial port, prints nothing here; `--console` shows UART0. The boot ROM's drive and other
+interfaces go unused.
 
 ### Sound
 
@@ -358,6 +382,7 @@ not comments. Headless runs ignore it, so scripts and CI see only their own opti
 | `--forward [ADDR:]HOSTPORT:PORT` | let host connections to HOSTPORT reach the firmware's TCP PORT (repeatable) |
 | `--no-wifi` | leave the W boards' radio out |
 | `--usb` | plug the board's USB port into a host that enumerates the firmware's device (see [USB](#usb)) |
+| `--usb-console` | `--usb`, with the terminal on the firmware's USB serial port; Ctrl+] quits |
 | `--trace` | log faults, unknown ROM calls and bus errors, and dump the cores on exit |
 
 ### Scripts and headless runs
@@ -379,7 +404,9 @@ quit 0
 `key` takes chords such as `ctrl+alt+del`, `shift+up`, `brk` or `f6`. `restart` stops the
 machine and starts it again as a fresh launch with the same options would, so the UF2 given on
 the command line is written again and the card stays in the slot (unlike the menu's Restart).
-`usb on` and `usb off` plug the USB cable in and pull it out. `quit N` sets the exit code.
+`usb on` and `usb off` plug the USB cable in and pull it out, and `usb send TEXT` sends text (with
+`type`'s escapes, plus `\r`) to the firmware's USB serial port, which `--usb-console` opens. `quit N`
+sets the exit code.
 
 ## How it works
 
@@ -478,7 +505,8 @@ the command line is written again and the card stays in the slot (unlike the men
   or per two, stalls, NAKs, aborts, and suspend after 3 ms without bus activity. `emu/usbhost.c` is
   the host on the cable. Each of its transactions happens at once but is followed by the time its
   packets would take at 12 Mb/s, and one the device NAKs is retried sooner or later depending on how
-  long the device has had nothing.
+  long the device has had nothing. On a CDC ACM port it keeps a bulk IN transfer waiting, as Linux's
+  cdc_acm does, and sends from a 4 KB buffer that `frontend/serial.c` fills from the terminal.
 - **Sound.** `emu/pinwave.c` records the waveform of the audio pins without touching the chip: a
   PWM output as its slice settings, so a fast carrier costs nothing per cycle, and any other
   driver as edges stamped with the time the core or PIO state machine made them. It integrates
@@ -500,6 +528,7 @@ Tested here with UF2s built from `../pcsh`, `../picocalc_lua`, `../picocalc-z80`
 | uf2loader 2.4.1 | menu, flashing and chaining apps | not tried | not tried | menu, flashing and booting apps | not tried |
 | PicoCalc shell 1.2 | running apps by name, `menu`, `bootsel`, its patched loader | not tried | not tried | RP2350 only | RP2350 only |
 | PicoMite 6.00.02RC23 | MMBasic prompt after its first-boot flash format (about 20 s), `PLAY TONE` | not tried | same, on the non-W Plus 2 | not tried | not tried |
+| MicroPython 1.29 | REPL on the USB serial console (`RPI_PICO2` build) | not tried | not tried | REPL on the USB serial console (`RPI_PICO` build) | not tried |
 
 Not emulated yet, or not faithfully:
 
@@ -518,8 +547,8 @@ Not emulated yet, or not faithfully:
   that lands within a fraction of a nanosecond of a change, which varies from read to read on the
   board, gives the same answer every time here.
 - **USB** has the controller only in device mode (host mode keeps its registers but moves nothing),
-  and the host on the cable only enumerates: no class driver uses the device's interfaces. The
-  stand-in RP2350 ROM has no USB boot; Raspberry Pi's has.
+  and the host on the cable drives only a CDC ACM serial port, and only the first: the boot ROM's
+  drive and other interfaces go unused. The stand-in RP2350 ROM has no USB boot; Raspberry Pi's has.
 - **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
   RP2040. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
   flash reads give zeros; what a real RP2040 returns there is unverified.

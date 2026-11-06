@@ -475,7 +475,8 @@ struct chip {
     // driving a pin from its watch callback sets ext_at to when its own output changes, or leaves
     // it 0 for at once.
     uint64_t pin_t, ext_at;
-    uint32_t qspi_ctrl[6];
+    // USB DP and DM, then the QSPI pins: SCLK, SS, SD0 to SD3.
+    uint32_t qspi_ctrl[8];
     gpio_watch_t *watch[NUM_GPIO_MAX];
 
     uint32_t sio_out[2], sio_oe[2];
@@ -736,6 +737,9 @@ void usbhost_init(chip_t *m);
 void usbhost_free(chip_t *m);
 // The device's pull-up has appeared on D+ or gone.
 void usbhost_pullup(chip_t *m, bool on);
+// Queues bytes for the device's serial port while the host has it open, giving how many fit.
+size_t usbhost_serial_send(chip_t *m, const uint8_t *data, size_t len);
+bool usbhost_serial_is_open(chip_t *m);
 
 void cyw43_init(chip_t *m);
 void cyw43_free(chip_t *m);

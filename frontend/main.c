@@ -55,6 +55,8 @@ static void usage(const char *argv0)
            "      --no-wifi          leave the W boards' radio out, as if it never answered\n"
            "      --usb              plug the board's USB port into a host that enumerates the device the\n"
            "                         firmware presents and logs what it finds\n"
+           "      --usb-console      --usb, with this terminal on the firmware's USB serial port: what it\n"
+           "                         sends is printed and what is typed goes to it; Ctrl+] quits\n"
            "      --trace            log faults, unknown ROM calls and bus errors\n"
            "\n"
            "In the window, the menus change these settings and restart the machine. F11 saves a\n"
@@ -113,6 +115,7 @@ int main(int argc, char **argv)
         OPT_FORWARD,
         OPT_NO_WIFI,
         OPT_USB,
+        OPT_USB_CONSOLE,
         OPT_VOLUME,
         OPT_MUTE,
         OPT_WAV,
@@ -142,6 +145,7 @@ int main(int argc, char **argv)
         {"forward", required_argument, NULL, OPT_FORWARD},
         {"no-wifi", no_argument, NULL, OPT_NO_WIFI},
         {"usb", no_argument, NULL, OPT_USB},
+        {"usb-console", no_argument, NULL, OPT_USB_CONSOLE},
         {"volume", required_argument, NULL, OPT_VOLUME},
         {"mute", no_argument, NULL, OPT_MUTE},
         {"wav", required_argument, NULL, OPT_WAV},
@@ -185,6 +189,7 @@ int main(int argc, char **argv)
             break;
         case OPT_NO_WIFI: picocalc_sim_opts.no_wifi = true; break;
         case OPT_USB: picocalc_sim_opts.usb = true; break;
+        case OPT_USB_CONSOLE: picocalc_sim_opts.usb = picocalc_sim_opts.usb_console = true; break;
         case OPT_VOLUME: {
             int v = atoi(optarg);
             picocalc_sim_opts.volume = v < 0 ? 0 : v > 100 ? 100 : v;
@@ -225,6 +230,8 @@ int main(int argc, char **argv)
 
     if (picocalc_sim_opts.script_path)
         picocalc_sim_script_start(picocalc_sim_opts.script_path);
+    if (picocalc_sim_opts.usb_console)
+        picocalc_sim_usb_console_start();
 
     int code;
     if (window)

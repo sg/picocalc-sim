@@ -147,6 +147,22 @@ void picocalc_sim_usb_plug(bool plugged)
     picocalc_sim_machine_unlock();
 }
 
+size_t picocalc_sim_usb_serial_send(const uint8_t *data, size_t len)
+{
+    picocalc_sim_machine_lock();
+    size_t n = chip_ready ? usbhost_serial_send(&chip, data, len) : 0;
+    picocalc_sim_machine_unlock();
+    return n;
+}
+
+bool picocalc_sim_usb_serial_is_open(void)
+{
+    picocalc_sim_machine_lock();
+    bool open = chip_ready && usbhost_serial_is_open(&chip);
+    picocalc_sim_machine_unlock();
+    return open;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Flash persistence
 

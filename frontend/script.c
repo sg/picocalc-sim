@@ -11,31 +11,58 @@
 //   wait <ms>            type <text>          key <chord>
 //   screenshot <file>    restart              quit [code]          # comment
 //   usb on|off           (plugs the board's USB port into a host, or unplugs it)
-// type takes the rest of the line with C escapes (\n \t \e \b \\); key takes chords such as
-// ctrl+c, shift+up, brk or f6.
+//   usb send <text>      (sends text to the firmware's USB serial port, which --usb-console opens)
+// type and usb send take the rest of the line with C escapes (\n \r \t \e \b \\); key takes
+// chords such as ctrl+c, shift+up, brk or f6.
 
 #define KEY_HOLD_MS 30
 #define KEY_GAP_MS 40
 
 static char *script_path;
 
-static void unescape_and_type(const char *s)
+// Undoes the C escapes in s, in place, giving the length.
+static size_t unescape(char *s)
 {
-    for (; *s; s++) {
-        char c = *s;
-        if (c == '\\' && s[1]) {
-            s++;
-            switch (*s) {
+    char *o = s;
+    for (const char *p = s; *p; p++) {
+        char c = *p;
+        if (c == '\\' && p[1]) {
+            p++;
+            switch (*p) {
             case 'n': c = '\n'; break;
+            case 'r': c = '\r'; break;
             case 't': c = '\t'; break;
             case 'e': c = 0x1b; break;
             case 'b': c = '\b'; break;
             case '\\': c = '\\'; break;
-            default: c = *s; break;
+            default: c = *p; break;
             }
         }
-        if (!picocalc_sim_keys_type_char(c, KEY_HOLD_MS, KEY_GAP_MS))
-            picocalc_sim_log("script: the PicoCalc has no key for 0x%02x", (unsigned char)c);
+        *o++ = c;
+    }
+    return (size_t)(o - s);
+}
+
+static void unescape_and_type(char *s)
+{
+    size_t n = unescape(s);
+    for (size_t i = 0; i < n; i++)
+        if (!picocalc_sim_keys_type_char(s[i], KEY_HOLD_MS, KEY_GAP_MS))
+            picocalc_sim_log("script: the PicoCalc has no key for 0x%02x", (unsigned char)s[i]);
+}
+
+static void usb_send(int lineno, char *s)
+{
+    size_t n = unescape(s), off = 0;
+    while (off < n && !picocalc_sim_quit_requested(NULL)) {
+        size_t k = picocalc_sim_usb_serial_send((const uint8_t *)s + off, n - off);
+        if (!k && !picocalc_sim_usb_serial_is_open()) {
+            picocalc_sim_log("script line %d: the USB serial port is not open", lineno);
+            return;
+        }
+        off += k;
+        if (!k)
+            picocalc_sim_sleep_ns(10000000ull);
     }
 }
 
@@ -85,6 +112,8 @@ static void *script_thread(void *arg)
         } else if (!strcmp(cmd, "usb") && (!strcmp(rest, "on") || !strcmp(rest, "off"))) {
             picocalc_sim_opts.usb = !strcmp(rest, "on");
             picocalc_sim_usb_plug(picocalc_sim_opts.usb);
+        } else if (!strcmp(cmd, "usb") && !strncmp(rest, "send ", 5)) {
+            usb_send(lineno, rest + 5);
         } else if (!strcmp(cmd, "quit")) {
             fclose(f);
             picocalc_sim_request_quit(*rest ? atoi(rest) : 0);

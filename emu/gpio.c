@@ -38,7 +38,7 @@ void gpio_reset(chip_t *m)
         m->gpio[i] = (gpio_pin_t){.ctrl = FUNC_NULL, .ext_driven = ext, .ext_level = lvl};
         m->pads[i] = PAD_ISO | PAD_IE | PAD_PDE | (1u << 4) | 2;
     }
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 8; i++)
         m->qspi_ctrl[i] = 0;
     for (int i = 0; i < 3; i++)
         m->pio[i].pin_owned = 0;
@@ -484,20 +484,47 @@ static inline bool qspi_ns_blocked(const chip_t *m, unsigned i)
     return access_ns(m) && !((m->accessctrl[4] >> (24 + i)) & 1);
 }
 
+// A QSPI pin as it is between transactions, which take no time here: SCLK driven low, chip select
+// driven high unless direct mode asserts it, and the data lines left to their pulls; then the
+// pin's output and output-enable overrides.
+static uint32_t qspi_status(chip_t *m, unsigned i)
+{
+    bool out = false, oe = i == 2 || i == 3;
+    if (i == 3)
+        out = !(m->qmi.direct_csr & (1u << 2));
+    uint32_t ctrl = m->qspi_ctrl[i];
+    switch ((ctrl >> 12) & 3) {
+    case 1: out = !out; break;
+    case 2: out = false; break;
+    case 3: out = true; break;
+    default: break;
+    }
+    switch ((ctrl >> 14) & 3) {
+    case 1: oe = !oe; break;
+    case 2: oe = false; break;
+    case 3: oe = true; break;
+    default: break;
+    }
+    bool in = oe ? out : i >= 3 && ((gpio_in_all(m) >> (56 + i)) & 1);
+    return (out ? 1u << 9 : 0) | (oe ? 1u << 13 : 0) | (in ? 1u << 17 : 0);
+}
+
 uint32_t ioqspi_read(chip_t *m, uint32_t off)
 {
     if (off < 0x40) {
         unsigned i = off >> 3;
-        if ((off & 4) && !qspi_ns_blocked(m, i))
-            return i < 6 ? m->qspi_ctrl[i] : 0;
-        return 0;
+        if (qspi_ns_blocked(m, i))
+            return 0;
+        if (off & 4)
+            return m->qspi_ctrl[i];
+        return i >= 2 ? qspi_status(m, i) : 0;
     }
     return 0;
 }
 
 void ioqspi_write(chip_t *m, uint32_t off, uint32_t v)
 {
-    if (off < 0x40 && (off & 4) && (off >> 3) < 6 && !qspi_ns_blocked(m, off >> 3))
+    if (off < 0x40 && (off & 4) && !qspi_ns_blocked(m, off >> 3))
         m->qspi_ctrl[off >> 3] = v;
 }
 

@@ -910,6 +910,9 @@ static void exception_entry(cpu_t *c, unsigned n, bool to_secure, uint32_t ret)
         return;
     }
     c->r[15] = vec & ~1u;
+    // Taking an exception sets the event register, as returning from one does, so a WFE just after
+    // an interrupt that came in first does not sleep.
+    c->event = true;
     c->cyc += 12;
     c->check_exc = true;
 }
@@ -1017,6 +1020,7 @@ static void exception_return(cpu_t *c, uint32_t exc_ret, uint32_t pc)
     if (to_secure && c->v8)
         c->control = (c->control & ~CONTROL_SFPA) | (frame[7] & (1u << 20) ? CONTROL_SFPA : 0);
     c->excl_valid = false;
+    c->event = true;
     load_sp(c);
     c->cyc += 12;
     c->check_exc = true;
