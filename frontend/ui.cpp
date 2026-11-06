@@ -1114,14 +1114,16 @@ void keys_contents()
 void about_contents()
 {
     int v = SDL_GetVersion();
-    ImGui::TextWrapped("picocalc-sim - Copyright 2026, Steve Gibson <steve@stevegibson.com>");
-    ImGui::Spacing();
-    ImGui::TextWrapped("picocalc-sim emulates a ClockWorkPi PicoCalc device with an RP2350 or RP2040 board.");
+    ImGui::Text("picocalc-sim - %s", picocalc_sim_version);
+    ImGui::TextWrapped("A PicoCalc simulator/emulator (RP2350 or RP2040)");
+    ImGui::TextWrapped("Copyright 2026, Steve Gibson <steve@stevegibson.com>");
+    ImGui::TextUnformatted("(MIT license)");
     ImGui::Spacing();
     ImGui::Text("SDL %d.%d.%d (zlib license)", SDL_VERSIONNUM_MAJOR(v), SDL_VERSIONNUM_MINOR(v),
                 SDL_VERSIONNUM_MICRO(v));
     ImGui::Text("Dear ImGui %s (MIT license)", IMGUI_VERSION);
     ImGui::TextUnformatted("lwIP (BSD license)");
+    ImGui::TextUnformatted("FatFs R0.15 in picocalc-sim-mkcard (BSD-style license)");
     ImGui::TextUnformatted("Raspberry Pi's RP2350 boot ROMs A2 and A4 (BSD license)");
 }
 

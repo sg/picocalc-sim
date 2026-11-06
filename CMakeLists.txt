@@ -8,7 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(FATFS_DIR "" CACHE PATH "FatFs sources (ff.c); found or fetched when empty")
+set(PICOCALC_SIM_VERSION "" CACHE STRING "Version to report, such as v1.2.3, for a build outside a git checkout; git describe when empty")
 set(LWIP_DIR "" CACHE PATH "lwIP sources (src/core/tcp.c); found or fetched when empty")
 option(PICOCALC_SIM_SDL "Build the SDL3 window frontend" ON)
 option(PICOCALC_SIM_FETCH_SDL "Download and build SDL3 when it is not installed" ON)
@@ -113,6 +113,14 @@ foreach(rev A2 A4)
         VERBATIM)
     target_sources(picocalc_sim_objs PRIVATE ${out})
 endforeach()
+set(version_c ${PICOCALC_SIM_GENERATED}/version.c)
+add_custom_target(picocalc_sim_version
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${version_c}
+            -DVERSION=${PICOCALC_SIM_VERSION} -P ${CMAKE_SOURCE_DIR}/cmake/Version.cmake
+    BYPRODUCTS ${version_c}
+    VERBATIM)
+target_sources(picocalc_sim_objs PRIVATE ${version_c})
+add_dependencies(picocalc_sim_objs picocalc_sim_version)
 target_include_directories(picocalc_sim_objs PUBLIC emu sim/include)
 target_compile_options(picocalc_sim_objs PUBLIC -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(picocalc_sim_objs PUBLIC picocalc_sim_lwip Threads::Threads m)

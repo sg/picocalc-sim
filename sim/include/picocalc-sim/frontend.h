@@ -8,6 +8,9 @@
 extern "C" {
 #endif
 
+// Such as "v1.2.3", or "v1.2.3-4-gabcdef0-dirty" between releases.
+extern const char picocalc_sim_version[];
+
 int picocalc_sim_frontend_sdl_run(void);
 int picocalc_sim_frontend_headless_run(void);
 bool picocalc_sim_frontend_sdl_available(void);
