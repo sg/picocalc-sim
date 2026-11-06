@@ -997,6 +997,11 @@ void devices_tab()
         remember_int("volume", picocalc_sim_opts.volume);
     if (ImGui::Checkbox("Mute", &picocalc_sim_opts.mute))
         remember_on("mute", picocalc_sim_opts.mute);
+}
+
+void screenshots_tab()
+{
+    ImGui::SeparatorText("Now");
     std::string shots = store.shots;
     if (path_field("Screenshots", "folder for F11's screenshots", &shots, PICK_SHOTS))
         choose_shots(shots.c_str());
@@ -1024,12 +1029,16 @@ void settings_window()
             devices_tab();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Screenshots")) {
+            screenshots_tab();
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
     ImGui::PopItemWidth();
     ImGui::Separator();
     if (pending == applied) {
-        ImGui::TextDisabled("Nothing waits for a restart.");
+        ImGui::TextDisabled("No settings are waiting on a restart.");
     } else {
         if (ImGui::Button("Restart now"))
             restart(false);
@@ -1037,7 +1046,7 @@ void settings_window()
         if (ImGui::Button("Undo"))
             pending = applied;
         ImGui::SameLine();
-        ImGui::TextUnformatted("Some changes wait for a restart.");
+        ImGui::TextUnformatted("Some settings are waiting on a restart.");
     }
     ImGui::End();
 }
