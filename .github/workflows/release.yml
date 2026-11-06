@@ -1,0 +1,23 @@
+# Starts the build, tests and draft release for a pushed version tag. They run on a self-hosted
+# runner that only the private sg/picocalc-sim-ci repo can use, so nothing in this public repo,
+# including a pull request, can run code on it; this job itself runs on GitHub's own machines.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  start:
+    if: github.repository == 'sg/picocalc-sim'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start sg/picocalc-sim-ci's Release workflow
+        env:
+          # fine-grained, limited to running workflows in sg/picocalc-sim-ci
+          GH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh workflow run release.yml --repo sg/picocalc-sim-ci --field tag="$TAG"
