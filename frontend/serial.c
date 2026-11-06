@@ -14,6 +14,7 @@
 #endif
 
 #include "picocalc-sim/sim.h"
+#include "terminal.h"
 
 // The terminal picocalc-sim runs in as the far end of the firmware's USB serial port, as a serial
 // terminal program on the computer would be: what the firmware sends is printed, and what is typed
@@ -87,7 +88,9 @@ static void make_raw(void)
 
 void picocalc_sim_usb_serial_out(const uint8_t *data, size_t len)
 {
-    if (!picocalc_sim_opts.usb_console)
+    if (picocalc_sim_usb_serial_attached(PICOCALC_SIM_TERMINAL_WINDOW))
+        term_feed(data, len);
+    if (!picocalc_sim_usb_serial_attached(PICOCALC_SIM_TERMINAL_CONSOLE))
         return;
     // A log or a pipe gets lines without the carriage returns a terminal needs.
     if (out_tty)
@@ -130,6 +133,7 @@ static void *reader(void *arg)
 
 void picocalc_sim_usb_console_start(void)
 {
+    picocalc_sim_usb_serial_attach(PICOCALC_SIM_TERMINAL_CONSOLE, true);
     out_tty = isatty(1);
     in_tty = isatty(0);
 #ifdef _WIN32

@@ -25,8 +25,8 @@ static char path[4096];
 // picocalc-sim.
 static const char *const known[] = {
     "board",   "rom",     "rp2350-rom", "flash",   "card",     "fast",   "unthrottled", "trace",
-    "console", "no-wifi", "wifi-ap",    "forward", "usb",      "battery",  "charging", "volume",
-    "mute",    "scale",   "screenshot-dir",
+    "console", "no-wifi", "wifi-ap",    "forward", "usb",      "usb-terminal", "battery", "charging",
+    "volume",  "mute",    "scale",      "screenshot-dir",
 };
 
 static bool is_known(const char *key)
@@ -146,6 +146,8 @@ static void apply(const char *key, const char *v)
         o->forwards[o->forward_count++] = copy(v);
     else if (!strcmp(key, "usb"))
         parse_bool(key, v, &o->usb);
+    else if (!strcmp(key, "usb-terminal"))
+        parse_bool(key, v, &o->usb_terminal);
     else if (!strcmp(key, "battery"))
         parse_int(key, v, 0, 100, &o->battery);
     else if (!strcmp(key, "charging"))

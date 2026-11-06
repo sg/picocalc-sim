@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -9,6 +10,8 @@
 #include <vector>
 
 #include "imgui.h"
+// Only to ask the SDL backend for text input while the terminal has the keyboard.
+#include "imgui_internal.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "misc/cpp/imgui_stdlib.h"
@@ -16,6 +19,7 @@
 #include "picocalc-sim/devices.h"
 #include "picocalc-sim/frontend.h"
 #include "picocalc-sim/sim.h"
+#include "terminal.h"
 #include "ui.h"
 
 namespace {
@@ -26,8 +30,12 @@ float content_scale = 1.0f;
 float menu_height;
 Uint32 dialog_event;
 
-bool show_settings, show_log, show_keys, show_about;
+bool show_settings, show_log, show_keys, show_about, show_terminal;
 bool ask_erase;
+// The terminal's character cell, and what it has to send that the host has not taken yet.
+float term_char_w, term_line_h;
+std::string term_input;
+unsigned term_seen;
 
 struct access_point {
     std::string ssid, password;
@@ -418,6 +426,279 @@ const char *machine_status()
     return "";
 }
 
+// The terminal sits beside the LCD, the window widening to make room, rather than over it.
+float terminal_width()
+{
+    if (!show_terminal)
+        return 0;
+    const ImGuiStyle &st = ImGui::GetStyle();
+    return term_char_w * TERM_COLS + st.ScrollbarSize + 2 * (st.WindowPadding.x + st.ChildBorderSize) + 2;
+}
+
+void set_terminal(bool on)
+{
+    show_terminal = on;
+    picocalc_sim_opts.usb_terminal = on;
+    picocalc_sim_usb_serial_attach(PICOCALC_SIM_TERMINAL_WINDOW, on);
+    remember_on("usb-terminal", on);
+    ui_fit_window(picocalc_sim_opts.scale);
+}
+
+void term_send(const char *s, size_t n)
+{
+    term_input.append(s, n);
+}
+
+// A paste ends lines with Enter, as typing them would.
+void term_paste()
+{
+    const char *clip = ImGui::GetClipboardText();
+    for (const char *p = clip ? clip : ""; *p; p++) {
+        if (*p == '\r' && p[1] == '\n')
+            continue;
+        char c = *p == '\n' ? '\r' : *p;
+        term_send(&c, 1);
+    }
+}
+
+void term_copy()
+{
+    std::string all;
+    term_lock();
+    unsigned n = term_count();
+    for (unsigned i = 0; i < n; i++) {
+        const term_cell_t *l = term_line(i);
+        unsigned end = TERM_COLS;
+        while (end && l[end - 1].ch == ' ')
+            end--;
+        for (unsigned x = 0; x < end; x++)
+            all += l[x].ch;
+        all += '\n';
+    }
+    term_unlock();
+    while (all.size() > 1 && all[all.size() - 1] == '\n' && all[all.size() - 2] == '\n')
+        all.pop_back();
+    ImGui::SetClipboardText(all.c_str());
+}
+
+void term_keys()
+{
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::SetNextFrameWantCaptureKeyboard(true);
+    ImGui::GetCurrentContext()->PlatformImeData.WantTextInput = true;
+    bool ctrl = io.KeyCtrl && !io.KeyAlt;
+    if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_V)) {
+        term_paste();
+        return;
+    }
+    if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C)) {
+        term_copy();
+        return;
+    }
+    static const struct {
+        ImGuiKey key;
+        int code;
+    } special[] = {
+        {ImGuiKey_Enter, '\r'},       {ImGuiKey_KeypadEnter, '\r'},     {ImGuiKey_Backspace, 0x7f},
+        {ImGuiKey_Tab, '\t'},         {ImGuiKey_Escape, 0x1b},          {ImGuiKey_UpArrow, TERM_KEY_UP},
+        {ImGuiKey_DownArrow, TERM_KEY_DOWN}, {ImGuiKey_RightArrow, TERM_KEY_RIGHT},
+        {ImGuiKey_LeftArrow, TERM_KEY_LEFT}, {ImGuiKey_Home, TERM_KEY_HOME},
+        {ImGuiKey_End, TERM_KEY_END},  {ImGuiKey_Insert, TERM_KEY_INSERT}, {ImGuiKey_Delete, TERM_KEY_DELETE},
+        {ImGuiKey_PageUp, TERM_KEY_PAGE_UP}, {ImGuiKey_PageDown, TERM_KEY_PAGE_DOWN},
+    };
+    uint8_t buf[8];
+    for (const auto &k : special)
+        if (ImGui::IsKeyPressed(k.key))
+            term_send((const char *)buf, term_key_bytes(k.code, false, buf, sizeof(buf)));
+    if (ctrl) {
+        // Ctrl with a letter, or with [ \ ] for Esc, FS and GS, is a control code; the OS sends no
+        // text for it.
+        for (int k = ImGuiKey_A; k <= ImGuiKey_Z; k++)
+            if (ImGui::IsKeyPressed((ImGuiKey)k))
+                term_send((const char *)buf, term_key_bytes('a' + (k - ImGuiKey_A), true, buf, sizeof(buf)));
+        static const struct {
+            ImGuiKey key;
+            int ch;
+        } punct[] = {{ImGuiKey_LeftBracket, '['}, {ImGuiKey_Backslash, '\\'}, {ImGuiKey_RightBracket, ']'}};
+        for (const auto &p : punct)
+            if (ImGui::IsKeyPressed(p.key))
+                term_send((const char *)buf, term_key_bytes(p.ch, true, buf, sizeof(buf)));
+        return;
+    }
+    for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
+        unsigned c = io.InputQueueCharacters[i];
+        char u[4];
+        int n = 0;
+        if (c < 0x20 || c == 0x7f)
+            continue;
+        if (c < 0x80) {
+            u[n++] = (char)c;
+        } else if (c < 0x800) {
+            u[n++] = (char)(0xc0 | c >> 6);
+            u[n++] = (char)(0x80 | (c & 0x3f));
+        } else {
+            u[n++] = (char)(0xe0 | c >> 12);
+            u[n++] = (char)(0x80 | ((c >> 6) & 0x3f));
+            u[n++] = (char)(0x80 | (c & 0x3f));
+        }
+        term_send(u, (size_t)n);
+    }
+}
+
+// The 16 ANSI colours, as xterm shows them.
+ImU32 term_colour(uint8_t c, bool fg)
+{
+    static const ImU32 palette[16] = {
+        IM_COL32(0, 0, 0, 255),       IM_COL32(205, 0, 0, 255),     IM_COL32(0, 205, 0, 255),
+        IM_COL32(205, 205, 0, 255),   IM_COL32(0, 0, 238, 255),     IM_COL32(205, 0, 205, 255),
+        IM_COL32(0, 205, 205, 255),   IM_COL32(229, 229, 229, 255), IM_COL32(127, 127, 127, 255),
+        IM_COL32(255, 0, 0, 255),     IM_COL32(0, 255, 0, 255),     IM_COL32(255, 255, 0, 255),
+        IM_COL32(92, 92, 255, 255),   IM_COL32(255, 0, 255, 255),   IM_COL32(0, 255, 255, 255),
+        IM_COL32(255, 255, 255, 255),
+    };
+    if (c == TERM_DEFAULT)
+        return fg ? IM_COL32(204, 204, 204, 255) : IM_COL32(12, 12, 12, 255);
+    return palette[c & 15];
+}
+
+void term_draw_line(ImDrawList *dl, ImVec2 at, const term_cell_t *l, int cursor_col)
+{
+    for (unsigned x = 0; x < TERM_COLS;) {
+        const term_cell_t &c = l[x];
+        unsigned end = x + 1;
+        while (end < TERM_COLS && l[end].fg == c.fg && l[end].bg == c.bg && l[end].attr == c.attr)
+            end++;
+        uint8_t fgc = c.fg, bgc = c.bg;
+        // Bold brightens the eight basic colours, as most terminals show it.
+        if ((c.attr & TERM_BOLD) && fgc < 8)
+            fgc += 8;
+        ImU32 fg = term_colour(fgc, true), bg = term_colour(bgc, false);
+        if (c.attr & TERM_INVERSE)
+            std::swap(fg, bg);
+        ImVec2 a(at.x + x * term_char_w, at.y), b(at.x + end * term_char_w, at.y + term_line_h);
+        if (bg != term_colour(TERM_DEFAULT, false))
+            dl->AddRectFilled(a, b, bg);
+        char text[TERM_COLS + 1];
+        for (unsigned i = x; i < end; i++)
+            text[i - x] = l[i].ch;
+        dl->AddText(a, fg, text, text + (end - x));
+        if (c.attr & TERM_UNDERLINE)
+            dl->AddLine(ImVec2(a.x, b.y - 1), ImVec2(b.x, b.y - 1), fg);
+        x = end;
+    }
+    if (cursor_col >= 0) {
+        ImVec2 a(at.x + cursor_col * term_char_w, at.y);
+        dl->AddRectFilled(a, ImVec2(a.x + term_char_w, a.y + term_line_h), IM_COL32(204, 204, 204, 160));
+    }
+}
+
+const char *term_status(bool *unplugged)
+{
+    static char text[200];
+    char product[128];
+    *unplugged = false;
+    if (!picocalc_sim_machine_running())
+        return "The machine is stopped.";
+    switch (picocalc_sim_usb_serial_state(product, sizeof(product))) {
+    case PICOCALC_SIM_USB_SERIAL_UNPLUGGED:
+        *unplugged = true;
+        return "The USB cable is unplugged.";
+    case PICOCALC_SIM_USB_SERIAL_NO_DEVICE: return "Waiting for the firmware's USB device...";
+    case PICOCALC_SIM_USB_SERIAL_FAILED: return "The host could not enumerate the USB device.";
+    case PICOCALC_SIM_USB_SERIAL_NO_PORT: snprintf(text, sizeof(text), "%s has no USB serial port.", product); break;
+    case PICOCALC_SIM_USB_SERIAL_CLOSED: snprintf(text, sizeof(text), "Opening %s's serial port...", product); break;
+    default: snprintf(text, sizeof(text), "%s: serial port open", product); break;
+    }
+    return text;
+}
+
+void terminal_panel()
+{
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    float w = terminal_width();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - w, vp->Pos.y + menu_height));
+    ImGui::SetNextWindowSize(ImVec2(w, vp->Size.y - menu_height));
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar;
+    if (!ImGui::Begin("USB serial", nullptr, flags)) {
+        ImGui::End();
+        return;
+    }
+    bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    bool unplugged;
+    const char *status = term_status(&unplugged);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(status);
+    if (unplugged && picocalc_sim_machine_running()) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Plug in")) {
+            picocalc_sim_opts.usb = true;
+            picocalc_sim_usb_plug(true);
+            remember_on("usb", true);
+        }
+    }
+    const ImGuiStyle &st = ImGui::GetStyle();
+    const char *const buttons[] = {"Paste", "Copy", "Clear", "Close"};
+    float bw = 0;
+    for (const char *b : buttons)
+        bw += ImGui::CalcTextSize(b).x + st.FramePadding.x * 2 + st.ItemSpacing.x;
+    ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - st.WindowPadding.x - bw + st.ItemSpacing.x));
+    if (ImGui::SmallButton("Paste"))
+        term_paste();
+    ImGui::SetItemTooltip("Send the clipboard, each line ended with Enter (Ctrl+Shift+V)");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Copy"))
+        term_copy();
+    ImGui::SetItemTooltip("Copy everything the terminal holds (Ctrl+Shift+C)");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear"))
+        term_clear();
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Close"))
+        set_terminal(false);
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, term_colour(TERM_DEFAULT, false));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    ImGui::BeginChild("screen", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoNav);
+    bool follow = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - term_line_h;
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    // The cursor blinks while the terminal has the keyboard, and shows steadily otherwise.
+    bool blink_on = !focused || std::fmod(ImGui::GetTime(), 1.0) < 0.6;
+    term_lock();
+    unsigned n = term_count(), gen = term_generation(), cl, cc;
+    bool cursor_shown;
+    term_cursor(&cl, &cc, &cursor_shown);
+    ImGuiListClipper clip;
+    clip.Begin((int)n, term_line_h);
+    while (clip.Step())
+        for (int i = clip.DisplayStart; i < clip.DisplayEnd; i++) {
+            ImVec2 at = ImGui::GetCursorScreenPos();
+            bool here = cursor_shown && blink_on && (unsigned)i == cl;
+            term_draw_line(dl, at, term_line((unsigned)i), here ? (int)cc : -1);
+            ImGui::Dummy(ImVec2(term_char_w * TERM_COLS, term_line_h));
+        }
+    term_unlock();
+    if (gen != term_seen && follow)
+        ImGui::SetScrollHereY(1.0f);
+    term_seen = gen;
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    if (focused)
+        term_keys();
+    ImGui::End();
+
+    // What the host could not take yet goes at the next frame, in order.
+    if (!term_input.empty()) {
+        size_t sent = picocalc_sim_usb_serial_send((const uint8_t *)term_input.data(), term_input.size());
+        if (sent)
+            term_input.erase(0, sent);
+        else if (!picocalc_sim_usb_serial_is_open())
+            term_input.clear();
+    }
+}
+
 void menu_bar()
 {
     if (!ImGui::BeginMainMenuBar())
@@ -489,6 +770,8 @@ void menu_bar()
         if (ImGui::MenuItem("Screenshot", "F11", false, running))
             picocalc_sim_screenshot_auto();
         ImGui::MenuItem("Log", nullptr, &show_log);
+        if (ImGui::MenuItem("USB serial terminal", nullptr, show_terminal))
+            set_terminal(!show_terminal);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
@@ -914,7 +1197,13 @@ void ui_init(SDL_Window *w, SDL_Renderer *r)
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     menu_height = ImGui::GetFrameHeight();
+    term_char_w = ImGui::CalcTextSize("M").x;
+    term_line_h = ImGui::GetTextLineHeight();
     ImGui::EndFrame();
+    if (picocalc_sim_opts.usb_terminal) {
+        show_terminal = true;
+        picocalc_sim_usb_serial_attach(PICOCALC_SIM_TERMINAL_WINDOW, true);
+    }
 }
 
 void ui_shutdown(void)
@@ -929,7 +1218,12 @@ void ui_shutdown(void)
 void ui_fit_window(int scale)
 {
     float side = PICOCALC_SIM_LCD_WIDTH * scale * content_scale;
-    SDL_SetWindowSize(window, (int)side, (int)(side + menu_height));
+    SDL_SetWindowSize(window, (int)(side + terminal_width()), (int)(side + menu_height));
+}
+
+float ui_side_width(void)
+{
+    return terminal_width() * SDL_GetWindowPixelDensity(window);
 }
 
 bool ui_event(const SDL_Event *e)
@@ -991,6 +1285,8 @@ float ui_frame(void)
         picocalc_sim_settings_save();
     }
     menu_bar();
+    if (show_terminal)
+        terminal_panel();
     if (!picocalc_sim_machine_running())
         stopped_panel();
     if (show_settings)

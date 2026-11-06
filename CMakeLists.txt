@@ -95,7 +95,8 @@ add_library(picocalc_sim_objs OBJECT
     frontend/script.c
     frontend/sdl.c
     frontend/serial.c
-    frontend/settings.c)
+    frontend/settings.c
+    frontend/terminal.c)
 target_include_directories(picocalc_sim_objs PUBLIC emu sim/include)
 target_compile_options(picocalc_sim_objs PUBLIC -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(picocalc_sim_objs PUBLIC picocalc_sim_lwip Threads::Threads m)

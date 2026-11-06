@@ -275,11 +275,21 @@ build/picocalc-sim --usb-console RPI_PICO2-20260824-v1.29.0.uf2
 42
 ```
 
-A script's `usb send TEXT` sends text to the port, with C escapes (`\r` for Enter). Without
-`--usb-console` the port stays closed, as on a computer with no terminal program open. Firmware
-that puts its console on UART0 instead, as the PicoCalc's PicoMite build does for the PicoCalc's
-own USB-C serial port, prints nothing here; `--console` shows UART0. The boot ROM's drive and other
-interfaces go unused.
+In the window, View › USB serial terminal (or `--usb-terminal`) opens the same terminal beside the
+LCD, the window widening to make room for it, and works on Windows too, where `picocalc-sim.exe`
+has no console. It is an 80 by 24 VT100 screen with 2000 lines of history, colours, and the cursor
+keys, editing keys and cursor position reports that line editors and full-screen programs use.
+Clicking it gives it the keyboard, so keys go to the firmware's serial port rather than the PicoCalc
+keyboard, until the LCD is clicked. Ctrl+C reaches the firmware; Paste (Ctrl+Shift+V) types the
+clipboard, each line ended with Enter, and Copy (Ctrl+Shift+C) takes everything the terminal holds.
+It says when the cable is unplugged, with a button to plug it in, or when the firmware has no
+serial port. Closing it drops DTR, as closing a terminal program does.
+
+A script's `usb send TEXT` sends text to the port, with C escapes (`\r` for Enter). With no terminal
+on it the port stays closed, as on a computer with no terminal program open. Firmware that puts its
+console on UART0 instead, as the PicoCalc's PicoMite build does for the PicoCalc's own USB-C serial
+port, prints nothing here; `--console` shows UART0. The boot ROM's drive and other interfaces go
+unused.
 
 ### Sound
 
@@ -326,7 +336,8 @@ without quitting:
 - **SD card**: insert an image, or eject the one in the slot. A card has to be ejected before
   another goes in, as the firmware may still hold the old card's tables.
 - **Sound**: mute, volume, and recording to a WAV file from now on.
-- **View**: window scale, screenshot (F11), and a log of picocalc-sim's messages.
+- **View**: window scale, screenshot (F11), a log of picocalc-sim's messages, and the USB serial
+  terminal (see [USB](#usb)).
 
 Settings has the board, the RP2040 and RP2350 boot ROMs, where the flash is kept, fast transfers,
 tracing, the radio, access points and port forwards, which take effect at the next restart, and
@@ -356,11 +367,12 @@ scale = 3
 
 The keys are `board`, `rom`, `rp2350-rom`, `flash` (a file, `none` or `default`), `card` (an image
 or `none`), `fast`, `unthrottled`, `trace`, `console`, `no-wifi`, `wifi-ap` and `forward` (repeated
-for each), `usb`, `battery`, `charging`, `volume`, `mute`, `scale` and `screenshot-dir`; switches
-take `on` or `off`. An option given on the command line wins for that run and is not written to the
-file unless it is then changed in the window; the board is the exception, as the one last run is
-always kept. picocalc-sim rewrites the file as settings change, keeping keys it does not know but
-not comments. Headless runs ignore it, so scripts and CI see only their own options.
+for each), `usb`, `usb-terminal`, `battery`, `charging`, `volume`, `mute`, `scale` and
+`screenshot-dir`; switches take `on` or `off`. An option given on the command line wins for that run
+and is not written to the file unless it is then changed in the window; the board is the exception,
+as the one last run is always kept. picocalc-sim rewrites the file as settings change, keeping keys
+it does not know but not comments. Headless runs ignore it, so scripts and CI see only their own
+options.
 
 ### Options
 
@@ -383,6 +395,7 @@ not comments. Headless runs ignore it, so scripts and CI see only their own opti
 | `--no-wifi` | leave the W boards' radio out |
 | `--usb` | plug the board's USB port into a host that enumerates the firmware's device (see [USB](#usb)) |
 | `--usb-console` | `--usb`, with the terminal on the firmware's USB serial port; Ctrl+] quits |
+| `--usb-terminal` | in the window, the terminal on that port beside the LCD |
 | `--trace` | log faults, unknown ROM calls and bus errors, and dump the cores on exit |
 
 ### Scripts and headless runs
@@ -506,7 +519,8 @@ sets the exit code.
   the host on the cable. Each of its transactions happens at once but is followed by the time its
   packets would take at 12 Mb/s, and one the device NAKs is retried sooner or later depending on how
   long the device has had nothing. On a CDC ACM port it keeps a bulk IN transfer waiting, as Linux's
-  cdc_acm does, and sends from a 4 KB buffer that `frontend/serial.c` fills from the terminal.
+  cdc_acm does, and sends from a 4 KB buffer that `frontend/serial.c` fills from the terminal or
+  the window's `frontend/terminal.c`, a VT100 emulator the window draws cell by cell.
 - **Sound.** `emu/pinwave.c` records the waveform of the audio pins without touching the chip: a
   PWM output as its slice settings, so a fast carrier costs nothing per cycle, and any other
   driver as edges stamped with the time the core or PIO state machine made them. It integrates

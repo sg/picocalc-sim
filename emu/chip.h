@@ -740,6 +740,9 @@ void usbhost_pullup(chip_t *m, bool on);
 // Queues bytes for the device's serial port while the host has it open, giving how many fit.
 size_t usbhost_serial_send(chip_t *m, const uint8_t *data, size_t len);
 bool usbhost_serial_is_open(chip_t *m);
+// A terminal came or went: see picocalc_sim_usb_serial_attach.
+void usbhost_serial_wanted_changed(chip_t *m);
+int usbhost_serial_state(chip_t *m, char *product, size_t cap);
 
 void cyw43_init(chip_t *m);
 void cyw43_free(chip_t *m);

@@ -10,8 +10,11 @@ extern "C" {
 
 void ui_init(SDL_Window *window, SDL_Renderer *renderer);
 void ui_shutdown(void);
-// Sizes the window for the LCD at a whole-number scale plus the menu bar.
+// Sizes the window for the LCD at a whole-number scale plus the menu bar, and the terminal beside
+// it when that is shown.
 void ui_fit_window(int scale);
+// The width the terminal takes at the window's right, in render pixels.
+float ui_side_width(void);
 // True when the event belongs to the UI, such as a key typed into one of its text fields.
 bool ui_event(const SDL_Event *e);
 void ui_drop_file(const char *path);

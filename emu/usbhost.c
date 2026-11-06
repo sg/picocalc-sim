@@ -9,8 +9,8 @@
 // A computer on the far end of the board's USB cable. When a device pulls D+ up it waits for the
 // connection to settle, resets the port and enumerates the device much as Linux does, then logs
 // what it found and keeps the bus awake with start-of-frame packets. A CDC ACM serial port on the
-// device is opened when a terminal is attached to it (--usb-console), as Linux's cdc_acm does when
-// a program opens the tty. Each transaction takes the bus time a full-speed packet would, and one
+// device is opened while a terminal is attached to it (--usb-console or the window's terminal), as
+// Linux's cdc_acm does while a program has the tty open. Each transaction takes the bus time a full-speed packet would, and one
 // the device NAKs is tried again a little later, less often the longer the device has nothing.
 
 enum { H_DETACHED, H_DEBOUNCE, H_RESET, H_RECOVERY, H_CONTROL, H_CONFIGURED, H_FAILED };
@@ -37,8 +37,9 @@ enum {
 #define TX_SIZE 4096
 
 // The device's serial port: its interfaces and bulk endpoints, and what is waiting to go out.
+// dtr is the line state asked for: set while the port is open or being opened.
 typedef struct {
-    bool found, open;
+    bool found, open, dtr;
     uint8_t comm_if, data_if, in_ep, out_ep;
     unsigned in_mps, out_mps;
     unsigned in_toggle, out_toggle, in_naks, out_naks, errors;
@@ -120,10 +121,13 @@ static void serial_close(usb_host_t *h, const char *why)
     ev_cancel(h->m, &s->out_ev);
 }
 
+static void next_step(usb_host_t *h);
+static void serial_follow(usb_host_t *h);
+
 static void stop_bus(usb_host_t *h)
 {
     serial_close(h, NULL);
-    h->ser.found = false;
+    h->ser.found = h->ser.dtr = false;
     ev_cancel(h->m, &h->ev);
     ev_cancel(h->m, &h->sof_ev);
 }
@@ -132,7 +136,7 @@ static void start_reset(usb_host_t *h)
 {
     chip_t *m = h->m;
     serial_close(h, "the port was reset");
-    h->ser.found = false;
+    h->ser.found = h->ser.dtr = false;
     ev_cancel(m, &h->sof_ev);
     usb_bus_reset(m, true);
     h->state = H_RESET;
@@ -332,6 +336,27 @@ bool usbhost_serial_is_open(chip_t *m)
     return m->usb.host && m->usb.host->ser.open;
 }
 
+void usbhost_serial_wanted_changed(chip_t *m)
+{
+    if (m->usb.host)
+        serial_follow(m->usb.host);
+}
+
+int usbhost_serial_state(chip_t *m, char *product, size_t cap)
+{
+    usb_host_t *h = m->usb.host;
+    if (cap)
+        *product = 0;
+    if (!h)
+        return PICOCALC_SIM_USB_SERIAL_UNPLUGGED;
+    if (h->state != H_CONFIGURED && !(h->state == H_CONTROL && h->step >= S_LINE_CODING))
+        return h->state == H_FAILED ? PICOCALC_SIM_USB_SERIAL_FAILED : PICOCALC_SIM_USB_SERIAL_NO_DEVICE;
+    snprintf(product, cap, "%s", h->str[1][0] ? h->str[1] : "USB device");
+    if (!h->ser.found)
+        return PICOCALC_SIM_USB_SERIAL_NO_PORT;
+    return h->ser.open ? PICOCALC_SIM_USB_SERIAL_OPEN : PICOCALC_SIM_USB_SERIAL_CLOSED;
+}
+
 size_t usbhost_serial_send(chip_t *m, const uint8_t *data, size_t len)
 {
     usb_host_t *h = m->usb.host;
@@ -369,6 +394,7 @@ static void fail(usb_host_t *h, const char *what)
             hlog(h, "%s failed; resetting the port", what);
         h->step = S_FIRST_DESC;
         serial_close(h, "the port was reset");
+        h->ser.dtr = false;
         ev_cancel(h->m, &h->sof_ev);
         h->state = H_DEBOUNCE;
         ev_schedule(h->m, &h->ev, h->m->now + 100 * PS_PER_MS);
@@ -377,6 +403,28 @@ static void fail(usb_host_t *h, const char *what)
     hlog(h, "enumeration failed: %s; port disabled", what);
     stop_bus(h);
     h->state = H_FAILED;
+}
+
+// Opens the serial port while a terminal wants it and closes it once none does, as a terminal
+// program raising and dropping DTR would, whenever EP0 is free.
+static void serial_follow(usb_host_t *h)
+{
+    serial_t *s = &h->ser;
+    if (h->state != H_CONFIGURED || !s->found)
+        return;
+    bool want = picocalc_sim_usb_serial_wanted();
+    if (want && !s->dtr) {
+        s->dtr = true;
+        h->step = S_LINE_CODING;
+        next_step(h);
+    } else if (!want && s->dtr) {
+        if (s->open)
+            hlog(h, "serial port closed");
+        serial_close(h, NULL);
+        s->dtr = false;
+        h->step = S_LINE_STATE;
+        next_step(h);
+    }
 }
 
 // Asks for the next thing enumeration needs, or finishes.
@@ -417,7 +465,7 @@ static void next_step(usb_host_t *h)
             return;
         }
         // DTR and RTS, which tell the device a program has the port open.
-        case S_LINE_STATE: control(h, 0x21, 0x22, 3, h->ser.comm_if, 0); return;
+        case S_LINE_STATE: control(h, 0x21, 0x22, h->ser.dtr ? 3 : 0, h->ser.comm_if, 0); return;
         default: return;
         }
     }
@@ -498,14 +546,14 @@ static void step_done(usb_host_t *h, int r)
         find_serial(h);
         // Bulk endpoints start each configuration on DATA0.
         h->ser.in_toggle = h->ser.out_toggle = 0;
-        if (!h->ser.found || !picocalc_sim_opts.usb_console) {
-            h->state = H_CONFIGURED;
-            return;
-        }
-        break;
+        h->state = H_CONFIGURED;
+        serial_follow(h);
+        return;
     case S_LINE_STATE:
         h->state = H_CONFIGURED;
-        serial_open(h);
+        if (h->ser.dtr)
+            serial_open(h);
+        serial_follow(h);
         return;
     default: break;
     }

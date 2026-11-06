@@ -43,6 +43,8 @@ typedef struct picocalc_sim_options {
     // A host on the far end of the board's USB cable, and a terminal on the device's serial port.
     bool usb;
     bool usb_console;
+    // The window's terminal on that port, beside the LCD.
+    bool usb_terminal;
     const char *wifi_aps[16];
     int wifi_ap_count;
     const char *forwards[16];
@@ -91,6 +93,22 @@ void picocalc_sim_usb_plug(bool plugged);
 // host has the port open, and fewer than len while its buffer is full.
 size_t picocalc_sim_usb_serial_send(const uint8_t *data, size_t len);
 bool picocalc_sim_usb_serial_is_open(void);
+// Terminals on that port, a bit each; the host keeps the port open while any is attached.
+enum { PICOCALC_SIM_TERMINAL_CONSOLE = 1, PICOCALC_SIM_TERMINAL_WINDOW = 2 };
+void picocalc_sim_usb_serial_attach(unsigned terminal, bool on);
+bool picocalc_sim_usb_serial_attached(unsigned terminal);
+// The emulation thread's view of whether any is, with the machine locked.
+bool picocalc_sim_usb_serial_wanted(void);
+enum {
+    PICOCALC_SIM_USB_SERIAL_UNPLUGGED,
+    PICOCALC_SIM_USB_SERIAL_NO_DEVICE,
+    PICOCALC_SIM_USB_SERIAL_FAILED,
+    PICOCALC_SIM_USB_SERIAL_NO_PORT,
+    PICOCALC_SIM_USB_SERIAL_CLOSED,
+    PICOCALC_SIM_USB_SERIAL_OPEN,
+};
+// Where the port stands, and the product name of the device that has it once enumerated.
+int picocalc_sim_usb_serial_state(char *product, size_t cap);
 
 void picocalc_sim_request_quit(int code);
 bool picocalc_sim_quit_requested(int *code);

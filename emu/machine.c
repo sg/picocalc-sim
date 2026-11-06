@@ -155,6 +155,39 @@ size_t picocalc_sim_usb_serial_send(const uint8_t *data, size_t len)
     return n;
 }
 
+static atomic_uint serial_terminals;
+
+void picocalc_sim_usb_serial_attach(unsigned terminal, bool on)
+{
+    picocalc_sim_machine_lock();
+    unsigned was = atomic_load(&serial_terminals);
+    unsigned now = on ? was | terminal : was & ~terminal;
+    atomic_store(&serial_terminals, now);
+    if (chip_ready && !was != !now)
+        usbhost_serial_wanted_changed(&chip);
+    picocalc_sim_machine_unlock();
+}
+
+bool picocalc_sim_usb_serial_attached(unsigned terminal)
+{
+    return (atomic_load(&serial_terminals) & terminal) != 0;
+}
+
+bool picocalc_sim_usb_serial_wanted(void)
+{
+    return atomic_load(&serial_terminals) != 0;
+}
+
+int picocalc_sim_usb_serial_state(char *product, size_t cap)
+{
+    picocalc_sim_machine_lock();
+    int s = chip_ready ? usbhost_serial_state(&chip, product, cap) : PICOCALC_SIM_USB_SERIAL_UNPLUGGED;
+    if (!chip_ready && cap)
+        *product = 0;
+    picocalc_sim_machine_unlock();
+    return s;
+}
+
 bool picocalc_sim_usb_serial_is_open(void)
 {
     picocalc_sim_machine_lock();

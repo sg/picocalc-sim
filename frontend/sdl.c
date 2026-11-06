@@ -185,7 +185,7 @@ static SDL_FRect lcd_rect(SDL_Renderer *renderer, float top)
 {
     int w, h;
     SDL_GetCurrentRenderOutputSize(renderer, &w, &h);
-    float aw = (float)w, ah = (float)h - top;
+    float aw = fmaxf((float)w - ui_side_width(), 0.0f), ah = (float)h - top;
     float fit = fminf(aw / PICOCALC_SIM_LCD_WIDTH, ah / PICOCALC_SIM_LCD_HEIGHT);
     float scale = fit >= 1.0f ? floorf(fit) : fmaxf(fit, 0.0f);
     float lw = PICOCALC_SIM_LCD_WIDTH * scale, lh = PICOCALC_SIM_LCD_HEIGHT * scale;
