@@ -69,6 +69,12 @@ jobs:
       - name: Copy a UF2 onto the RP2040 ROM's drive
         run: src/ci/usbdrive-test.sh build/picocalc-sim pico src/tests/usbserial/usbserial-pico.uf2 2e8a:000a
 
+      - name: Export the USB device over USB/IP
+        run: |
+          src/ci/usbip-test.sh build/picocalc-sim pico2 serial src/tests/usbserial/usbserial-pico2.uf2
+          src/ci/usbip-test.sh build/picocalc-sim pico serial src/tests/usbserial/usbserial-pico.uf2
+          src/ci/usbip-test.sh build/picocalc-sim pico drive src/tests/usbserial/usbserial-pico.uf2 2e8a:000a
+
       - name: Boot, restart and enumerate the RP2350 firmware and USB boot on Raspberry Pi's A2 and A4 ROMs
         run: |
           for rev in A2 A4; do
@@ -80,6 +86,7 @@ jobs:
             src/ci/usb-test.sh build/picocalc-sim pico2 2e8a:000f
             src/ci/usbserial-test.sh build/picocalc-sim src/tests/usbserial/usbserial-pico2.uf2
             src/ci/usbdrive-test.sh build/picocalc-sim pico2 src/tests/usbserial/usbserial-pico2.uf2 2e8a:0009
+            src/ci/usbip-test.sh build/picocalc-sim pico2 drive src/tests/usbserial/usbserial-pico2.uf2 2e8a:0009
           done
 
       - name: Build for Windows
@@ -95,6 +102,7 @@ jobs:
           src/ci/usb-test.sh build-win/picocalc-sim-wine pico 2e8a:0003
           src/ci/usbserial-test.sh build-win/picocalc-sim-wine src/tests/usbserial/usbserial-pico2.uf2
           src/ci/usbdrive-test.sh build-win/picocalc-sim-wine pico src/tests/usbserial/usbserial-pico.uf2 2e8a:000a
+          src/ci/usbip-test.sh build-win/picocalc-sim-wine pico2 serial src/tests/usbserial/usbserial-pico2.uf2
 
       - name: Pack the binaries
         run: |

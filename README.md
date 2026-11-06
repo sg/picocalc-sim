@@ -89,7 +89,9 @@ checks that the boot ROMs' USB boot enumerates on the emulated cable (`ci/usb-te
 `tests/usbserial`, a self-checking USB serial port built with the Pico SDK, gets a line from the
 terminal and sends 100 back over `--usb-console` (`ci/usbserial-test.sh`;
 `tests/usbserial/build.sh` rebuilds its UF2s), and that the boot ROMs write that firmware when it is
-copied onto their drive and restart into it (`ci/usbdrive-test.sh`), then
+copied onto their drive and restart into it (`ci/usbdrive-test.sh`), and that both work over USB/IP
+from a client that imports and enumerates the device as Linux's does (`ci/usbip-test.sh` with
+`ci/usbip-client.py`), then
 cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that `picocalc-sim.exe`
 is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
@@ -304,7 +306,33 @@ While it is mounted, Flash UF2 and dropping a UF2 on the window copy the file on
 onto the drive on a computer would, and the boot ROM writes the flash itself and restarts into it.
 A script's `usb copy FILE` does the same once the drive has mounted. A UF2 the ROM does not take,
 such as one built for the other chip, leaves it in BOOTSEL, and the host says so. Without a mounted
-drive, Flash UF2 writes the flash directly as before. The ROMs' PICOBOOT interface goes unused.
+drive, Flash UF2 writes the flash directly as before. The ROMs' PICOBOOT interface goes unused
+here; over USB/IP it is picotool's.
+
+#### USB/IP
+
+`--usbip [ADDR:]PORT`, or the USB/IP field in Settings, exports the device to a computer's own USB
+stack over the network, as Linux's usbipd does: on that computer, `usbip attach -r HOST -b 1-1`
+(on Linux, as root and with the vhci-hcd module loaded; on Windows, with usbip-win2) and its drivers
+take the device as if it were plugged in, for picotool, a serial terminal or the file manager to
+use. It listens on 127.0.0.1 unless ADDR is given (`*` for every interface), and plugs the cable
+in:
+
+```sh
+build/picocalc-sim --rp2350-rom bootrom-combined.bin --erase-flash --usbip 3240
+sudo modprobe vhci-hcd
+sudo usbip --tcp-port 3240 attach -r 127.0.0.1 -b 1-1
+```
+
+`usbip list -r HOST` shows what is exported, and needs no root. The host on the cable stays the
+device's host: it keeps the bus awake and runs each URB the computer sends as transactions on the
+emulated bus, and does itself what Linux's server does itself, setting configurations and
+interfaces, clearing halts and resetting the device, so the data toggles stay in step. On import it
+resets the device so that it starts afresh for the computer, and its own serial port and drive
+stand aside until the computer lets go, when the device is enumerated again for them. A device that
+disconnects, as one restarting into a new UF2 does, ends the import as unplugging it would; the
+computer then attaches again. One computer at a time can have it, isochronous transfers are not
+carried, and `PICOCALC_SIM_USB_DEBUG=1` logs each URB.
 
 ### Sound
 
@@ -382,7 +410,7 @@ scale = 3
 
 The keys are `board`, `rom`, `rp2350-rom`, `flash` (a file, `none` or `default`), `card` (an image
 or `none`), `fast`, `unthrottled`, `trace`, `console`, `no-wifi`, `wifi-ap` and `forward` (repeated
-for each), `usb`, `usb-terminal`, `battery`, `charging`, `volume`, `mute`, `scale` and
+for each), `usb`, `usb-terminal`, `usbip`, `battery`, `charging`, `volume`, `mute`, `scale` and
 `screenshot-dir`; switches take `on` or `off`. An option given on the command line wins for that run
 and is not written to the file unless it is then changed in the window; the board is the exception,
 as the one last run is always kept. picocalc-sim rewrites the file as settings change, keeping keys
@@ -411,6 +439,7 @@ options.
 | `--usb` | plug the board's USB port into a host that enumerates the firmware's device (see [USB](#usb)) |
 | `--usb-console` | `--usb`, with the terminal on the firmware's USB serial port; Ctrl+] quits |
 | `--usb-terminal` | in the window, the terminal on that port beside the LCD |
+| `--usbip [ADDR:]PORT` | `--usb`, with the device exported over USB/IP for `usbip attach -r HOST -b 1-1` |
 | `--trace` | log faults, unknown ROM calls and bus errors, and dump the cores on exit |
 
 ### Scripts and headless runs
@@ -538,7 +567,8 @@ the command line is written again and the card stays in the slot (unlike the men
   the window's `frontend/terminal.c`, a VT100 emulator the window draws cell by cell. `emu/usbmsc.c`
   is its mass storage driver: SCSI commands over the bulk-only transport, with the stalls, halt
   clearing and data toggles that transport has, a FAT reader for mounting, and 64 KB writes for a
-  copy.
+  copy. `emu/usbip.c` is the USB/IP server: its sockets are polled from an event, as the WiFi's are,
+  so it too runs on the emulation thread, with a queue of URBs for each endpoint.
 - **Sound.** `emu/pinwave.c` records the waveform of the audio pins without touching the chip: a
   PWM output as its slice settings, so a fast carrier costs nothing per cycle, and any other
   driver as edges stamped with the time the core or PIO state machine made them. It integrates
@@ -580,8 +610,10 @@ Not emulated yet, or not faithfully:
   board, gives the same answer every time here.
 - **USB** has the controller only in device mode (host mode keeps its registers but moves nothing),
   and the host on the cable drives only a CDC ACM serial port and a mass storage drive, the first of
-  each: the boot ROMs' PICOBOOT interface and others go unused, and the drive is read only to mount
-  it and written only to copy a UF2. The stand-in RP2350 ROM has no USB boot; Raspberry Pi's has.
+  each: other interfaces are for a computer attached over USB/IP, and the drive is read only to
+  mount it and written only to copy a UF2. USB/IP carries no isochronous transfers, and has been
+  checked here with `usbip list` and a client of its own (`ci/usbip-client.py`) rather than a kernel
+  attach. The stand-in RP2350 ROM has no USB boot; Raspberry Pi's has.
 - **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
   RP2040. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
   flash reads give zeros; what a real RP2040 returns there is unverified.

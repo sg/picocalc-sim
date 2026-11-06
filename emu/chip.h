@@ -737,6 +737,7 @@ void usbhost_init(chip_t *m);
 void usbhost_free(chip_t *m);
 // The device's pull-up has appeared on D+ or gone.
 void usbhost_pullup(chip_t *m, bool on);
+void usbhost_chip_reset(chip_t *m);
 // Queues bytes for the device's serial port while the host has it open, giving how many fit.
 size_t usbhost_serial_send(chip_t *m, const uint8_t *data, size_t len);
 bool usbhost_serial_is_open(chip_t *m);

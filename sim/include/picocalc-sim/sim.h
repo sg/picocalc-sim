@@ -43,6 +43,8 @@ typedef struct picocalc_sim_options {
     // A host on the far end of the board's USB cable, and a terminal on the device's serial port.
     bool usb;
     bool usb_console;
+    // [ADDR:]PORT to export the device on over USB/IP, or NULL.
+    const char *usbip;
     // The window's terminal on that port, beside the LCD.
     bool usb_terminal;
     const char *wifi_aps[16];
@@ -109,6 +111,7 @@ enum {
     PICOCALC_SIM_USB_SERIAL_NO_PORT,
     PICOCALC_SIM_USB_SERIAL_CLOSED,
     PICOCALC_SIM_USB_SERIAL_OPEN,
+    PICOCALC_SIM_USB_SERIAL_EXPORTED,
 };
 // Where the port stands, and the product name of the device that has it once enumerated.
 int picocalc_sim_usb_serial_state(char *product, size_t cap);

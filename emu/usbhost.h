@@ -7,7 +7,7 @@
 // CDC ACM serial port) and its mass storage driver (usbmsc.c).
 
 enum { H_DETACHED, H_DEBOUNCE, H_RESET, H_RECOVERY, H_CONTROL, H_CONFIGURED, H_FAILED };
-enum { R_OK, R_STALL, R_ERROR };
+enum { XF_OK, XF_STALL, XF_ERROR };
 
 #define MAX_DATA 4096
 #define TX_SIZE 4096
@@ -57,7 +57,8 @@ typedef struct usb_host {
     emu_event_t ev, sof_ev;
     int state, step, attempts;
     unsigned frame, addr, mps0;
-    bool debug;
+    // Set once the device has taken its configuration, until it is reset or gone.
+    bool configured, debug;
     // The control transfer in progress, and the class driver to tell when it ends.
     uint8_t setup[8];
     uint8_t data[MAX_DATA];
@@ -73,15 +74,27 @@ typedef struct usb_host {
     char str[3][128];
     serial_t ser;
     msc_t msc;
+    struct usbip *usbip;
 } usb_host_t;
 
 void usbhost_log(usb_host_t *h, const char *fmt, ...) __attribute__((format(PICOCALC_SIM_PRINTF_FORMAT, 2, 3)));
 uint64_t usbhost_bus_time(unsigned n);
 uint64_t usbhost_nak_delay(unsigned naks);
-// A control transfer for a class driver once the device is configured; done then gets R_OK, R_STALL
-// or R_ERROR, with what came back in h->data. False while EP0 is busy.
+// A control transfer for a class driver once the device is configured; done then gets XF_OK, XF_STALL
+// or XF_ERROR, with what came back in h->data. False while EP0 is busy.
 bool usbhost_control(usb_host_t *h, uint8_t type, uint8_t req, uint16_t value, uint16_t index, uint16_t len,
                      void (*done)(usb_host_t *h, int result));
+
+// The class drivers stand aside while the device is exported over USB/IP, and the device is
+// enumerated afresh for them once it is not.
+void usbhost_exported(usb_host_t *h);
+void usbhost_unexported(usb_host_t *h);
+
+bool usbip_open(usb_host_t *h, const char *spec);
+void usbip_close(usb_host_t *h);
+bool usbip_exported(usb_host_t *h);
+void usbip_device_gone(usb_host_t *h);
+void usbip_resume(usb_host_t *h);
 
 void msc_init(usb_host_t *h);
 // The device has a new configuration to look for a drive in, or has gone.

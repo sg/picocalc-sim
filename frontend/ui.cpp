@@ -46,7 +46,7 @@ enum { FLASH_DEFAULT, FLASH_MEMORY, FLASH_FILE };
 
 // The options the machine reads only as it starts.
 struct start_options {
-    std::string board, rom, rp2350_rom, flash_file;
+    std::string board, rom, rp2350_rom, flash_file, usbip;
     int flash = FLASH_DEFAULT;
     bool fast = false, trace = false, no_wifi = false;
     std::vector<access_point> aps;
@@ -56,7 +56,7 @@ struct start_options {
     bool operator==(const start_options &o) const
     {
         return board == o.board && rom == o.rom && rp2350_rom == o.rp2350_rom && flash == o.flash &&
-               flash_file == o.flash_file && fast == o.fast &&
+               flash_file == o.flash_file && usbip == o.usbip && fast == o.fast &&
                trace == o.trace && no_wifi == o.no_wifi && named(aps) == named(o.aps) &&
                filled(forwards) == filled(o.forwards);
     }
@@ -79,7 +79,7 @@ start_options pending, applied;
 // What picocalc_sim_opts points at; kept apart from pending, so editing a setting never moves a
 // string that the machine may still read.
 struct {
-    std::string board, rom, rp2350_rom, flash, card, shots, wav;
+    std::string board, rom, rp2350_rom, flash, card, shots, wav, usbip;
     std::string aps[16], forwards[16];
 } store;
 
@@ -111,6 +111,8 @@ start_options from_opts()
         s.flash = FLASH_FILE;
         s.flash_file = o.flash_path;
     }
+    if (o.usbip)
+        s.usbip = o.usbip;
     s.fast = o.fast;
     s.trace = o.trace;
     s.no_wifi = o.no_wifi;
@@ -178,6 +180,8 @@ void remember_start_options(const start_options &was, const start_options &now)
         remember("flash", now.flash == FLASH_MEMORY                          ? "none"
                           : now.flash == FLASH_FILE && !now.flash_file.empty() ? now.flash_file.c_str()
                                                                                : nullptr);
+    if (now.usbip != was.usbip)
+        remember("usbip", now.usbip.empty() ? nullptr : now.usbip.c_str());
     if (now.fast != was.fast)
         remember_on("fast", now.fast);
     if (now.trace != was.trace)
@@ -205,6 +209,11 @@ void to_opts(const start_options &s)
     o.rp2350_rom_path = store.rp2350_rom.empty() ? nullptr : store.rp2350_rom.c_str();
     store.flash = s.flash == FLASH_MEMORY ? "none" : s.flash_file;
     o.flash_path = s.flash == FLASH_DEFAULT || store.flash.empty() ? nullptr : store.flash.c_str();
+    store.usbip = s.usbip;
+    o.usbip = store.usbip.empty() ? nullptr : store.usbip.c_str();
+    // The server is on the far end of the cable, so it needs the cable in.
+    if (o.usbip)
+        o.usb = true;
     o.fast = s.fast;
     o.trace = s.trace;
     o.no_wifi = s.no_wifi;
@@ -607,6 +616,9 @@ const char *term_status(bool *unplugged)
     case PICOCALC_SIM_USB_SERIAL_FAILED: return "The host could not enumerate the USB device.";
     case PICOCALC_SIM_USB_SERIAL_NO_PORT: snprintf(text, sizeof(text), "%s has no USB serial port.", product); break;
     case PICOCALC_SIM_USB_SERIAL_CLOSED: snprintf(text, sizeof(text), "Opening %s's serial port...", product); break;
+    case PICOCALC_SIM_USB_SERIAL_EXPORTED:
+        snprintf(text, sizeof(text), "%s is exported over USB/IP, so its serial port is the computer's.", product);
+        break;
     default: snprintf(text, sizeof(text), "%s: serial port open", product); break;
     }
     return text;
@@ -872,6 +884,10 @@ void machine_tab()
         picocalc_sim_data_path(def, sizeof(def), file, false);
         note(def);
     }
+    ImGui::InputTextWithHint("USB/IP", "off; a port such as 3240 to export the USB device on", &pending.usbip);
+    ImGui::SetItemTooltip("A USB/IP server, so another computer or this one can take the board's USB device with "
+                          "usbip attach -r HOST -b 1-1: [ADDR:]PORT, 127.0.0.1 unless ADDR is given, * for all "
+                          "interfaces. It plugs the USB cable in.");
     ImGui::Checkbox("Instant SPI, I2C and UART transfers", &pending.fast);
     ImGui::Checkbox("Log faults, unknown ROM calls and bus errors", &pending.trace);
 

@@ -10,7 +10,7 @@
 // what it found and keeps the bus awake with start-of-frame packets. A CDC ACM serial port on the
 // device is opened while a terminal is attached to it (--usb-console or the window's terminal), as
 // Linux's cdc_acm does while a program has the tty open, and a drive is mounted as an OS would
-// (usbmsc.c). Each transaction takes the bus time a full-speed packet would, and one the device
+// (usbmsc.c). The device can also be exported to a computer over USB/IP (usbip.c). Each transaction takes the bus time a full-speed packet would, and one the device
 // NAKs is tried again a little later, less often the longer the device has nothing.
 
 enum { CT_SETUP, CT_DATA, CT_STATUS };
@@ -86,6 +86,7 @@ static void serial_follow(usb_host_t *h);
 
 static void stop_bus(usb_host_t *h)
 {
+    h->configured = false;
     serial_close(h, NULL);
     h->ser.found = h->ser.dtr = false;
     msc_stop(h);
@@ -99,6 +100,7 @@ static void start_reset(usb_host_t *h)
     chip_t *m = h->m;
     serial_close(h, "the port was reset");
     h->ser.found = h->ser.dtr = false;
+    h->configured = false;
     msc_stop(h);
     h->ctl_done = NULL;
     ev_cancel(m, &h->sof_ev);
@@ -313,9 +315,11 @@ int usbhost_serial_state(chip_t *m, char *product, size_t cap)
         *product = 0;
     if (!h)
         return PICOCALC_SIM_USB_SERIAL_UNPLUGGED;
-    if (h->state != H_CONFIGURED && !(h->state == H_CONTROL && h->step >= S_LINE_CODING))
+    if (!h->configured)
         return h->state == H_FAILED ? PICOCALC_SIM_USB_SERIAL_FAILED : PICOCALC_SIM_USB_SERIAL_NO_DEVICE;
     snprintf(product, cap, "%s", h->str[1][0] ? h->str[1] : "USB device");
+    if (usbip_exported(h))
+        return PICOCALC_SIM_USB_SERIAL_EXPORTED;
     if (!h->ser.found)
         return PICOCALC_SIM_USB_SERIAL_NO_PORT;
     return h->ser.open ? PICOCALC_SIM_USB_SERIAL_OPEN : PICOCALC_SIM_USB_SERIAL_CLOSED;
@@ -376,7 +380,7 @@ static void fail(usb_host_t *h, const char *what)
 static void serial_follow(usb_host_t *h)
 {
     serial_t *s = &h->ser;
-    if (h->state != H_CONFIGURED || !s->found)
+    if (h->state != H_CONFIGURED || !s->found || usbip_exported(h))
         return;
     bool want = picocalc_sim_usb_serial_wanted();
     if (want && !s->dtr) {
@@ -447,12 +451,12 @@ static void step_done(usb_host_t *h, int r)
         "SET_CONTROL_LINE_STATE",
     };
     if (h->debug)
-        usbhost_log(h, "%s: %s, %u bytes", names[h->step], r == R_OK ? "ok" : r == R_STALL ? "stalled" : "error", h->got);
+        usbhost_log(h, "%s: %s, %u bytes", names[h->step], r == XF_OK ? "ok" : r == XF_STALL ? "stalled" : "error", h->got);
     // A device may refuse the strings it has no use for, or the serial port's settings.
     bool optional = (h->step >= S_MANUFACTURER && h->step <= S_SERIAL) || h->step >= S_LINE_CODING;
-    if (r != R_OK && !(optional && r == R_STALL)) {
+    if (r != XF_OK && !(optional && r == XF_STALL)) {
         // A device without string descriptors may stall the request for their languages.
-        if (h->step == S_LANGIDS && r == R_STALL) {
+        if (h->step == S_LANGIDS && r == XF_STALL) {
             h->step = S_SET_CONFIG;
             next_step(h);
             return;
@@ -504,7 +508,7 @@ static void step_done(usb_host_t *h, int r)
     case S_MANUFACTURER:
     case S_PRODUCT:
     case S_SERIAL:
-        if (r == R_OK)
+        if (r == XF_OK)
             ascii(h->str[h->step - S_MANUFACTURER], sizeof(h->str[0]), h->data, h->got);
         break;
     case S_SET_CONFIG:
@@ -513,6 +517,7 @@ static void step_done(usb_host_t *h, int r)
         // Bulk endpoints start each configuration on DATA0.
         h->ser.in_toggle = h->ser.out_toggle = 0;
         h->state = H_CONFIGURED;
+        h->configured = true;
         serial_follow(h);
         msc_configured(h);
         return;
@@ -534,7 +539,7 @@ static void control_done(usb_host_t *h, int r)
 {
     void (*done)(usb_host_t *, int) = h->ctl_done;
     if (!done) {
-        if (r == R_OK)
+        if (r == XF_OK)
             h->state = H_RECOVERY;
         step_done(h, r);
         return;
@@ -564,7 +569,7 @@ static void control_step(usb_host_t *h)
     int r;
     uint64_t t = usbhost_bus_time(0);
     if (m->now > h->deadline) {
-        control_done(h, R_ERROR);
+        control_done(h, XF_ERROR);
         return;
     }
     switch (h->stage) {
@@ -583,7 +588,7 @@ static void control_step(usb_host_t *h)
             if (r != USB_ACK)
                 break;
             if (n > h->mps0) {
-                control_done(h, R_ERROR);
+                control_done(h, XF_ERROR);
                 return;
             }
             // A packet with the toggle already seen repeats one whose ACK went astray.
@@ -614,12 +619,12 @@ static void control_step(usb_host_t *h)
         } else {
             r = usb_bus_in(m, h->addr, 0, buf, &n, &pid);
             if (r == USB_ACK && n) {
-                control_done(h, R_ERROR);
+                control_done(h, XF_ERROR);
                 return;
             }
         }
         if (r == USB_ACK) {
-            control_done(h, R_OK);
+            control_done(h, XF_OK);
             return;
         }
         break;
@@ -630,10 +635,10 @@ static void control_step(usb_host_t *h)
         h->naks++;
         t = usbhost_nak_delay(h->naks);
         break;
-    case USB_STALL: control_done(h, R_STALL); return;
+    case USB_STALL: control_done(h, XF_STALL); return;
     default:
         if (++h->errors >= 3) {
-            control_done(h, R_ERROR);
+            control_done(h, XF_ERROR);
             return;
         }
         break;
@@ -681,10 +686,36 @@ void usbhost_pullup(chip_t *m, bool on)
         return;
     if (h->state == H_CONFIGURED || h->debug)
         usbhost_log(h, "device disconnected");
+    usbip_device_gone(h);
     stop_bus(h);
     if (h->state == H_RESET)
         usb_bus_reset(m, false);
     h->state = H_DETACHED;
+}
+
+void usbhost_exported(usb_host_t *h)
+{
+    if (h->ser.open)
+        usbhost_log(h, "serial port closed: the device is exported over USB/IP");
+    serial_close(h, NULL);
+    h->ser.dtr = false;
+    msc_stop(h);
+}
+
+void usbhost_unexported(usb_host_t *h)
+{
+    if (h->state == H_DETACHED || h->state == H_FAILED)
+        return;
+    h->step = S_FIRST_DESC;
+    h->attempts = 0;
+    start_reset(h);
+}
+
+// A chip reset takes every event away, the USB/IP server's polling with them.
+void usbhost_chip_reset(chip_t *m)
+{
+    if (m->usb.host)
+        usbip_resume(m->usb.host);
 }
 
 void usbhost_init(chip_t *m)
@@ -702,6 +733,8 @@ void usbhost_init(chip_t *m)
     h->ser.out_ev.ctx = h;
     msc_init(h);
     m->usb.host = h;
+    if (picocalc_sim_opts.usbip)
+        usbip_open(h, picocalc_sim_opts.usbip);
     usb_bus_attach(m, true);
     // The cable brings VBUS, which the boards without a radio sense on GPIO24.
     if (!m->board->wifi) {
@@ -715,6 +748,7 @@ void usbhost_free(chip_t *m)
     usb_host_t *h = m->usb.host;
     if (!h)
         return;
+    usbip_close(h);
     stop_bus(h);
     usb_bus_attach(m, false);
     if (!m->board->wifi)

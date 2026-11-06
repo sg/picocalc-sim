@@ -111,7 +111,7 @@ static void rw10(usb_host_t *h, bool write, uint32_t lba, unsigned count, uint8_
 static void halt_cleared(usb_host_t *h, int r)
 {
     msc_t *d = &h->msc;
-    if (r != R_OK) {
+    if (r != XF_OK) {
         finish(h, CSW_NONE);
         return;
     }
@@ -383,6 +383,8 @@ static void report(usb_host_t *h)
 static void next(usb_host_t *h)
 {
     msc_t *d = &h->msc;
+    if (usbip_exported(h))
+        return;
     static const uint8_t inquiry[6] = {0x12, 0, 0, 0, 36, 0}, ready[6] = {0}, sense[6] = {0x03, 0, 0, 0, 18, 0},
                          capacity[10] = {0x25};
     switch (d->step) {
@@ -441,6 +443,8 @@ void msc_configured(usb_host_t *h)
 {
     msc_t *d = &h->msc;
     int cur = -1, alt = -1;
+    if (usbip_exported(h))
+        return;
     d->found = d->mounted = d->failed = false;
     d->in_ep = d->out_ep = 0;
     for (unsigned i = 0; i + 2 <= h->cfg_len && h->cfg[i] >= 2; i += h->cfg[i]) {

@@ -249,6 +249,8 @@ void usb_reset(chip_t *m)
     u->host_reset = host_reset;
     u->host = host;
     u->pullup = was_pullup;
+    if (host)
+        usbhost_chip_reset(m);
     u->nak_poll = 0x00100010u;
     u->phy_trim = 0x1f1fu;
     if (!m->rp2040) {

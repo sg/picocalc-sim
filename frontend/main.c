@@ -58,6 +58,9 @@ static void usage(const char *argv0)
            "      --usb-console      --usb, with this terminal on the firmware's USB serial port: what it\n"
            "                         sends is printed and what is typed goes to it; Ctrl+] quits\n"
            "      --usb-terminal     in the window, show a terminal on that port beside the LCD\n"
+           "      --usbip [ADDR:]PORT\n"
+           "                         --usb, exporting the device over USB/IP on PORT (127.0.0.1 unless\n"
+           "                         ADDR is given; * for all interfaces), for `usbip attach -r HOST -b 1-1`\n"
            "      --trace            log faults, unknown ROM calls and bus errors\n"
            "\n"
            "In the window, the menus change these settings and restart the machine. F11 saves a\n"
@@ -118,6 +121,7 @@ int main(int argc, char **argv)
         OPT_USB,
         OPT_USB_CONSOLE,
         OPT_USB_TERMINAL,
+        OPT_USBIP,
         OPT_VOLUME,
         OPT_MUTE,
         OPT_WAV,
@@ -149,6 +153,7 @@ int main(int argc, char **argv)
         {"usb", no_argument, NULL, OPT_USB},
         {"usb-console", no_argument, NULL, OPT_USB_CONSOLE},
         {"usb-terminal", no_argument, NULL, OPT_USB_TERMINAL},
+        {"usbip", required_argument, NULL, OPT_USBIP},
         {"volume", required_argument, NULL, OPT_VOLUME},
         {"mute", no_argument, NULL, OPT_MUTE},
         {"wav", required_argument, NULL, OPT_WAV},
@@ -194,6 +199,10 @@ int main(int argc, char **argv)
         case OPT_USB: picocalc_sim_opts.usb = true; break;
         case OPT_USB_CONSOLE: picocalc_sim_opts.usb = picocalc_sim_opts.usb_console = true; break;
         case OPT_USB_TERMINAL: picocalc_sim_opts.usb_terminal = true; break;
+        case OPT_USBIP:
+            picocalc_sim_opts.usbip = optarg;
+            picocalc_sim_opts.usb = true;
+            break;
         case OPT_VOLUME: {
             int v = atoi(optarg);
             picocalc_sim_opts.volume = v < 0 ? 0 : v > 100 ? 100 : v;
