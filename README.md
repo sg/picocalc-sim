@@ -95,9 +95,10 @@ then cross-compiles the Windows build (`ci/build-windows.sh`, which also checks 
 `picocalc-sim.exe` is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
 the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`), and
-it boots and restarts the RP2350 firmware and runs the TrustZone and USB tests again on Raspberry
-Pi's A2 and A4 RP2350 ROMs built into picocalc-sim, first checking `roms/rp2350` against its hashes;
-the RP2040 ROM is used only for the tests and is never packed. If they pass, it stages a draft
+it checks the RP2350 ROMs in `roms/rp2350` against their hashes. The RP2350 boards run on the
+default A4 ROM; the RP2350 boot, restart, TrustZone and USB serial tests then run again on the A2
+ROM and on picocalc-sim's stand-in, and the USB boot tests again on the A2. The RP2040 ROM is used
+only for the tests and is never packed. If they pass, it stages a draft
 release with `picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`.
 Pushing a commit runs nothing; `build.yml` runs the same tests on a branch when started by hand from
 the Actions page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the
@@ -164,22 +165,23 @@ A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
 
 ### RP2350 boot ROM
 
-The RP2350 boards boot through picocalc-sim's own stand-in for the chip's boot ROM unless
-`--rp2350-rom`, or the RP2350 ROM field in Settings, picks Raspberry Pi's real one, which then runs
-the chip's own boot path, ROM functions and flash routines. Its A2 and A4 releases are built into
-picocalc-sim, from [roms/rp2350](roms/rp2350): `--rp2350-rom A2` or `--rp2350-rom A4`. A path
-instead names another `bootrom-combined.bin` from Raspberry Pi's
+The RP2350 boards run Raspberry Pi's own boot ROM, so the chip's own boot path, ROM functions and
+flash routines run as on the chip. Its A4 and A2 releases are built into picocalc-sim, from
+[roms/rp2350](roms/rp2350), and A4 is the default; `--rp2350-rom`, or the RP2350 ROM field in
+Settings, picks another: `A2`, `A4`, `stand-in` for picocalc-sim's own stand-in for the ROM (see
+[How it works](#how-it-works)), or the path of another `bootrom-combined.bin` from Raspberry Pi's
 [releases](https://github.com/raspberrypi/pico-bootrom-rp2350/releases). Raspberry Pi publishes
 them under a BSD licence, which the release archives carry as `LICENSE-RP2350-BOOTROM.TXT`.
 
 ```sh
-build/picocalc-sim --rp2350-rom A4 ../pcsh/build-pico2/pcsh.uf2
+build/picocalc-sim --rp2350-rom A2 ../pcsh/build-pico2/pcsh.uf2
 ```
 
 Images in flash or RAM and uf2loader work on it. Its USB boot, which the BOOTSEL button, a reboot
 into BOOTSEL and an empty flash all lead to, runs in Non-secure state as on the chip, and a host on
 the cable enumerates it as the RP2350 Boot device and mounts its drive, onto which Flash UF2 then
-copies an image for the ROM to write (see [USB](#usb)); F12 resets the board. The emulated chip
+copies an image for the ROM to write (see [USB](#usb)); the window's menu bar and title say BOOTSEL
+while it runs, and F12 resets the board. The emulated chip
 becomes the stepping the ROM was built for: an A2 with the A2 ROM, and an A3 with the A3 or A4 ROM,
 since A4 changed only the ROM.
 
@@ -320,7 +322,7 @@ use. It listens on 127.0.0.1 unless ADDR is given (`*` for every interface), and
 in:
 
 ```sh
-build/picocalc-sim --rp2350-rom A4 --flash none --erase-flash --usbip 3240
+build/picocalc-sim --flash none --erase-flash --usbip 3240
 sudo modprobe vhci-hcd
 sudo usbip --tcp-port 3240 attach -r 127.0.0.1 -b 1-1
 ```
@@ -409,14 +411,14 @@ mute = off
 scale = 3
 ```
 
-The keys are `board`, `rom`, `rp2350-rom` (`A2`, `A4` or a file), `flash` (a file, `none` or
-`default`), `card` (an image or `none`), `fast`, `unthrottled`, `trace`, `console`, `no-wifi`,
-`wifi-ap` and `forward` (repeated for each), `usb`, `usb-terminal`, `usbip`, `battery`, `charging`,
-`volume`, `mute`, `scale` and `screenshot-dir`; switches take `on` or `off`. An option given on the
-command line wins for that run and is not written to the file unless it is then changed in the
-window; the board is the exception, as the one last run is always kept. picocalc-sim rewrites the
-file as settings change, keeping keys it does not know but not comments. Headless runs ignore it, so
-scripts and CI see only their own options.
+The keys are `board`, `rom`, `rp2350-rom` (`A4`, `A2`, `stand-in` or a file), `flash` (a file,
+`none` or `default`), `card` (an image or `none`), `fast`, `unthrottled`, `trace`, `console`,
+`no-wifi`, `wifi-ap` and `forward` (repeated for each), `usb`, `usb-terminal`, `usbip`, `battery`,
+`charging`, `volume`, `mute`, `scale` and `screenshot-dir`; switches take `on` or `off`. An option
+given on the command line wins for that run and is not written to the file unless it is then changed
+in the window; the board is the exception, as the one last run is always kept. picocalc-sim rewrites
+the file as settings change, keeping keys it does not know but not comments. Headless runs ignore
+it, so scripts and CI see only their own options.
 
 ### Options
 
@@ -424,7 +426,7 @@ scripts and CI see only their own options.
 | --- | --- |
 | `-b`, `--board NAME` | `pico2`, `pico2_w`, `pimoroni_pico_plus2_w`, `pimoroni_pico_plus2`, `pico` or `pico_w` |
 | `--rom FILE` | the RP2040 boot ROM, as an ELF file or a 16 KB image (see [RP2040 boards](#rp2040-boards)) |
-| `--rp2350-rom A2\|A4\|FILE` | Raspberry Pi's RP2350 boot ROM to run instead of picocalc-sim's own, built in or from a file (see [RP2350 boot ROM](#rp2350-boot-rom)) |
+| `--rp2350-rom A4\|A2\|stand-in\|FILE` | the RP2350 boot ROM: Raspberry Pi's A4 (the default) or A2, built in, picocalc-sim's stand-in, or a file (see [RP2350 boot ROM](#rp2350-boot-rom)) |
 | `-f`, `--flash FILE` | flash image to use and keep |
 | `-c`, `--card IMAGE` / `--no-card` | SD card image, or an empty slot |
 | `--console` | print UART0 output, as a serial adapter on the PicoCalc's header would show |
@@ -474,7 +476,7 @@ the command line is written again and the card stays in the slot (unlike the men
  emu/  Cortex-M33 x2 ─ bus ─ SIO/GPIO coprocessor   PL022 SPI ─ pins ─ PL022/PIO  DW I2C
         FPU, DCP       │     timers, watchdog       PIO, DMA                       │
                        │     clocks, PLLs, resets    PWM, UART                      │
-                    boot ROM replacement   PIO gSPI ─ CYW43439 (emu/cyw43.c)       │
+                    boot ROM or stand-in   PIO gSPI ─ CYW43439 (emu/cyw43.c)       │
                                                          │ Ethernet frames         │
  sim/net/       DHCP, DNS, UDP and ping NAT; TCP ends at lwIP, relayed to host sockets
  sim/devices/   SD card (SPI mode)   ST7365P LCD controller   STM32 keyboard/battery controller
@@ -517,13 +519,13 @@ the command line is written again and the card stays in the slot (unlike the men
   datasheet: salts, canaries, sequence counts, its checked assertions, pseudorandom delays, the NMI
   and stall an RCP fault brings on both cores, and the zeroed reads and ignored checks Non-secure
   code gets.
-- **Boot ROM.** On the RP2350, `emu/rom.c` stands in for the boot ROM, so no ROM file is needed,
-  and `--rp2350-rom` runs Raspberry Pi's own, built in or from a file, instead. The stand-in
-  follows the real boot path (watchdog and reboot parameters, the picobin block loop, embedded and
-  standalone partition tables, ATRANS address translation, load maps, BOOTSEL when nothing
-  boots), runs core 1's launch handshake, and implements the ROM API the SDK and uf2loader call:
-  flash operations, partition queries, `chain_image`, `reboot`, `get_sys_info` and so on. The
-  RP2040 runs its real ROM, from a file the user supplies.
+- **Boot ROM.** The RP2350 runs Raspberry Pi's ROM, built in. `emu/rom.c` holds a stand-in for it,
+  which `--rp2350-rom stand-in` runs instead. The stand-in follows the real boot path (watchdog and
+  reboot parameters, the picobin block loop, embedded and standalone partition tables, ATRANS
+  address translation, load maps, BOOTSEL when nothing boots), runs core 1's launch handshake, and
+  implements the ROM API the SDK and uf2loader call: flash operations, partition queries,
+  `chain_image`, `reboot`, `get_sys_info` and so on. The RP2040 runs its real ROM, from a file the
+  user supplies.
 - **Peripherals.** Register-level models of what the PicoCalc firmware uses: SIO (FIFOs, spinlocks,
   doorbells and interpolators, in its Secure and Non-secure banks), IO bank and pads, TIMER0/1,
   watchdog, POWMAN's always-on timer, clocks/PLLs/tick generators, PL022 SPI, DesignWare I2C, PL011
@@ -614,7 +616,7 @@ Not emulated yet, or not faithfully:
   each: other interfaces are for a computer attached over USB/IP, and the drive is read only to
   mount it and written only to copy a UF2. USB/IP carries no isochronous transfers, and has been
   checked here with `usbip list` and a client of its own (`ci/usbip-client.py`) rather than a kernel
-  attach. The stand-in RP2350 ROM has no USB boot; Raspberry Pi's has.
+  attach. The stand-in RP2350 ROM (`--rp2350-rom stand-in`) has no USB boot.
 - **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
   RP2040. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
   flash reads give zeros; what a real RP2040 returns there is unverified.

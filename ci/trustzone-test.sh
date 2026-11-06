@@ -2,8 +2,8 @@
 # Runs tests/trustzone's self-checking test of the RP2350's security extension and fails unless
 # every check it prints over UART0 passes.
 #   ci/trustzone-test.sh PICOCALC_SIM UF2
-# PICOCALC_SIM_RP2350_ROM, if set, is Raspberry Pi's RP2350 ROM to boot it on instead of
-# picocalc-sim's own.
+# PICOCALC_SIM_RP2350_ROM, if set, is the RP2350 boot ROM to run it on in place of Raspberry Pi's
+# A4: A2, stand-in or a file.
 set -u
 picocalc_sim=$1
 uf2=$2

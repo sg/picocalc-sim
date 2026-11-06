@@ -5,7 +5,8 @@
 #                                                           and wants the firmware then to enumerate
 #   ci/usbip-test.sh PICOCALC_SIM BOARD serial UF2          talks to tests/usbserial's serial port
 # PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W, and
-# PICOCALC_SIM_RP2350_ROM is Raspberry Pi's RP2350 ROM, which drive needs.
+# PICOCALC_SIM_RP2350_ROM the RP2350 boot ROM to run in place of Raspberry Pi's A4, which for drive
+# must be one of Raspberry Pi's: the stand-in has no USB boot.
 set -u
 picocalc_sim=$1
 board=$2

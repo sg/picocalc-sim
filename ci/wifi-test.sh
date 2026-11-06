@@ -3,7 +3,7 @@
 # can log in, list, download and upload through a port forward.
 #   ci/wifi-test.sh PICOCALC_SIM MKCARD FTPSERVER.uf2...
 # PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico W image, and PICOCALC_SIM_RP2350_ROM
-# Raspberry Pi's RP2350 ROM to run in place of picocalc-sim's own.
+# the RP2350 boot ROM to run in place of Raspberry Pi's A4: A2, stand-in or a file.
 set -u
 picocalc_sim=$1
 mkcard=$2

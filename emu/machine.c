@@ -73,9 +73,13 @@ uint64_t picocalc_sim_uptime_us(void)
     return chip.now / PS_PER_US;
 }
 
+// Raspberry Pi's ROM running its USB boot, which is in Non-secure code in the ROM.
+static atomic_bool usb_boot;
+
 picocalc_sim_state_t picocalc_sim_state(void)
 {
-    return atomic_load(&state);
+    picocalc_sim_state_t s = atomic_load(&state);
+    return s == PICOCALC_SIM_RUNNING && atomic_load(&usb_boot) ? PICOCALC_SIM_BOOTSEL : s;
 }
 
 const char *picocalc_sim_state_reason(void)
@@ -494,6 +498,7 @@ static void *machine_main(void *arg)
             continue;
         }
         run_slice();
+        atomic_store(&usb_boot, chip.real_rom && chip.core[0].ns && chip.core[0].r[15] < 0x8000u);
         pinwave_advance(&chip);
         if (restart_at_ps && chip.now >= restart_at_ps) {
             restart_at_ps = 0;
@@ -656,16 +661,20 @@ static bool start(uf2_file_t *f)
     flash_load();
     if (b->rp2040 && !load_rp2040_rom())
         return false;
-    if (!b->rp2040 && picocalc_sim_opts.rp2350_rom_path) {
+    // Raspberry Pi's A4 ROM unless another is named, or picocalc-sim's own stand-in.
+    const char *rp2350_rom = picocalc_sim_opts.rp2350_rom_path ? picocalc_sim_opts.rp2350_rom_path : "A4";
+    if (!b->rp2040 && strcmp(rp2350_rom, "stand-in") != 0) {
         char err[512];
-        if (!rp2350_load_rom(&chip, picocalc_sim_opts.rp2350_rom_path, err, sizeof(err))) {
+        if (!rp2350_load_rom(&chip, rp2350_rom, err, sizeof(err))) {
             picocalc_sim_log("%s", err);
             return false;
         }
-        if (rp2350_builtin_rom(picocalc_sim_opts.rp2350_rom_path))
-            picocalc_sim_log("boot ROM: Raspberry Pi's RP2350-A%c, built in", picocalc_sim_opts.rp2350_rom_path[1]);
+        if (rp2350_builtin_rom(rp2350_rom))
+            picocalc_sim_log("boot ROM: Raspberry Pi's RP2350-A%c, built in", rp2350_rom[1]);
         else
-            picocalc_sim_log("boot ROM: %s", picocalc_sim_opts.rp2350_rom_path);
+            picocalc_sim_log("boot ROM: %s", rp2350_rom);
+    } else if (!b->rp2040) {
+        picocalc_sim_log("boot ROM: picocalc-sim's stand-in");
     }
     picocalc_sim_machine_lock();
     bool board = picocalc_board_init();

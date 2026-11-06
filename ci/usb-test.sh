@@ -3,8 +3,8 @@
 # the host on the emulated cable enumerates that device with the expected vendor and product IDs.
 #   ci/usb-test.sh PICOCALC_SIM BOARD VID:PID
 # PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W, and
-# PICOCALC_SIM_RP2350_ROM is Raspberry Pi's RP2350 ROM to boot instead of picocalc-sim's own,
-# which has no USB boot.
+# PICOCALC_SIM_RP2350_ROM the RP2350 boot ROM to run in place of Raspberry Pi's A4: A2 or a file,
+# since picocalc-sim's stand-in has no USB boot.
 set -u
 picocalc_sim=$1
 board=$2

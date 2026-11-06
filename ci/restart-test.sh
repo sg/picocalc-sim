@@ -3,7 +3,7 @@
 # different state from a fresh launch's, which would mean something outlived the restart.
 #   ci/restart-test.sh PICOCALC_SIM UF2...
 # PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico and Pico W images, and PICOCALC_SIM_RP2350_ROM
-# Raspberry Pi's RP2350 ROM to run in place of picocalc-sim's own.
+# the RP2350 boot ROM to run in place of Raspberry Pi's A4: A2, stand-in or a file.
 set -u
 picocalc_sim=$1
 shift

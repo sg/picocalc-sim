@@ -32,8 +32,10 @@ jobs:
       - name: Build
         run: src/ci/build-linux.sh src build
 
-      - name: Fetch the RP2040 boot ROM
-        run: src/ci/fetch-rp2040-rom.sh "$PICOCALC_SIM_ROM"
+      - name: Fetch the RP2040 boot ROM, and check the RP2350 ones built in
+        run: |
+          src/ci/fetch-rp2040-rom.sh "$PICOCALC_SIM_ROM"
+          (cd src/roms/rp2350 && sha256sum -c SHA256SUMS)
 
       - name: Boot the latest firmware releases
         run: |
@@ -49,36 +51,42 @@ jobs:
       - name: Check the security extension with the TrustZone test
         run: src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
 
-      - name: Enumerate the RP2040 ROM's USB boot on the emulated cable
-        run: src/ci/usb-test.sh build/picocalc-sim pico 2e8a:0003
+      - name: Enumerate the boot ROMs' USB boot on the emulated cable
+        run: |
+          src/ci/usb-test.sh build/picocalc-sim pico 2e8a:0003
+          src/ci/usb-test.sh build/picocalc-sim pico2 2e8a:000f
 
       - name: Talk to a USB serial port over the USB console
         run: |
           src/ci/usbserial-test.sh build/picocalc-sim src/tests/usbserial/usbserial-pico2.uf2
           src/ci/usbserial-test.sh build/picocalc-sim src/tests/usbserial/usbserial-pico.uf2
 
-      - name: Copy a UF2 onto the RP2040 ROM's drive
-        run: src/ci/usbdrive-test.sh build/picocalc-sim pico src/tests/usbserial/usbserial-pico.uf2 2e8a:000a
+      - name: Copy a UF2 onto the boot ROMs' drives
+        run: |
+          src/ci/usbdrive-test.sh build/picocalc-sim pico src/tests/usbserial/usbserial-pico.uf2 2e8a:000a
+          src/ci/usbdrive-test.sh build/picocalc-sim pico2 src/tests/usbserial/usbserial-pico2.uf2 2e8a:0009
 
       - name: Export the USB device over USB/IP
         run: |
           src/ci/usbip-test.sh build/picocalc-sim pico2 serial src/tests/usbserial/usbserial-pico2.uf2
           src/ci/usbip-test.sh build/picocalc-sim pico serial src/tests/usbserial/usbserial-pico.uf2
           src/ci/usbip-test.sh build/picocalc-sim pico drive src/tests/usbserial/usbserial-pico.uf2 2e8a:000a
+          src/ci/usbip-test.sh build/picocalc-sim pico2 drive src/tests/usbserial/usbserial-pico2.uf2 2e8a:0009
 
-      - name: Boot, restart and enumerate the RP2350 firmware and USB boot on Raspberry Pi's A2 and A4 ROMs
+      - name: Run the RP2350 tests on Raspberry Pi's A2 ROM and picocalc-sim's stand-in
         run: |
-          (cd src/roms/rp2350 && sha256sum -c SHA256SUMS)
-          for rev in A2 A4; do
-            export PICOCALC_SIM_RP2350_ROM=$rev
+          for rom in A2 stand-in; do
+            export PICOCALC_SIM_RP2350_ROM=$rom
             src/ci/boot-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
-            src/ci/usb-test.sh build/picocalc-sim pico2 2e8a:000f
             src/ci/usbserial-test.sh build/picocalc-sim src/tests/usbserial/usbserial-pico2.uf2
-            src/ci/usbdrive-test.sh build/picocalc-sim pico2 src/tests/usbserial/usbserial-pico2.uf2 2e8a:0009
-            src/ci/usbip-test.sh build/picocalc-sim pico2 drive src/tests/usbserial/usbserial-pico2.uf2 2e8a:0009
           done
+          # The stand-in has no USB boot, so the ROM's own USB device is tried on A2 alone.
+          export PICOCALC_SIM_RP2350_ROM=A2
+          src/ci/usb-test.sh build/picocalc-sim pico2 2e8a:000f
+          src/ci/usbdrive-test.sh build/picocalc-sim pico2 src/tests/usbserial/usbserial-pico2.uf2 2e8a:0009
+          src/ci/usbip-test.sh build/picocalc-sim pico2 drive src/tests/usbserial/usbserial-pico2.uf2 2e8a:0009
 
   windows:
     runs-on: docker
@@ -116,8 +124,10 @@ jobs:
       - name: Check the security extension with the TrustZone test
         run: src/ci/trustzone-test.sh build-win/picocalc-sim-wine src/tests/trustzone/trustzone.uf2
 
-      - name: Enumerate the RP2040 ROM's USB boot on the emulated cable
-        run: src/ci/usb-test.sh build-win/picocalc-sim-wine pico 2e8a:0003
+      - name: Enumerate the boot ROMs' USB boot on the emulated cable
+        run: |
+          src/ci/usb-test.sh build-win/picocalc-sim-wine pico 2e8a:0003
+          src/ci/usb-test.sh build-win/picocalc-sim-wine pico2 2e8a:000f
 
       - name: Talk to a USB serial port over the USB console
         run: src/ci/usbserial-test.sh build-win/picocalc-sim-wine src/tests/usbserial/usbserial-pico2.uf2

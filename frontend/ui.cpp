@@ -868,21 +868,21 @@ void machine_tab()
     ImGui::SetItemTooltip("The RP2040's own boot ROM, which picocalc-sim cannot include: b2.elf from "
                           "github.com/raspberrypi/pico-bootrom-rp2040/releases");
     ImGui::BeginDisabled(chosen.rp2040);
-    // The stand-in, one of Raspberry Pi's ROMs built in, or one from a file, which stays the choice
-    // while its path is still empty.
+    // Raspberry Pi's A4 ROM unless another is chosen: A2, picocalc-sim's stand-in, or one from a file,
+    // which stays the choice while its path is still empty.
     static bool rom_from_file;
     const std::string &r = pending.rp2350_rom;
-    bool a2 = r == "A2" || r == "a2", a4 = r == "A4" || r == "a4";
-    int kind = a2 ? 1 : a4 ? 2 : !r.empty() || rom_from_file ? 3 : 0;
-    static const char *const kinds[] = {"picocalc-sim's own", "Raspberry Pi's A2, built in", "Raspberry Pi's A4, built in",
-                                        "Raspberry Pi's, from a file"};
+    bool a2 = r == "A2" || r == "a2", a4 = r.empty() || r == "A4" || r == "a4", own = r == "stand-in";
+    int kind = rom_from_file || !(a2 || a4 || own) ? 3 : a2 ? 1 : own ? 2 : 0;
+    static const char *const kinds[] = {"Raspberry Pi's A4, built in", "Raspberry Pi's A2, built in",
+                                        "picocalc-sim's stand-in", "Raspberry Pi's, from a file"};
     if (ImGui::Combo("RP2350 ROM", &kind, kinds, 4)) {
         rom_from_file = kind == 3;
-        pending.rp2350_rom = kind == 1 ? "A2" : kind == 2 ? "A4" : kind == 3 && !a2 && !a4 ? r : "";
+        pending.rp2350_rom = kind == 1 ? "A2" : kind == 2 ? "stand-in" : kind == 3 && !a2 && !a4 && !own ? r : "";
     }
-    ImGui::SetItemTooltip("Raspberry Pi's RP2350 boot ROM runs the chip's own boot path in place of picocalc-sim's "
-                          "stand-in: its A2 and A4 releases are built in, or another bootrom-combined.bin from "
-                          "github.com/raspberrypi/pico-bootrom-rp2350/releases");
+    ImGui::SetItemTooltip("The boot ROM the RP2350 boards run: Raspberry Pi's A4 or A2 release, both built in, "
+                          "picocalc-sim's own stand-in, which skips the real boot path and has no USB boot, or "
+                          "another bootrom-combined.bin from github.com/raspberrypi/pico-bootrom-rp2350/releases");
     if (kind == 3)
         path_field("ROM file", "bootrom-combined.bin", &pending.rp2350_rom, PICK_RP2350_ROM);
     ImGui::EndDisabled();

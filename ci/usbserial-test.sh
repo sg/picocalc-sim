@@ -4,7 +4,8 @@
 # it sent back arrived.
 #   ci/usbserial-test.sh PICOCALC_SIM UF2
 # PICOCALC_SIM_ROM, if set, is the RP2040 boot ROM for the Pico build, and PICOCALC_SIM_RP2350_ROM
-# is Raspberry Pi's RP2350 ROM to boot the Pico 2 build on instead of picocalc-sim's own.
+# the RP2350 boot ROM to run the Pico 2 build on in place of Raspberry Pi's A4: A2, stand-in or a
+# file.
 set -u
 picocalc_sim=$1
 uf2=$2
