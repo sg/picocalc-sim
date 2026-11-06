@@ -1,10 +1,10 @@
-# picocalc_sim
+# picocalc-sim
 
-A PicoCalc emulator for Linux and Windows that runs firmware as it ships: the same UF2 file you
-would drop on the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps` folder. macOS should
-build but hasn't been attempted yet. It emulates the RP2350 or RP2040 instruction by instruction, with the
+A PicoCalc simulator/emulator for Linux and Windows that runs the same UF2 files you
+would drop on the Pico's BOOTSEL drive or put in uf2loader's `pico1-apps` or `pico2-apps` folder. 
+It emulates the RP2350 or RP2040 instruction by instruction, with the
 PicoCalc's LCD, keyboard controller, SD card, audio circuit and PSRAM attached to its pins, so
-nothing has to be rebuilt for the simulator.
+the simulator should reproduce how the firmware would run on the real hardware.
 
 Boards: **Raspberry Pi Pico 2**, **Pico 2 W** and **Pimoroni Pico Plus 2 / 2 W** (16 MB flash,
 8 MB PSRAM), and the RP2040 **Raspberry Pi Pico** and **Pico W**, which need the RP2040's boot ROM
@@ -15,42 +15,38 @@ emulator (see [WiFi](#wifi)).
 ## Running firmware
 
 ```sh
-build/picocalc-sim ../pcsh/build-pico2/pcsh.uf2
+./picocalc-sim picocalc-app.uf2
 ```
 
 A UF2 on the command line is written into flash as BOOTSEL's drive would write it, then the board
 boots. Without one, the board boots whatever its flash already holds, like switching the PicoCalc
 on. The board is taken from the image's binary info (`pico2`, `pico2_w`,
-`pimoroni_pico_plus2_w_rp2350`, `pico`, `pico_w`); `--board` overrides it. Where neither names
-one, the window uses the board it last ran (see [Settings file](#settings-file)), and otherwise
+`pimoroni_pico_plus2_w_rp2350`, `pico`, `pico_w`); passing the `--board <board-name>` option overrides it. When 
+a board isn't specified in either, the application uses the board it last ran (see [Settings file](#settings-file)), and otherwise
 `pico2`.
 
 Each board's flash persists in `~/.local/share/picocalc-sim/BOARD.flash` (`--flash FILE` to choose,
 `--flash none` to keep it only in memory until picocalc-sim exits, `--erase-flash` to start blank).
-The SD card is `~/.local/share/picocalc-sim/sd.img` if it exists, or `--card IMAGE`:
+The SD card is loaded from `~/.local/share/picocalc-sim/sd.img` if it exists, or `--card IMAGE`:
 
 ```sh
-build/tools/mkcard/picocalc-sim-mkcard ~/.local/share/picocalc-sim/sd.img ../pcsh/sd_files
+./picocalc-sim-mkcard ~/.local/share/picocalc-sim/sd.img path/to/sd_files
 ```
 
-On Windows that folder is `%LOCALAPPDATA%\picocalc-sim`. `picocalc-sim.exe` is a windowed program:
+On Windows that folder is `%LOCALAPPDATA%\picocalc-sim`. `picocalc-sim.exe` is a Windows GUI program:
 open it by double-clicking in Explorer, or drop a UF2 onto it, and only its window appears. A Command Prompt or PowerShell neither
 waits for a windowed program nor shows what it prints, so `picocalc-sim-console.exe` is the same
 program built for a console, for headless runs, `--console` and picocalc-sim's messages.
-`picocalc-sim-mkcard.exe` is a console program too:
+`picocalc-sim-mkcard.exe` is a console program as well:
 
 ```bat
 mkdir %LOCALAPPDATA%\picocalc-sim
-picocalc-sim-mkcard.exe %LOCALAPPDATA%\picocalc-sim\sd.img sd_files
+picocalc-sim-mkcard.exe %LOCALAPPDATA%\picocalc-sim\sd.img path\to\sd_files
 picocalc-sim-console.exe pcsh-pico2w-v0.1.2.uf2
 ```
 
-Up to v0.8.1 the program was called pcsim, and its folder was `~/.local/share/pcsim` (or
-`%LOCALAPPDATA%\pcsim`). The first run of picocalc-sim moves that folder to the new name, so the
-flash images, card and settings in it carry on.
-
 `picocalc-sim-mkcard IMAGE [-s MB] [-l LABEL] [DIR...]` formats an MBR/FAT32 card (512 MB by
-default) and copies each directory's contents to the root. Files the firmware writes persist in the
+default) and copies the contents of each specified directory to the root of the image. Files the firmware writes persist in the
 image.
 
 ### RP2040 boards
@@ -64,7 +60,7 @@ Download `b2.elf` (the revision in current Picos) from
 and either save it as `~/.local/share/picocalc-sim/rp2040-rom.elf` or pass it each time:
 
 ```sh
-build/picocalc-sim --rom b2.elf ../pcsh/build-pico/pcsh.uf2
+./picocalc-sim --rom b2.elf picocalc-app.uf2
 ```
 
 A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
@@ -72,46 +68,43 @@ A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
 
 ### RP2350 boot ROM
 
-The RP2350 boards run Raspberry Pi's own boot ROM, so the chip's own boot path, ROM functions and
-flash routines run as on the chip. Its A4 and A2 releases are built into picocalc-sim, from
-[roms/rp2350](roms/rp2350), and A4 is the default; `--rp2350-rom`, or the RP2350 ROM field in
+The RP2350 ROMs are BSD-3 licensed so the A4 and A2 releases are built into picocalc-sim, from
+[roms/rp2350](roms/rp2350), and A4 is the default. Specifying `--rp2350-rom <A2|A4|stand-in>`, or the RP2350 ROM field in
 Settings, picks another: `A2`, `A4`, `stand-in` for picocalc-sim's own stand-in for the ROM (see
 [How it works](#how-it-works)), or the path of another `bootrom-combined.bin` from Raspberry Pi's
-[releases](https://github.com/raspberrypi/pico-bootrom-rp2350/releases). Raspberry Pi publishes
-them under a BSD licence, which the release archives carry as `LICENSE-RP2350-BOOTROM.TXT`.
+[releases](https://github.com/raspberrypi/pico-bootrom-rp2350/releases).
 
 ```sh
-build/picocalc-sim --rp2350-rom A2 ../pcsh/build-pico2/pcsh.uf2
+./picocalc-sim --rp2350-rom A2 picocalc-app.uf2
 ```
 
-Images in flash or RAM and uf2loader work on it. Its USB boot, which the BOOTSEL button, a reboot
-into BOOTSEL and an empty flash all lead to, runs in Non-secure state as on the chip, and a host on
-the cable enumerates it as the RP2350 Boot device and mounts its drive, onto which Flash UF2 then
-copies an image for the ROM to write (see [USB](#usb)); the window's menu bar and title say BOOTSEL
-while it runs, and F12 resets the board. The emulated chip
-becomes the stepping the ROM was built for: an A2 with the A2 ROM, and an A3 with the A3 or A4 ROM,
-since A4 changed only the ROM.
+Images in flash or RAM and uf2loader work on it. Its USB boot (which the BOOTSEL button, a reboot
+into BOOTSEL and an empty flash all lead to) runs in Non-secure state as on the chip, and the host 
+operating system enumerates it as the RP2350 Boot device and mounts its drive, onto which Flash UF2 then
+copies an image for the ROM to write (see [USB](#usb)). picocalc-sim's menu bar and title will indicate BOOTSEL
+while it runs, and F12 resets the board. The emulated chip becomes the "stepping" the ROM was built 
+for: an A2 with the A2 ROM, and an A3 with the A3 or A4 ROM, since A4 changed only the ROM.
 
 ### uf2loader
 
 pelrun's [uf2loader](https://github.com/pelrun/uf2loader) works as it does on a real PicoCalc:
 
 ```sh
-mkdir -p card/pico2-apps
-cp BOOT2350.uf2 card/BOOT2350.UF2
-cp ../pcsh/build-pico2/pcsh.uf2 ../picocalc_lua/build-pico2/picolua.uf2 card/pico2-apps/
-build/tools/mkcard/picocalc-sim-mkcard ~/.local/share/picocalc-sim/sd.img card
-build/picocalc-sim --board pico2 bootloader_pico2.uf2
+mkdir -p sd_files/pico2-apps
+cp BOOT2350.uf2 sd_files/BOOT2350.UF2
+cp picocalc-app.uf2 another-app.uf2 sd_files/pico2-apps/
+./picocalc-sim-mkcard ~/.local/share/picocalc-sim/sd.img sd_files
+./picocalc-sim --board pico2 bootloader_pico2.uf2
 ```
 
 With no app in flash the loader opens its menu; choosing a UF2 flashes it into the app partition and
-boots it. Later runs (`build/picocalc-sim` with no UF2) boot the app directly. For the menu instead,
+boots it. Later runs (`./picocalc-sim` with no UF2) boot the app directly. For the menu instead,
 hold F1 (or Up) while choosing Machine › Restart, as when switching the PicoCalc on with it held, or
 press F12 and hold F1 straight after; held before F12, the key reaches the running app, not the
 loader. The RP2040 build works the same way, with `BOOT2040.UF2`, a `pico1-apps` folder and `--board
 pico bootloader_pico.uf2`.
 
-BlairLeduc's [PicoCalc shell](https://github.com/BlairLeduc/picocalc-shell) takes the menu's place
+BlairLeduc's [PicoCalc shell](https://github.com/BlairLeduc/picocalc-shell) takes the uf2loader menu's place
 on RP2350 boards: rename the card's `BOOT2350.UF2` to `BOOT2350.ORG`, copy the shell there as
 `BOOT2350.UF2`, and type an app's name at its prompt to flash it from `pico2-apps` and boot it.
 
@@ -120,12 +113,12 @@ power-on, as BOOTSEL's drive would, and the board resets into it.
 
 ### WiFi
 
-The W boards' firmware sees a CYW43439 that answers the SDK's driver as the real chip does, from
+The W boards' firmware sees an emulated CYW43439 that answers the SDK's driver as the real chip does, from
 the firmware download onwards. Behind it is a private network the emulator routes for:
 
 | Address | What it is |
 | --- | --- |
-| 10.0.2.15 | the PicoCalc, handed out by DHCP |
+| 10.0.2.15 | the PicoCalc, handed out by DHCP just as a WiFi access point would |
 | 10.0.2.2 | the gateway, which is the host: a connection to 10.0.2.2:PORT reaches the host's 127.0.0.1:PORT |
 | 10.0.2.3 | DNS, answered from the host's own resolver |
 
@@ -133,10 +126,12 @@ Without `--wifi-ap`, a scan finds one network, `PicoCalc-Sim`, and any network n
 the firmware tries will join, so settings already saved on a card just work. With
 `--wifi-ap SSID[:PASSWORD]` (repeat it for more), only those networks exist and a join behaves as
 on real hardware: a wrong password fails authentication and an unknown name is not found. A
-network given without a password is open.
+network given without a password is open. These are provided so that firmware apps can be tested 
+to confirm that they will work properly when trying to connect to a real Wifi AP from the PicoCalc 
+device.
 
 TCP and UDP from the firmware go out through ordinary sockets on the host, as from behind a home
-router. Pings to 10.0.2.2 and 10.0.2.3 are always answered; pings beyond need unprivileged ICMP
+router. Pings to 10.0.2.2 and 10.0.2.3 are always answered. Pings beyond need unprivileged ICMP
 sockets, which macOS allows and Linux allows when `net.ipv4.ping_group_range` covers your group
 (the default on Ubuntu, Debian and Fedora desktops). Windows sends them through its ICMP helper,
 which any user may use.
@@ -144,10 +139,10 @@ which any user may use.
 Nothing outside can reach the firmware unless a port is forwarded. `--forward 2121:21` makes
 127.0.0.1:2121 reach the firmware's port 21; `--forward *:2121:21` or `--forward ADDR:2121:21`
 opens it to other machines too (Windows Defender Firewall asks first). Forwarding port 21 also
-handles FTP's passive mode, so ftpserver works from an ordinary client:
+handles FTP's passive mode, so running an FTP server app works from an ordinary client:
 
 ```sh
-build/picocalc-sim --forward 2121:21 ../ftpserver/build-pico2w/picocalc-ftpserver.uf2
+./picocalc-sim --forward 2121:21 picocalc-ftpserver.uf2
 ftp -p 127.0.0.1 2121
 ```
 
@@ -156,8 +151,8 @@ driver's ioctls, the chip's events and every bus command.
 
 ### USB
 
-`--usb`, or USB port plugged into a host in Settings, connects the board's USB port to a computer.
-The cable brings VBUS, which the board senses (GPIO24 on the Pico, Pico 2 and Pimoroni Plus 2, the
+`--usb`, or selecting "USB port plugged into a host" in Settings, connects the board's USB port to the host system.
+This USB "cable" emulates VBUS (power), which the board senses (GPIO24 on the Pico, Pico 2 and Pimoroni Plus 2, the
 radio's WL_GPIO2 on the W boards). When the firmware connects its USB device, the host waits for the
 connection to settle, resets the port and enumerates the device as Linux does: it reads the device,
 configuration and string descriptors, gives the device an address and sets its configuration. It
@@ -167,7 +162,7 @@ logs what it found and then keeps the bus awake with a start-of-frame packet eve
 usb: 2e8a:000f "RP2350 Boot" from "Raspberry Pi", serial "E3502C418F3B1D5A", USB 2.10; interfaces 0 mass storage, 1 vendor-specific
 ```
 
-That is Raspberry Pi's RP2350 ROM in BOOTSEL; the RP2040's ROM gives `2e8a:0003 "RP2 Boot"`, and
+The above log entry indicates Raspberry Pi's RP2350 ROM in BOOTSEL. the RP2040's ROM gives `2e8a:0003 "RP2 Boot"`, and
 firmware built with the SDK's USB stdio gives its CDC serial port. A device that disconnects, as
 across a reset, is enumerated again when it reconnects. A device that is slow to answer as it
 starts, such as MicroPython formatting its flash on first boot, is retried as Linux would, up to 8
@@ -180,16 +175,16 @@ the firmware's USB serial port, the CDC ACM interface that the SDK's USB stdio, 
 and MicroPython present. The host opens the port as Linux does when a program opens it: 115200
 baud, 8N1, then DTR and RTS, which the SDK's USB stdio waits for before it sends anything. What the
 firmware sends is printed, and what is typed goes to it key by key and unechoed, since the firmware
-echoes it. Ctrl+C goes to the firmware; Ctrl+] quits picocalc-sim. Input piped in rather than typed
+echoes it. Ctrl+C goes to the firmware. Ctrl+] quits picocalc-sim. Input piped in rather than typed
 waits for the port to open, and output to a file or pipe loses its carriage returns:
 
 ```sh
-build/picocalc-sim --usb-console RPI_PICO2-20260824-v1.29.0.uf2
+./picocalc-sim --usb-console RPI_PICO2-20260824-v1.29.0.uf2
 >>> print(6*7)
 42
 ```
 
-In the window, View › USB serial terminal (or `--usb-terminal`) opens the same terminal beside the
+In the picocalc-sim appliction, View › USB serial terminal (or `--usb-terminal`) opens the same terminal beside the
 LCD, the window widening to make room for it, and works on Windows too, where `picocalc-sim.exe`
 has no console. It is an 80 by 24 VT100 screen with 2000 lines of history, colours, and the cursor
 keys, editing keys and cursor position reports that line editors and full-screen programs use.
@@ -229,7 +224,7 @@ use. It listens on 127.0.0.1 unless ADDR is given (`*` for every interface), and
 in:
 
 ```sh
-build/picocalc-sim --flash none --erase-flash --usbip 3240
+./picocalc-sim --flash none --erase-flash --usbip 3240
 sudo modprobe vhci-hcd
 sudo usbip --tcp-port 3240 attach -r 127.0.0.1 -b 1-1
 ```
@@ -259,7 +254,7 @@ leaves it out. `--wav FILE` records it in emulated time as 48 kHz stereo, so an 
 writes the same file every time:
 
 ```sh
-PICOCALC_SIM_STOP_AT_MS=5000 build/picocalc-sim --headless --unthrottled --flash none --wav out.wav fw.uf2
+PICOCALC_SIM_STOP_AT_MS=5000 ./picocalc-sim --headless --unthrottled --flash none --wav out.wav fw.uf2
 ```
 
 ### Keys
@@ -515,11 +510,8 @@ Linux that needs the X11 and Wayland development headers, plus the audio ones fo
 packages are listed in `ci/build-linux.sh`, and SDL's configure step names any X11 one that is
 missing. Installing the system package (`libsdl3-dev`, `brew install sdl3`) skips the download;
 `-DPICOCALC_SIM_SDL=OFF` builds a headless-only binary. The window's menus are drawn with Dear ImGui
-1.92.9b, downloaded (hash-pinned) with SDL unless `IMGUI_DIR` names a copy; its C++ runtime is
-linked in, so the binary still needs only the C library. FatFs, used by the card-image tool,
-comes from a sibling `ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and
-lwIP, used by the emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is
-fetched otherwise.
+1.92.9b, downloaded (hash-pinned) with SDL unless `IMGUI_DIR` specifies a copy; its C++ runtime is
+linked in, so the binary still needs only the C library. 
 
 The build produces `build/picocalc-sim`, the emulator, and `build/tools/mkcard/picocalc-sim-mkcard`,
 which makes SD card images.
