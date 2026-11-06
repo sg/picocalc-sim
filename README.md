@@ -97,8 +97,8 @@ is windowed and the other two are console programs) and runs the same tests on
 `picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
 the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`), and
 it boots and restarts the RP2350 firmware and runs the TrustZone and USB tests again on Raspberry
-Pi's A2 and A4 RP2350 ROMs (`ci/fetch-rp2350-rom.sh`); the ROMs are used only for the tests and are
-not packed into the release. If they pass, it stages a draft release with
+Pi's A2 and A4 RP2350 ROMs in `roms/rp2350`, first checking them against their hashes; the RP2040
+ROM is used only for the tests, and no ROM is packed into the release. If they pass, it stages a draft release with
 `picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`. Pushing a commit
 runs nothing; `build.yml` runs the same tests on a branch when started by hand from the Actions
 page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the Linux
@@ -167,12 +167,13 @@ A 16 KB raw image of the ROM (`rp2040-rom.bin`, or a dump made with
 
 The RP2350 boards boot through picocalc-sim's own stand-in for the chip's boot ROM unless
 `--rp2350-rom FILE`, or the RP2350 ROM field in Settings, names Raspberry Pi's real one, which then
-runs the chip's own boot path, ROM functions and flash routines. Download `bootrom-combined.bin`
-from the [A2](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A2) or
-[A4](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A4) release:
+runs the chip's own boot path, ROM functions and flash routines. Both of Raspberry Pi's releases of
+it are in [roms/rp2350](roms/rp2350), under Raspberry Pi's BSD licence: `bootrom-combined.bin` from
+the [A2](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A2) and
+[A4](https://github.com/raspberrypi/pico-bootrom-rp2350/releases/tag/A4) releases, unchanged.
 
 ```sh
-build/picocalc-sim --rp2350-rom bootrom-combined.bin ../pcsh/build-pico2/pcsh.uf2
+build/picocalc-sim --rp2350-rom roms/rp2350/A4/bootrom-combined.bin ../pcsh/build-pico2/pcsh.uf2
 ```
 
 Images in flash or RAM and uf2loader work on it. Its USB boot, which the BOOTSEL button, a reboot
@@ -319,7 +320,7 @@ use. It listens on 127.0.0.1 unless ADDR is given (`*` for every interface), and
 in:
 
 ```sh
-build/picocalc-sim --rp2350-rom bootrom-combined.bin --erase-flash --usbip 3240
+build/picocalc-sim --rp2350-rom roms/rp2350/A4/bootrom-combined.bin --flash none --erase-flash --usbip 3240
 sudo modprobe vhci-hcd
 sudo usbip --tcp-port 3240 attach -r 127.0.0.1 -b 1-1
 ```

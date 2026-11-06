@@ -77,9 +77,9 @@ jobs:
 
       - name: Boot, restart and enumerate the RP2350 firmware and USB boot on Raspberry Pi's A2 and A4 ROMs
         run: |
+          (cd src/roms/rp2350 && sha256sum -c SHA256SUMS)
           for rev in A2 A4; do
-            src/ci/fetch-rp2350-rom.sh $rev rom/rp2350-$rev.bin
-            export PICOCALC_SIM_RP2350_ROM=rom/rp2350-$rev.bin
+            export PICOCALC_SIM_RP2350_ROM=src/roms/rp2350/$rev/bootrom-combined.bin
             src/ci/boot-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/restart-test.sh build/picocalc-sim fw/*-pico2-*.uf2 fw/*-pico2w-*.uf2 fw/*-pim2w-*.uf2
             src/ci/trustzone-test.sh build/picocalc-sim src/tests/trustzone/trustzone.uf2
