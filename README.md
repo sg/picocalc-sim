@@ -624,3 +624,9 @@ Not emulated yet, or not faithfully:
 2. A macOS build.
 3. Bridged networking so the firmware gets an address on the LAN.
 4. Add the option to allow auto-repeat of keys held down.
+
+## Licence
+
+picocalc-sim is released under the [MIT licence](LICENSE). Raspberry Pi's RP2350 boot ROMs in
+[roms/rp2350](roms/rp2350) keep their own BSD licence, and files taken from other projects keep the
+notices at their tops.
