@@ -2,7 +2,7 @@
 
 A PicoCalc emulator for Linux and Windows that runs firmware as it ships: the same UF2 file you
 would drop on the Pico's BOOTSEL drive or put in uf2loader's `pico2-apps` folder. macOS should
-build but is untested. It emulates the RP2350 or RP2040 instruction by instruction, with the
+build but hasn't been attempted yet. It emulates the RP2350 or RP2040 instruction by instruction, with the
 PicoCalc's LCD, keyboard controller, SD card, audio circuit and PSRAM attached to its pins, so
 nothing has to be rebuilt for the simulator.
 
@@ -11,99 +11,6 @@ Boards: **Raspberry Pi Pico 2**, **Pico 2 W** and **Pimoroni Pico Plus 2 / 2 W**
 (see [RP2040 boards](#rp2040-boards)). On the W boards the CYW43439 radio is emulated too: firmware
 scans, joins a virtual access point and reaches the network through a router built into the
 emulator (see [WiFi](#wifi)).
-
-## Building
-
-You need CMake 3.16+ and a C and C++ compiler. Nothing from the Pico SDK or an ARM toolchain is
-needed.
-
-```sh
-cmake -S . -B build
-cmake --build build -j
-```
-
-If SDL3 is not installed the build downloads SDL 3.4.18 (hash-pinned) and links it statically. On
-Linux that needs the X11 and Wayland development headers, plus the audio ones for sound; the
-packages are listed in `ci/build-linux.sh`, and SDL's configure step names any X11 one that is
-missing. Installing the system package (`libsdl3-dev`, `brew install sdl3`) skips the download;
-`-DPICOCALC_SIM_SDL=OFF` builds a headless-only binary. The window's menus are drawn with Dear ImGui
-1.92.9b, downloaded (hash-pinned) with SDL unless `IMGUI_DIR` names a copy; its C++ runtime is
-linked in, so the binary still needs only the C library. FatFs, used by the card-image tool,
-comes from a sibling `ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and
-lwIP, used by the emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is
-fetched otherwise.
-
-The build produces `build/picocalc-sim`, the emulator, and `build/tools/mkcard/picocalc-sim-mkcard`,
-which makes SD card images.
-
-### Windows
-
-The Windows build is cross-compiled from Linux with MinGW-w64 (`apt install mingw-w64` on Debian
-and Ubuntu):
-
-```sh
-cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
-cmake --build build-win -j
-```
-
-That gives `build-win/picocalc-sim.exe`, `build-win/picocalc-sim-console.exe` and
-`build-win/tools/mkcard/picocalc-sim-mkcard.exe`. Each is a single file that needs only DLLs Windows
-ships with, so it can be copied to any 64-bit Windows 10 or 11 machine. MSYS2's MinGW-w64 should
-build it natively on Windows the same way, but that is untested.
-
-### Checking a change to the emulator
-
-`PICOCALC_SIM_STOP_AT_MS=MS` stops a run at exactly that much emulated time, and with `--trace` the
-exit report ends with a digest of both cores' registers, cycle time and instruction counts and all
-of SRAM. Unthrottled headless runs are deterministic, so a change that should not alter behaviour
-(such as a faster CPU path) must leave every digest as it was, and the three ways the CPU can run
-(native code, `PICOCALC_SIM_NO_JIT=1` and `PICOCALC_SIM_NO_BLOCKS=1`) must give the same one:
-
-```sh
-PICOCALC_SIM_STOP_AT_MS=3000 build/picocalc-sim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
-```
-
-`PICOCALC_SIM_RESTART_AT_MS=MS` restarts the machine once at that emulated time, as the script
-command `restart` does, and the run then starts again from power-on. Nothing of the first run may
-survive it, so with `PICOCALC_SIM_STOP_AT_MS` the second run's digest must match a fresh launch's
-(`ci/restart-test.sh` checks this for each firmware).
-
-### Measuring the hardware
-
-`tools/psramprobe` is firmware for a real PicoCalc, built on its own with the Pico SDK (the first
-line of its `CMakeLists.txt` says how). Started from uf2loader, it measures in PIO cycles how long
-SCK and the mainboard PSRAM's output take to reach the PIO at 96 to 252 MHz, runs rp2040-psram's
-read and write programs at several clocks and dividers, and writes the results to `PSPROBE.TXT` on
-the card. The emulator's pin timing comes from one such report, and running the probe in the
-emulator should give the same one.
-
-### Continuous integration and releases
-
-Pushing a `v*` tag runs `.forgejo/workflows/release.yml` in the shared `picocalc-builder` image. It
-builds the tag, boots the latest pcsh, picocalc_lua, picocalc-z80 and ftpserver releases on each
-board (`ci/boot-test.sh`), restarts each part-way through its boot (`ci/restart-test.sh`), transfers
-files to and from ftpserver over the emulated WiFi (`ci/wifi-test.sh`), and runs `tests/trustzone`,
-a bare-metal check of the security extension, which none of that firmware uses
-(`ci/trustzone-test.sh`; `tests/trustzone/build.sh` rebuilds its UF2 with `arm-none-eabi-gcc`), and
-checks that the boot ROMs' USB boot enumerates on the emulated cable (`ci/usb-test.sh`) and that
-`tests/usbserial`, a self-checking USB serial port built with the Pico SDK, gets a line from the
-terminal and sends 100 back over `--usb-console` (`ci/usbserial-test.sh`; `tests/usbserial/build.sh`
-rebuilds its UF2s), and that the boot ROMs write that firmware when it is copied onto their drive
-and restart into it (`ci/usbdrive-test.sh`), and that both work over USB/IP from a client that
-imports and enumerates the device as Linux's does (`ci/usbip-test.sh` with `ci/usbip-client.py`),
-then cross-compiles the Windows build (`ci/build-windows.sh`, which also checks that
-`picocalc-sim.exe` is windowed and the other two are console programs) and runs the same tests on
-`picocalc-sim-console.exe` under Wine (`ci/wine-wrap.sh`). For the Pico and Pico W runs it downloads
-the RP2040 boot ROM from Raspberry Pi's release and checks its hash (`ci/fetch-rp2040-rom.sh`), and
-it checks the RP2350 ROMs in `roms/rp2350` against their hashes. The RP2350 boards run on the
-default A4 ROM; the RP2350 boot, restart, TrustZone and USB serial tests then run again on the A2
-ROM and on picocalc-sim's stand-in, and the USB boot tests again on the A2. The RP2040 ROM is used
-only for the tests and is never packed. If they pass, it stages a draft
-release with `picocalc-sim-TAG-linux-x86_64.tar.gz` and `picocalc-sim-TAG-windows-x86_64.zip`.
-Pushing a commit runs nothing; `build.yml` runs the same tests on a branch when started by hand from
-the Actions page. `ci/build-linux.sh` installs the X11, Wayland and audio headers SDL needs, so the
-Linux binaries depend only on glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39) and can be
-built on a headless machine and copied to a desktop.
 
 ## Running firmware
 
@@ -127,7 +34,7 @@ build/tools/mkcard/picocalc-sim-mkcard ~/.local/share/picocalc-sim/sd.img ../pcs
 ```
 
 On Windows that folder is `%LOCALAPPDATA%\picocalc-sim`. `picocalc-sim.exe` is a windowed program:
-open it, or drop a UF2 onto it, and only its window appears. A Command Prompt or PowerShell neither
+open it by double-clicking in Explorer, or drop a UF2 onto it, and only its window appears. A Command Prompt or PowerShell neither
 waits for a windowed program nor shows what it prints, so `picocalc-sim-console.exe` is the same
 program built for a console, for headless runs, `--console` and picocalc-sim's messages.
 `picocalc-sim-mkcard.exe` is a console program too:
@@ -371,7 +278,7 @@ chords its keyboard controller uses for them:
 | **F12** | the Pico's reset; **Shift+F12** resets into BOOTSEL |
 
 Drop a UF2 file on the window to flash it, or a `.img` file to insert it as the SD card. Holding a
-key does not auto-repeat, as on the real keyboard. Key mapping assumes a US layout. On Windows,
+key currently does not auto-repeat, as on the real keyboard. Key mapping assumes a US layout. On Windows,
 characters that Remote Desktop and similar tools send as Unicode rather than as keys are typed with
 the PicoCalc keys for them. When the
 firmware powers the PicoCalc off, any key powers it back on. A key held while the machine restarts
@@ -405,8 +312,8 @@ the UART0 console, the USB cable, battery, sound and the screenshot folder, whic
 once.
 Restart is the PicoCalc's power switch: each board's flash keeps what it holds (one board's flash is
 not another's, as if the Pico were swapped), and the UF2, `--erase-flash` and `--wav` from the
-command line apply only to the first start. If the machine cannot start, say for a missing boot ROM
-or a port already in use, the window shows why and waits for the settings to be fixed.
+command line apply only to the first start. If the machine cannot start (e.g., a missing boot ROM
+or a port already in use) the window shows why and waits for the settings to be fixed.
 
 ### Settings file
 
@@ -593,10 +500,75 @@ the command line is written again and the card stays in the slot (unlike the men
   through the board's filters, worked out from its resistors and capacitors, and resamples it to
   48 kHz. A PWM carrier above 20 kHz is taken as its average, since it is inaudible.
 
+## Building
+
+You need CMake 3.16+ and a C and C++ compiler. Nothing from the Pico SDK or an ARM toolchain is
+needed.
+
+```sh
+cmake -S . -B build
+cmake --build build -j
+```
+
+If SDL3 is not installed the build downloads SDL 3.4.18 (hash-pinned) and links it statically. On
+Linux that needs the X11 and Wayland development headers, plus the audio ones for sound; the
+packages are listed in `ci/build-linux.sh`, and SDL's configure step names any X11 one that is
+missing. Installing the system package (`libsdl3-dev`, `brew install sdl3`) skips the download;
+`-DPICOCALC_SIM_SDL=OFF` builds a headless-only binary. The window's menus are drawn with Dear ImGui
+1.92.9b, downloaded (hash-pinned) with SDL unless `IMGUI_DIR` names a copy; its C++ runtime is
+linked in, so the binary still needs only the C library. FatFs, used by the card-image tool,
+comes from a sibling `ftpserver`, `picocalc_lua` or `picocalc-z80` checkout if there is one, and
+lwIP, used by the emulated network, from a sibling `pico-sdk` (or `PICO_SDK_PATH`); either is
+fetched otherwise.
+
+The build produces `build/picocalc-sim`, the emulator, and `build/tools/mkcard/picocalc-sim-mkcard`,
+which makes SD card images.
+
+### Windows
+
+The Windows build is cross-compiled from Linux with MinGW-w64 (`apt install mingw-w64` on Debian
+and Ubuntu):
+
+```sh
+cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
+cmake --build build-win -j
+```
+
+That gives `build-win/picocalc-sim.exe`, `build-win/picocalc-sim-console.exe` and
+`build-win/tools/mkcard/picocalc-sim-mkcard.exe`. Each is a single file that needs only DLLs Windows
+ships with, so it can be copied to any 64-bit Windows 10 or 11 machine. MSYS2's MinGW-w64 should
+build it natively on Windows the same way, but that is untested.
+
+### Checking a change to the emulator
+
+`PICOCALC_SIM_STOP_AT_MS=MS` stops a run at exactly that much emulated time, and with `--trace` the
+exit report ends with a digest of both cores' registers, cycle time and instruction counts and all
+of SRAM. Unthrottled headless runs are deterministic, so a change that should not alter behaviour
+(such as a faster CPU path) must leave every digest as it was, and the three ways the CPU can run
+(native code, `PICOCALC_SIM_NO_JIT=1` and `PICOCALC_SIM_NO_BLOCKS=1`) must give the same one:
+
+```sh
+PICOCALC_SIM_STOP_AT_MS=3000 build/picocalc-sim --headless --unthrottled --trace --flash none --no-card fw.uf2 2>&1 | grep digest
+```
+
+`PICOCALC_SIM_RESTART_AT_MS=MS` restarts the machine once at that emulated time, as the script
+command `restart` does, and the run then starts again from power-on. Nothing of the first run may
+survive it, so with `PICOCALC_SIM_STOP_AT_MS` the second run's digest must match a fresh launch's
+(`ci/restart-test.sh` checks this for each firmware).
+
+### Measuring the hardware
+
+`tools/psramprobe` is firmware for a real PicoCalc, built on its own with the Pico SDK (the first
+line of its `CMakeLists.txt` says how). Started from uf2loader, it measures in PIO cycles how long
+SCK and the mainboard PSRAM's output take to reach the PIO at 96 to 252 MHz, runs rp2040-psram's
+read and write programs at several clocks and dividers, and writes the results to `PSPROBE.TXT` on
+the card. The emulator's pin timing comes from one such report, and running the probe in the
+emulator should give the same one.
+
 ## Status
 
-Tested here with UF2s built from `../pcsh`, `../picocalc_lua`, `../picocalc-z80` and
-`../ftpserver`, and with ClockworkPi's PicoMite build:
+Tested with UF2s built from my own PicoCalc projects (`pcsh`, `picocalc_lua`, `picocalc-z80` and
+`ftpserver`), pelrun's uf2Loader, BlairLeduc's PicoCalc shell, MicroPython, and ClockworkPi's PicoMite build:
 
 | Firmware | Pico 2 | Pico 2 W | Pimoroni Plus 2 W | Pico | Pico W |
 | --- | --- | --- | --- | --- | --- |
@@ -621,7 +593,7 @@ Not emulated yet, or not faithfully:
 - **Speed.** On a 2.9 GHz i7, firmware that keeps both cores busy (picocalc_lua, picocalc-z80)
   runs at 1.7 to 2 times real time, and a Lua loop at about 2.3 times. Hosts other than x86-64 use
   the block handlers, at about 80% of real time for the same firmware.
-- **Mainboard PSRAM timing** was measured on one PicoCalc, with the default 4 mA slow-slew pads and
+- **Mainboard PSRAM timing** was measured on my PicoCalc hardware, with the default 4 mA slow-slew pads and
   at 12 mA fast slew; other pad settings are interpolated, and quad mode is unmeasured. A read
   that lands within a fraction of a nanosecond of a change, which varies from read to read on the
   board, gives the same answer every time here.
@@ -629,9 +601,9 @@ Not emulated yet, or not faithfully:
   and the host on the cable drives only a CDC ACM serial port and a mass storage drive, the first of
   each: other interfaces are for a computer attached over USB/IP, and the drive is read only to
   mount it and written only to copy a UF2. USB/IP carries no isochronous transfers, and has been
-  checked with Linux's own attach but not yet usbip-win2's. The stand-in RP2350 ROM
+  checked with Linux's own attach but not yet usbip-win2's. The stand-in emulated RP2350 ROM
   (`--rp2350-rom stand-in`) has no USB boot.
-- **RP2040 boards** use the pin and PSRAM timing measured on an RP2350, not yet checked on an
+- **RP2040 boards** use the pin and PSRAM timing measured on my RP2350, not yet checked on an
   RP2040. A RAM image the ROM jumps to straight after reset finds XIP not yet set up, and its
   flash reads give zeros; what a real RP2040 returns there is unverified.
 - **RISC-V** images for the RP2350 are not supported.
@@ -648,5 +620,7 @@ Not emulated yet, or not faithfully:
 
 ## Roadmap
 
-1. The RP2040 boards' pin and PSRAM timing measured on a Pico.
-2. A macOS build, and optionally bridged networking so the firmware gets an address on the LAN.
+1. The RP2040 boards' pin and PSRAM timing measured on a physical Pico board.
+2. A macOS build.
+3. Bridged networking so the firmware gets an address on the LAN.
+4. Add the option to allow auto-repeat of keys held down.
