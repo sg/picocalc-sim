@@ -20,4 +20,8 @@ jobs:
           # fine-grained, limited to running workflows in sg/picocalc-sim-ci
           GH_TOKEN: ${{ secrets.CI_DISPATCH_TOKEN }}
           TAG: ${{ github.ref_name }}
-        run: gh workflow run release.yml --repo sg/picocalc-sim-ci --field tag="$TAG"
+        # The REST call itself, since `gh workflow run` first reads the default branch, which
+        # this token cannot.
+        run: >-
+          gh api --method POST repos/sg/picocalc-sim-ci/actions/workflows/release.yml/dispatches
+          -f ref=main -f "inputs[tag]=$TAG"
