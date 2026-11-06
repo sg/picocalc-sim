@@ -35,7 +35,8 @@ typedef struct picocalc_sim_options {
     bool headless;
     bool trace;
     bool erase_flash;
-    int scale;
+    // The window's size as a multiple of the LCD's; whole numbers draw each LCD pixel as a square.
+    float scale;
     double timeout_s;
     int battery;
     bool charging;

@@ -388,14 +388,21 @@ without quitting:
 - **SD card**: insert an image, or eject the one in the slot. A card has to be ejected before
   another goes in, as the firmware may still hold the old card's tables.
 - **Sound**: mute, volume, and recording to a WAV file from now on.
-- **View**: window scale, screenshot (F11), a log of picocalc-sim's messages, and the USB serial
-  terminal (see [USB](#usb)). A screenshot is saved as `picocalc-DATE-TIME-N.png`, and a notice
-  over the LCD gives its file name and full path for a few seconds, or why it could not be saved.
+- **View**: window scale from 1x to 4x in half steps, screenshot (F11), a log of picocalc-sim's
+  messages, and the USB serial terminal (see [USB](#usb)). The LCD fills the window as it is
+  resized: at a whole multiple of its 320 pixels each LCD pixel is a square of screen pixels, and at
+  any other size SDL's pixel-art scaling keeps every LCD pixel the same size, blending only the
+  screen pixel where two meet (SDL's software renderer, used where there is no GPU, has no such
+  scaling and draws some LCD pixels a screen pixel wider than others). A screenshot is saved as
+  `picocalc-DATE-TIME-N.png`, and a notice over the LCD gives its file name and full path for a few
+  seconds, or why it could not be saved.
 
-Settings has the board, the RP2040 and RP2350 boot ROMs, where the flash is kept, fast transfers,
-tracing, the radio, access points and port forwards, which take effect at the next restart, and
-throttling, the UART0 console, the USB cable, battery, sound and the screenshot folder, which take
-effect at once.
+Settings, the Log, Keyboard and About open in windows of their own that stay above the PicoCalc's,
+beside it where the screen has room, so they are as big as they need to be at any scale. Settings
+has the board, the RP2040 and RP2350 boot ROMs, where the flash is kept, fast transfers, tracing,
+the radio, access points and port forwards, which take effect at the next restart, and throttling,
+the UART0 console, the USB cable, battery, sound and the screenshot folder, which take effect at
+once.
 Restart is the PicoCalc's power switch: each board's flash keeps what it holds (one board's flash is
 not another's, as if the Pico were swapped), and the UF2, `--erase-flash` and `--wav` from the
 command line apply only to the first start. If the machine cannot start, say for a missing boot ROM
@@ -440,7 +447,7 @@ it, so scripts and CI see only their own options.
 | `--fast` | SPI, I2C and UART transfers complete instantly |
 | `--unthrottled` | run as fast as the host allows instead of at device speed |
 | `--battery PCT`, `--charging` | what the keyboard controller reports |
-| `--scale N` | window scale (default 2) |
+| `--scale N` | window scale, 1 to 8 in any step such as 1.5 (default 2) |
 | `--volume PCT` / `--mute` | loudness of the window's sound (default 50), or none |
 | `--wav FILE` | record the sound as a 48 kHz stereo WAV, in emulated time |
 | `--wifi-ap SSID[:PASSWORD]` | a virtual access point (repeatable); without one, any network joins |

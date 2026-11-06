@@ -37,7 +37,7 @@ static void usage(const char *argv0)
            "      --headless         no window; use with --script and screenshots\n"
            "  -s, --script FILE      drive the keyboard from FILE (see frontend/script.c)\n"
            "  -t, --timeout SECONDS  quit after this long\n"
-           "      --scale N          window scale factor (default 2)\n"
+           "      --scale N          window scale factor from 1 to 8, such as 1.5 (default 2)\n"
            "      --fast             run SPI, I2C and UART transfers instantly\n"
            "      --unthrottled      run as fast as the host allows instead of at device speed\n"
            "      --console          print what the firmware sends on UART0\n"
@@ -180,7 +180,11 @@ int main(int argc, char **argv)
         case OPT_HEADLESS: picocalc_sim_opts.headless = true; break;
         case 's': picocalc_sim_opts.script_path = optarg; break;
         case 't': picocalc_sim_opts.timeout_s = atof(optarg); break;
-        case OPT_SCALE: picocalc_sim_opts.scale = atoi(optarg) > 0 ? atoi(optarg) : 1; break;
+        case OPT_SCALE: {
+            float s = strtof(optarg, NULL);
+            picocalc_sim_opts.scale = s < 1 ? 1 : s > 8 ? 8 : s;
+            break;
+        }
         case OPT_FAST: picocalc_sim_opts.fast = true; break;
         case OPT_UNTHROTTLED: picocalc_sim_opts.unthrottled = true; break;
         case OPT_CONSOLE: picocalc_sim_opts.console = true; break;

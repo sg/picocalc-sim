@@ -269,14 +269,20 @@ static SDL_Window *create_window(void)
     return window;
 }
 
-static SDL_FRect lcd_rect(SDL_Renderer *renderer, float top)
+// The LCD fills the space it has. A whole multiple of its pixels, give or take a screen pixel, is
+// drawn as exactly that, each LCD pixel a square; any other size takes SDL's pixel-art scaling,
+// which keeps every LCD pixel the same size and blends only the screen pixel where two meet.
+static SDL_FRect lcd_rect(SDL_Renderer *renderer, float top, bool *whole)
 {
     int w, h;
     SDL_GetCurrentRenderOutputSize(renderer, &w, &h);
     float aw = fmaxf((float)w - ui_side_width(), 0.0f), ah = (float)h - top;
-    float fit = fminf(aw / PICOCALC_SIM_LCD_WIDTH, ah / PICOCALC_SIM_LCD_HEIGHT);
-    float scale = fit >= 1.0f ? floorf(fit) : fmaxf(fit, 0.0f);
-    float lw = PICOCALC_SIM_LCD_WIDTH * scale, lh = PICOCALC_SIM_LCD_HEIGHT * scale;
+    float scale = fmaxf(fminf(aw / PICOCALC_SIM_LCD_WIDTH, ah / PICOCALC_SIM_LCD_HEIGHT), 0.0f);
+    float n = floorf(scale);
+    *whole = n >= 1 && (scale - n) * PICOCALC_SIM_LCD_WIDTH < 1;
+    if (*whole)
+        scale = n;
+    float lw = floorf(PICOCALC_SIM_LCD_WIDTH * scale), lh = floorf(PICOCALC_SIM_LCD_HEIGHT * scale);
     return (SDL_FRect){floorf((aw - lw) / 2), top + floorf((ah - lh) / 2), lw, lh};
 }
 
@@ -298,10 +304,13 @@ int picocalc_sim_frontend_sdl_run(void)
     SDL_Renderer *renderer = SDL_CreateRenderer(window, NULL);
     if (!renderer)
         renderer = SDL_CreateRenderer(window, SDL_SOFTWARE_RENDERER);
+    if (renderer)
+        picocalc_sim_log("window: SDL's %s renderer", SDL_GetRendererName(renderer));
     SDL_SetRenderVSync(renderer, 1);
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                              PICOCALC_SIM_LCD_WIDTH, PICOCALC_SIM_LCD_HEIGHT);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+    SDL_ScaleMode lcd_mode = SDL_SCALEMODE_NEAREST;
     static uint32_t pixels[PICOCALC_SIM_LCD_WIDTH * PICOCALC_SIM_LCD_HEIGHT];
     ui_init(window, renderer);
     ui_fit_window(picocalc_sim_opts.scale);
@@ -322,6 +331,11 @@ int picocalc_sim_frontend_sdl_run(void)
             switch (e.type) {
             case SDL_EVENT_QUIT:
                 running = false;
+                break;
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                // SDL quits by itself only once every window is closed, Settings and the like too.
+                if (SDL_GetWindowFromEvent(&e) == window)
+                    running = false;
                 break;
             case SDL_EVENT_KEY_DOWN:
                 if (e.key.repeat || ui_took || !picocalc_sim_machine_running())
@@ -399,7 +413,11 @@ int picocalc_sim_frontend_sdl_run(void)
         SDL_SetRenderDrawColor(renderer, 24, 24, 24, 255);
         SDL_RenderClear(renderer);
         if (on) {
-            SDL_FRect dst = lcd_rect(renderer, top);
+            bool whole;
+            SDL_FRect dst = lcd_rect(renderer, top, &whole);
+            SDL_ScaleMode mode = whole ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_PIXELART;
+            if (mode != lcd_mode && SDL_SetTextureScaleMode(texture, mode))
+                lcd_mode = mode;
             SDL_RenderTexture(renderer, texture, NULL, &dst);
         }
         ui_render();

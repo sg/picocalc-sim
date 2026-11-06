@@ -250,6 +250,18 @@ void restart(bool erase)
     picocalc_sim_request_restart();
 }
 
+// A tooltip that wraps to fit the window it shows in, rather than running off its edge.
+void tip(const char *text)
+{
+    if (!ImGui::BeginItemTooltip())
+        return;
+    float room = ImGui::GetMainViewport()->Size.x - 4 * ImGui::GetStyle().WindowPadding.x;
+    ImGui::PushTextWrapPos(std::max(std::min(ImGui::GetFontSize() * 30, room), ImGui::GetFontSize() * 8));
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
+
 const char *base_name(const char *path)
 {
     const char *slash = strrchr(path, '/'), *back = strrchr(path, '\\');
@@ -382,6 +394,14 @@ const char *pick_title(int kind)
     return "";
 }
 
+// The file choices made in Settings, whose dialogs and prompts belong to its window.
+bool settings_pick(int kind)
+{
+    return kind == PICK_ROM || kind == PICK_RP2350_ROM || kind == PICK_FLASH || kind == PICK_SHOTS;
+}
+
+SDL_Window *dialog_parent(int kind);
+
 void pick(int kind)
 {
     static const SDL_DialogFileFilter uf2[] = {{"UF2 firmware", "uf2"}, {"All files", "*"}};
@@ -391,23 +411,24 @@ void pick(int kind)
     static const SDL_DialogFileFilter rom2350[] = {{"RP2350 boot ROM", "bin"}, {"All files", "*"}};
     static const SDL_DialogFileFilter flash[] = {{"Flash images", "flash;bin"}, {"All files", "*"}};
     void *ud = (void *)(intptr_t)kind;
+    SDL_Window *parent = dialog_parent(kind);
     switch (kind) {
-    case PICK_UF2: SDL_ShowOpenFileDialog(dialog_done, ud, window, uf2, 2, nullptr, false); break;
-    case PICK_CARD: SDL_ShowOpenFileDialog(dialog_done, ud, window, card, 2, picocalc_sim_opts.card_path, false); break;
-    case PICK_WAV: SDL_ShowSaveFileDialog(dialog_done, ud, window, wav, 1, nullptr); break;
+    case PICK_UF2: SDL_ShowOpenFileDialog(dialog_done, ud, parent, uf2, 2, nullptr, false); break;
+    case PICK_CARD: SDL_ShowOpenFileDialog(dialog_done, ud, parent, card, 2, picocalc_sim_opts.card_path, false); break;
+    case PICK_WAV: SDL_ShowSaveFileDialog(dialog_done, ud, parent, wav, 1, nullptr); break;
     case PICK_ROM:
-        SDL_ShowOpenFileDialog(dialog_done, ud, window, rom, 2, pending.rom.empty() ? nullptr : pending.rom.c_str(),
+        SDL_ShowOpenFileDialog(dialog_done, ud, parent, rom, 2, pending.rom.empty() ? nullptr : pending.rom.c_str(),
                                false);
         break;
     case PICK_RP2350_ROM:
-        SDL_ShowOpenFileDialog(dialog_done, ud, window, rom2350, 2,
+        SDL_ShowOpenFileDialog(dialog_done, ud, parent, rom2350, 2,
                                pending.rp2350_rom.empty() ? nullptr : pending.rp2350_rom.c_str(), false);
         break;
     case PICK_FLASH:
-        SDL_ShowSaveFileDialog(dialog_done, ud, window, flash, 2,
+        SDL_ShowSaveFileDialog(dialog_done, ud, parent, flash, 2,
                                pending.flash_file.empty() ? nullptr : pending.flash_file.c_str());
         break;
-    case PICK_SHOTS: SDL_ShowOpenFolderDialog(dialog_done, ud, window, picocalc_sim_opts.screenshot_dir, false); break;
+    case PICK_SHOTS: SDL_ShowOpenFolderDialog(dialog_done, ud, parent, picocalc_sim_opts.screenshot_dir, false); break;
     }
 }
 
@@ -665,11 +686,11 @@ void terminal_panel()
     ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - st.WindowPadding.x - bw + st.ItemSpacing.x));
     if (ImGui::SmallButton("Paste"))
         term_paste();
-    ImGui::SetItemTooltip("Send the clipboard, each line ended with Enter (Ctrl+Shift+V)");
+    tip("Send the clipboard, each line ended with Enter (Ctrl+Shift+V)");
     ImGui::SameLine();
     if (ImGui::SmallButton("Copy"))
         term_copy();
-    ImGui::SetItemTooltip("Copy everything the terminal holds (Ctrl+Shift+C)");
+    tip("Copy everything the terminal holds (Ctrl+Shift+C)");
     ImGui::SameLine();
     if (ImGui::SmallButton("Clear"))
         term_clear();
@@ -727,7 +748,7 @@ void menu_bar()
     if (ImGui::BeginMenu("Machine")) {
         if (ImGui::MenuItem("Restart"))
             restart(false);
-        ImGui::SetItemTooltip("Switch off and on again, with any changed settings");
+        tip("Switch off and on again, with any changed settings");
         if (ImGui::MenuItem("Reset", "F12", false, running)) {
             picocalc_sim_bootsel_button(false);
             picocalc_sim_reboot("reset button");
@@ -741,8 +762,8 @@ void menu_bar()
         ImGui::Separator();
         if (ImGui::MenuItem("Flash UF2...", nullptr, false, running))
             pick(PICK_UF2);
-        ImGui::SetItemTooltip("Writes it into flash as the BOOTSEL drive would, then resets; with a boot ROM's drive "
-                              "mounted on the USB cable, copies it onto that drive for the ROM to write");
+        tip("Writes it into flash as the BOOTSEL drive would, then resets; with a boot ROM's drive "
+            "mounted on the USB cable, copies it onto that drive for the ROM to write");
         if (ImGui::MenuItem("Erase flash and restart..."))
             ask_erase = true;
         ImGui::Separator();
@@ -778,13 +799,16 @@ void menu_bar()
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-        for (int n = 1; n <= 4; n++) {
+        for (int half = 2; half <= 8; half++) {
+            float n = half / 2.0f;
             char label[16];
-            snprintf(label, sizeof(label), "%dx", n);
-            if (ImGui::MenuItem(label, nullptr, picocalc_sim_opts.scale == n)) {
+            snprintf(label, sizeof(label), "%gx", n);
+            if (ImGui::MenuItem(label, nullptr, std::fabs(picocalc_sim_opts.scale - n) < 0.001f)) {
                 picocalc_sim_opts.scale = n;
                 ui_fit_window(n);
-                remember_int("scale", n);
+                char text[16];
+                snprintf(text, sizeof(text), "%g", n);
+                remember("scale", text);
             }
         }
         ImGui::Separator();
@@ -814,16 +838,6 @@ void note(const char *text)
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("%s", text);
     ImGui::PopStyleColor();
-}
-
-void place_window(float width)
-{
-    ImGuiViewport *vp = ImGui::GetMainViewport();
-    float margin = 8 * content_scale;
-    width = std::min(width * content_scale, vp->Size.x - 2 * margin);
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x / 2, vp->Pos.y + (vp->Size.y + menu_height) / 2),
-                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0), ImVec2(width, vp->Size.y - menu_height - 2 * margin));
 }
 
 bool path_field(const char *label, const char *hint, std::string *path, int kind)
@@ -865,15 +879,15 @@ void machine_tab()
                 pending.board = d.name;
         ImGui::EndCombo();
     }
-    ImGui::SetItemTooltip("Each board keeps its own flash, as if the Pico in the PicoCalc were swapped");
+    tip("Each board keeps its own flash, as if the Pico in the PicoCalc were swapped");
 
     char def[4096];
     picocalc_sim_data_path(def, sizeof(def), "rp2040-rom.elf", false);
     ImGui::BeginDisabled(!chosen.rp2040 && !pending.board.empty());
     path_field("RP2040 ROM", def, &pending.rom, PICK_ROM);
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("The RP2040's own boot ROM, which picocalc-sim cannot include: b2.elf from "
-                          "github.com/raspberrypi/pico-bootrom-rp2040/releases");
+    tip("The RP2040's own boot ROM, which picocalc-sim cannot include: b2.elf from "
+        "github.com/raspberrypi/pico-bootrom-rp2040/releases");
     ImGui::BeginDisabled(chosen.rp2040);
     // Raspberry Pi's A4 ROM unless another is chosen: A2, picocalc-sim's stand-in, or one from a file,
     // which stays the choice while its path is still empty.
@@ -887,9 +901,9 @@ void machine_tab()
         rom_from_file = kind == 3;
         pending.rp2350_rom = kind == 1 ? "A2" : kind == 2 ? "stand-in" : kind == 3 && !a2 && !a4 && !own ? r : "";
     }
-    ImGui::SetItemTooltip("The boot ROM the RP2350 boards run: Raspberry Pi's A4 or A2 release, both built in, "
-                          "picocalc-sim's own stand-in, which skips the real boot path and has no USB boot, or "
-                          "another bootrom-combined.bin from github.com/raspberrypi/pico-bootrom-rp2350/releases");
+    tip("The boot ROM the RP2350 boards run: Raspberry Pi's A4 or A2 release, both built in, "
+        "picocalc-sim's own stand-in, which skips the real boot path and has no USB boot, or "
+        "another bootrom-combined.bin from github.com/raspberrypi/pico-bootrom-rp2350/releases");
     if (kind == 3)
         path_field("ROM file", "bootrom-combined.bin", &pending.rp2350_rom, PICK_RP2350_ROM);
     ImGui::EndDisabled();
@@ -905,9 +919,9 @@ void machine_tab()
         note(def);
     }
     ImGui::InputTextWithHint("USB/IP", "off; a port such as 3240 to export the USB device on", &pending.usbip);
-    ImGui::SetItemTooltip("A USB/IP server, so another computer or this one can take the board's USB device with "
-                          "usbip attach -r HOST -b 1-1: [ADDR:]PORT, 127.0.0.1 unless ADDR is given, * for all "
-                          "interfaces. It plugs the USB cable in.");
+    tip("A USB/IP server, so another computer or this one can take the board's USB device with "
+        "usbip attach -r HOST -b 1-1: [ADDR:]PORT, 127.0.0.1 unless ADDR is given, * for all "
+        "interfaces. It plugs the USB cable in.");
     ImGui::Checkbox("Instant SPI, I2C and UART transfers", &pending.fast);
     ImGui::Checkbox("Log faults, unknown ROM calls and bus errors", &pending.trace);
 
@@ -920,8 +934,8 @@ void machine_tab()
         picocalc_sim_usb_plug(picocalc_sim_opts.usb);
         remember_on("usb", picocalc_sim_opts.usb);
     }
-    ImGui::SetItemTooltip("The host resets and enumerates the USB device the firmware presents, and the Log shows "
-                          "what it found");
+    tip("The host resets and enumerates the USB device the firmware presents, and the Log shows "
+        "what it found");
 }
 
 void wifi_tab()
@@ -1007,13 +1021,10 @@ void screenshots_tab()
         choose_shots(shots.c_str());
 }
 
-void settings_window()
+void path_popup();
+
+void settings_contents()
 {
-    place_window(520);
-    if (!ImGui::Begin("Settings", &show_settings, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::End();
-        return;
-    }
     // Fields fill the window up to their labels, the longest of which is this.
     ImGui::PushItemWidth(-(ImGui::CalcTextSize("Screenshots").x + ImGui::GetStyle().ItemInnerSpacing.x));
     if (ImGui::BeginTabBar("tabs")) {
@@ -1048,21 +1059,12 @@ void settings_window()
         ImGui::SameLine();
         ImGui::TextUnformatted("Some settings are waiting on a restart.");
     }
-    ImGui::End();
+    if (settings_pick(prompt_kind))
+        path_popup();
 }
 
-void log_window()
+void log_contents()
 {
-    ImGuiViewport *vp = ImGui::GetMainViewport();
-    float margin = 8 * content_scale;
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x / 2, vp->Pos.y + vp->Size.y - margin), ImGuiCond_Appearing,
-                            ImVec2(0.5f, 1.0f));
-    ImGui::SetNextWindowSize(ImVec2(std::min(560 * content_scale, vp->Size.x - 2 * margin), 200 * content_scale),
-                             ImGuiCond_Appearing);
-    if (!ImGui::Begin("Log", &show_log, ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::End();
-        return;
-    }
     if (ImGui::Button("Copy")) {
         std::string all;
         for (auto &l : log_lines)
@@ -1076,10 +1078,9 @@ void log_window()
         ImGui::SetScrollHereY(1.0f);
     log_scroll = false;
     ImGui::EndChild();
-    ImGui::End();
 }
 
-void keys_window()
+void keys_contents()
 {
     static const char *const rows[][2] = {
         {"F1 to F5", "F1 to F5"},
@@ -1093,11 +1094,6 @@ void keys_window()
         {"F12", "the reset button"},
         {"Shift+F12", "reset into BOOTSEL"},
     };
-    place_window(480);
-    if (!ImGui::Begin("Keyboard", &show_keys, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::End();
-        return;
-    }
     note("Keys go to the PicoCalc unless one of picocalc-sim's text fields has them.");
     if (ImGui::BeginTable("keys", 2, ImGuiTableFlags_BordersInnerH)) {
         ImGui::TableSetupColumn("Host key");
@@ -1106,23 +1102,17 @@ void keys_window()
         for (auto &r : rows) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(r[0]);
+            ImGui::TextWrapped("%s", r[0]);
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(r[1]);
+            ImGui::TextWrapped("%s", r[1]);
         }
         ImGui::EndTable();
     }
     note("Dropping a .uf2 file on the window flashes it; dropping a .img file inserts it as the SD card.");
-    ImGui::End();
 }
 
-void about_window()
+void about_contents()
 {
-    place_window(420);
-    if (!ImGui::Begin("About picocalc-sim", &show_about, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::End();
-        return;
-    }
     int v = SDL_GetVersion();
     ImGui::TextWrapped("picocalc-sim emulates a PicoCalc with an RP2350 or RP2040 board.");
     ImGui::Spacing();
@@ -1131,7 +1121,6 @@ void about_window()
     ImGui::Text("Dear ImGui %s (MIT license)", IMGUI_VERSION);
     ImGui::TextUnformatted("lwIP (BSD license)");
     ImGui::TextUnformatted("Raspberry Pi's RP2350 boot ROMs A2 and A4 (BSD license)");
-    ImGui::End();
 }
 
 void erase_popup()
@@ -1235,19 +1224,37 @@ void stopped_panel()
     ImGui::End();
 }
 
-} // namespace
 
-void ui_init(SDL_Window *w, SDL_Renderer *r)
+// The windows of picocalc-sim's own beside the PicoCalc's: OS windows, each with a Dear ImGui context
+// of its own, so that each is as big as it needs to be whatever the LCD's scale, and their tooltips
+// are not cut off at the edge of the PicoCalc's window.
+struct tool_window {
+    const char *title;
+    bool *shown;
+    void (*contents)();
+    // Points wide, and whether the window fits its contents each frame rather than taking the
+    // size it is given.
+    float width;
+    bool fits;
+    SDL_Window *win;
+    SDL_Renderer *ren;
+    ImGuiContext *ctx;
+    // Frames laid out while hidden, so that it is first shown at the size its contents need.
+    int frames;
+};
+
+tool_window tools[] = {
+    {"Settings", &show_settings, settings_contents, 520, true, nullptr, nullptr, nullptr, 0},
+    {"Log", &show_log, log_contents, 560, false, nullptr, nullptr, nullptr, 0},
+    {"Keyboard", &show_keys, keys_contents, 480, true, nullptr, nullptr, nullptr, 0},
+    {"About picocalc-sim", &show_about, about_contents, 420, true, nullptr, nullptr, nullptr, 0},
+};
+
+ImGuiContext *main_ctx;
+
+// Each context looks the same, and its backends drive the one window it draws in.
+void setup_context(SDL_Window *w, SDL_Renderer *r)
 {
-    window = w;
-    renderer = r;
-    content_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-    if (content_scale < 1.0f)
-        content_scale = 1.0f;
-    dialog_event = SDL_RegisterEvents(1);
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.LogFilename = nullptr;
@@ -1261,6 +1268,187 @@ void ui_init(SDL_Window *w, SDL_Renderer *r)
     io.Fonts->AddFontDefault();
     ImGui_ImplSDL3_InitForSDLRenderer(w, r);
     ImGui_ImplSDLRenderer3_Init(r);
+}
+
+void open_tool(tool_window &t)
+{
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, t.title);
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, (Sint64)(t.width * content_scale));
+    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, (Sint64)(240 * content_scale));
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, !t.fits);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, true);
+    t.win = SDL_CreateWindowWithProperties(props);
+    SDL_DestroyProperties(props);
+    if (t.win)
+        t.ren = SDL_CreateRenderer(t.win, nullptr);
+    if (t.win && !t.ren)
+        t.ren = SDL_CreateRenderer(t.win, SDL_SOFTWARE_RENDERER);
+    if (!t.ren) {
+        picocalc_sim_log("cannot open the %s window: %s", t.title, SDL_GetError());
+        if (t.win)
+            SDL_DestroyWindow(t.win);
+        t.win = nullptr;
+        *t.shown = false;
+        return;
+    }
+    // A child of the PicoCalc's window stays above it, and goes with it when that is minimised.
+    SDL_SetWindowParent(t.win, window);
+    t.ctx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(t.ctx);
+    setup_context(t.win, t.ren);
+    ImGui::SetCurrentContext(main_ctx);
+    t.frames = 0;
+}
+
+void close_tool(tool_window &t)
+{
+    ImGui::SetCurrentContext(t.ctx);
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext(t.ctx);
+    ImGui::SetCurrentContext(main_ctx);
+    SDL_DestroyRenderer(t.ren);
+    SDL_DestroyWindow(t.win);
+    t.win = nullptr;
+    t.ren = nullptr;
+    t.ctx = nullptr;
+}
+
+// Beside the PicoCalc's window, or beside another of these windows: of the places next to them that
+// are on the screen, the one that covers least of the PicoCalc's window and of the others open, and
+// among those the first of to the right of the PicoCalc's window, then to its left, highest first.
+void place_tool(tool_window &t)
+{
+    std::vector<SDL_Rect> taken;
+    SDL_Rect main;
+    SDL_GetWindowPosition(window, &main.x, &main.y);
+    SDL_GetWindowSize(window, &main.w, &main.h);
+    for (auto &o : tools) {
+        SDL_Rect r;
+        if (&o == &t || !o.win || o.frames < 3)
+            continue;
+        SDL_GetWindowPosition(o.win, &r.x, &r.y);
+        SDL_GetWindowSize(o.win, &r.w, &r.h);
+        taken.push_back(r);
+    }
+    int tw, th, gap = (int)(8 * content_scale);
+    SDL_GetWindowSize(t.win, &tw, &th);
+    SDL_Rect screen = main;
+    if (!SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &screen))
+        screen = {main.x - tw - gap, main.y, main.w + 2 * (tw + gap), std::max(main.h, th)};
+    std::vector<int> xs = {main.x + main.w + gap, main.x - gap - tw}, ys = {main.y};
+    for (auto &r : taken) {
+        xs.push_back(r.x + r.w + gap);
+        xs.push_back(r.x - gap - tw);
+        ys.push_back(r.y);
+        ys.push_back(r.y + r.h + gap);
+    }
+    std::sort(ys.begin(), ys.end());
+    auto overlap = [](const SDL_Rect &a, const SDL_Rect &b) {
+        SDL_Rect r;
+        return SDL_GetRectIntersection(&a, &b, &r) ? (long)r.w * r.h : 0L;
+    };
+    long best = -1;
+    SDL_Point at = {main.x + gap, main.y + gap};
+    for (int x : xs) {
+        for (int y : ys) {
+            SDL_Rect r = {std::clamp(x, screen.x, std::max(screen.x, screen.x + screen.w - tw)),
+                          std::clamp(y, screen.y, std::max(screen.y, screen.y + screen.h - th)), tw, th};
+            long cost = 2 * overlap(r, main);
+            for (auto &o : taken)
+                cost += overlap(r, o);
+            if (best < 0 || cost < best) {
+                best = cost;
+                at = {r.x, r.y};
+            }
+        }
+    }
+    SDL_SetWindowPosition(t.win, at.x, at.y);
+}
+
+void tool_frame(tool_window &t)
+{
+    ImGui::SetCurrentContext(t.ctx);
+    ImGui_ImplSDLRenderer3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
+    ImGui::NewFrame();
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos);
+    ImGui::SetNextWindowSize(vp->Size);
+    ImGui::Begin(t.title, nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus);
+    t.contents();
+    // What the contents took last frame, whatever the window's size: ImGui's own fitting of a window
+    // stops at the edge of the OS window, which here is the very thing being fitted.
+    ImGuiWindow *iw = ImGui::GetCurrentWindow();
+    ImVec2 size(t.width * content_scale, iw->ContentSizeIdeal.y + 2 * iw->WindowPadding.y);
+    ImGui::End();
+    ImGui::Render();
+    const ImVec4 &bg = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
+    SDL_SetRenderDrawColorFloat(t.ren, bg.x, bg.y, bg.z, 1.0f);
+    SDL_RenderClear(t.ren);
+    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), t.ren);
+    SDL_RenderPresent(t.ren);
+    ImGui::SetCurrentContext(main_ctx);
+    if (t.fits) {
+        int w, h, nw = (int)std::ceil(size.x), nh = (int)std::ceil(size.y);
+        SDL_GetWindowSize(t.win, &w, &h);
+        if (nw != w || nh != h)
+            SDL_SetWindowSize(t.win, nw, nh);
+    }
+    // The contents are measured a frame after they are laid out, and the size set from that takes
+    // another to arrive.
+    if (++t.frames == 3) {
+        place_tool(t);
+        SDL_ShowWindow(t.win);
+    }
+}
+
+void tool_frames()
+{
+    for (auto &t : tools) {
+        if (*t.shown && !t.win)
+            open_tool(t);
+        else if (!*t.shown && t.win)
+            close_tool(t);
+        if (t.win)
+            tool_frame(t);
+    }
+}
+
+tool_window *tool_for(SDL_Window *w)
+{
+    for (auto &t : tools)
+        if (w && t.win == w)
+            return &t;
+    return nullptr;
+}
+
+SDL_Window *dialog_parent(int kind)
+{
+    if (settings_pick(kind) && tools[0].win)
+        return tools[0].win;
+    return window;
+}
+
+} // namespace
+
+void ui_init(SDL_Window *w, SDL_Renderer *r)
+{
+    window = w;
+    renderer = r;
+    content_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    if (content_scale < 1.0f)
+        content_scale = 1.0f;
+    dialog_event = SDL_RegisterEvents(1);
+
+    IMGUI_CHECKVERSION();
+    main_ctx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(main_ctx);
+    setup_context(w, r);
 
     pending = applied = from_opts();
     to_opts(applied);
@@ -1290,15 +1478,18 @@ void ui_shutdown(void)
 {
     if (save_at)
         picocalc_sim_settings_save();
+    for (auto &t : tools)
+        if (t.win)
+            close_tool(t);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
 }
 
-void ui_fit_window(int scale)
+void ui_fit_window(float scale)
 {
     float side = PICOCALC_SIM_LCD_WIDTH * scale * content_scale;
-    SDL_SetWindowSize(window, (int)(side + terminal_width()), (int)(side + menu_height));
+    SDL_SetWindowSize(window, (int)std::lround(side + terminal_width()), (int)std::lround(side + menu_height));
 }
 
 float ui_side_width(void)
@@ -1320,6 +1511,15 @@ bool ui_event(const SDL_Event *e)
         }
         return true;
     }
+    // Nothing done in one of picocalc-sim's own windows is the PicoCalc's.
+    if (tool_window *t = tool_for(SDL_GetWindowFromEvent(e))) {
+        if (e->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
+            *t->shown = false;
+        ImGui::SetCurrentContext(t->ctx);
+        ImGui_ImplSDL3_ProcessEvent(e);
+        ImGui::SetCurrentContext(main_ctx);
+        return true;
+    }
     bool wanted = ImGui::GetIO().WantCaptureKeyboard;
     // ImGui takes in one key change a frame, so keys typed at the PicoCalc would queue up ahead of
     // the next click on a menu; letting every key-up through clears any key it saw go down.
@@ -1332,7 +1532,8 @@ bool ui_event(const SDL_Event *e)
 
 bool ui_wants_keyboard(void)
 {
-    return ImGui::GetIO().WantCaptureKeyboard;
+    SDL_Window *focus = SDL_GetKeyboardFocus();
+    return (focus && focus != window) || main_ctx->IO.WantCaptureKeyboard;
 }
 
 void ui_drop_file(const char *path)
@@ -1360,6 +1561,7 @@ void ui_restarting(void)
 
 float ui_frame(void)
 {
+    tool_frames();
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
@@ -1383,17 +1585,10 @@ float ui_frame(void)
         terminal_panel();
     if (!picocalc_sim_machine_running())
         stopped_panel();
-    if (show_settings)
-        settings_window();
-    if (show_log)
-        log_window();
-    if (show_keys)
-        keys_window();
-    if (show_about)
-        about_window();
     screenshot_note();
     erase_popup();
-    path_popup();
+    if (!(settings_pick(prompt_kind) && tools[0].win))
+        path_popup();
     ImGui::Render();
     return menu_height * SDL_GetWindowPixelDensity(window);
 }

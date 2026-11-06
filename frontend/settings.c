@@ -101,6 +101,16 @@ static void parse_int(const char *key, const char *v, int lo, int hi, int *out)
         picocalc_sim_log("%s: %s should be a number from %d to %d, not '%s'", path, key, lo, hi, v);
 }
 
+static void parse_float(const char *key, const char *v, float lo, float hi, float *out)
+{
+    char *end;
+    float n = strtof(v, &end);
+    if (*v && !*end && n >= lo && n <= hi)
+        *out = n;
+    else
+        picocalc_sim_log("%s: %s should be a number from %g to %g, not '%s'", path, key, lo, hi, v);
+}
+
 // picocalc_sim_opts gets copies, as the entries change while the window runs. They are kept here
 // for as long as picocalc-sim runs, since the window points picocalc_sim_opts at its own strings
 // once it starts.
@@ -161,7 +171,7 @@ static void apply(const char *key, const char *v)
     else if (!strcmp(key, "mute"))
         parse_bool(key, v, &o->mute);
     else if (!strcmp(key, "scale"))
-        parse_int(key, v, 1, 8, &o->scale);
+        parse_float(key, v, 1, 8, &o->scale);
     else if (!strcmp(key, "screenshot-dir") && *v)
         o->screenshot_dir = copy(v);
 }
