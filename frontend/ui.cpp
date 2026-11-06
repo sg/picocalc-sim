@@ -930,12 +930,13 @@ void machine_tab()
         remember_on("unthrottled", picocalc_sim_opts.unthrottled);
     if (ImGui::Checkbox("Print what the firmware sends on UART0", &picocalc_sim_opts.console))
         remember_on("console", picocalc_sim_opts.console);
-    if (ImGui::Checkbox("USB port plugged into a host", &picocalc_sim_opts.usb)) {
+    if (ImGui::Checkbox("USB cable plugged into emulated host", &picocalc_sim_opts.usb)) {
         picocalc_sim_usb_plug(picocalc_sim_opts.usb);
         remember_on("usb", picocalc_sim_opts.usb);
     }
-    tip("The host resets and enumerates the USB device the firmware presents, and the Log shows "
-        "what it found");
+    tip("picocalc-sim's own USB host resets and enumerates the USB device the firmware presents, and "
+        "the Log shows what it found. This computer's USB stack does not see the device; for that, "
+        "export it with the USB/IP setting and attach it with usbip attach -r HOST -b 1-1.");
 }
 
 void wifi_tab()

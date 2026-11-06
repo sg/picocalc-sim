@@ -146,7 +146,7 @@ void picocalc_sim_usb_plug(bool plugged)
         else
             usbhost_free(&chip);
         gpio_refresh_mask(&chip, 1ull << 24);
-        picocalc_sim_log("usb: cable %s", plugged ? "plugged into a host" : "unplugged");
+        picocalc_sim_log("usb: cable %s", plugged ? "plugged into the emulated host" : "unplugged");
     }
     picocalc_sim_machine_unlock();
 }

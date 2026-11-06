@@ -151,7 +151,9 @@ driver's ioctls, the chip's events and every bus command.
 
 ### USB
 
-`--usb`, or selecting "USB port plugged into a host" in Settings, connects the board's USB port to the host system.
+`--usb`, or selecting "USB cable plugged into emulated host" in Settings, connects the board's USB port to a
+USB host emulated inside picocalc-sim. The computer picocalc-sim runs on does not see the device;
+[USB/IP](#usbip) gives it to that computer's own USB stack.
 This USB "cable" emulates VBUS (power), which the board senses (GPIO24 on the Pico, Pico 2 and Pimoroni Plus 2, the
 radio's WL_GPIO2 on the W boards). When the firmware connects its USB device, the host waits for the
 connection to settle, resets the port and enumerates the device as Linux does: it reads the device,
