@@ -1489,7 +1489,7 @@ static int emit_dp_register(int k, const dop_t *d)
             return -1;
         mov_rm(0, RAX, RG(rm));
         if (o1 == 1 && o2 == 0) {
-            op_r(0, false, 0x0fc8, 0, RAX, false); // bswap eax
+            opcode(0x0fc8 + RAX); // bswap eax, which has no ModRM byte for op_r to add
         } else if (o1 == 1 && o2 == 1) {
             mov_rr(0, RCX, RAX);
             shift_ri(SH_SHR, RAX, 8);

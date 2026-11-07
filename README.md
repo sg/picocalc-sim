@@ -550,6 +550,11 @@ command `restart` does, and the run then starts again from power-on. Nothing of 
 survive it, so with `PICOCALC_SIM_STOP_AT_MS` the second run's digest must match a fresh launch's
 (`ci/restart-test.sh` checks this for each firmware).
 
+Instructions that the firmware runs rarely can escape both checks, so `tests/jit` runs a loop of
+them often enough to be compiled and checks its result in all three ways (`ci/jit-test.sh`). It
+covers REV, REV16, REVSH and CLZ, whose 32-bit encodings the JIT once compiled wrongly; an
+instruction found to misbehave belongs there too.
+
 ### Measuring the hardware
 
 `tools/psramprobe` is firmware for a real PicoCalc, built on its own with the Pico SDK (the first
