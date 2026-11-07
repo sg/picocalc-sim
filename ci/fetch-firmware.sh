@@ -1,6 +1,6 @@
 #!/bin/sh
 # Downloads the Pico 2, Pico 2 W, Pimoroni Plus 2 W, Pico and Pico W UF2s from each firmware
-# project's latest release.
+# project's latest release: picocalc-ftpserver's on GitHub, the others' at API_URL.
 #   ci/fetch-firmware.sh API_URL OWNER DEST_DIR
 set -eu
 api=$1
@@ -8,8 +8,9 @@ owner=$2
 dest=$3
 mkdir -p "$dest"
 
-for repo in pcsh picocalc_lua picocalc-z80 picocalc-ftpserver; do
-    curl -sSf "$api/repos/$owner/$repo/releases/latest" |
+for repo in "$api/repos/$owner/pcsh" "$api/repos/$owner/picocalc_lua" \
+            "$api/repos/$owner/picocalc-z80" https://api.github.com/repos/sg/picocalc-ftpserver; do
+    curl -sSf "$repo/releases/latest" |
         python3 -c '
 import json, re, sys
 for a in json.load(sys.stdin)["assets"]:
