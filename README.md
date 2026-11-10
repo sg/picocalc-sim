@@ -559,7 +559,8 @@ instruction found to misbehave belongs there too.
 `tests/arduino` checks two things arduino-pico firmware relies on (`ci/arduino-test.sh`): I2C to the
 keyboard controller bit-banged on its pins, as arduino-pico's probe of an address is, and the PIO
 cycle counter it runs under FreeRTOS, which picocalc-sim skips ahead instead of stepping, counted
-against the timer.
+against the timer. The `--trace` report says how many PIO instructions each block stepped one at a
+time, and the check fails if the counter's loops were among them.
 
 ### Measuring the hardware
 

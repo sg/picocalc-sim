@@ -191,6 +191,8 @@ typedef struct {
     uint32_t inte[2], intf[2];
     uint64_t out_val, out_en, pin_owned;
     uint64_t t;
+    // For --trace, so a check can tell that recognised programs and loops ran in bulk.
+    uint64_t stepped;
     int idx;
     // Set while the state machines catch up, during which DMA they wake may read or write the FIFOs.
     bool syncing;

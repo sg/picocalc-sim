@@ -493,6 +493,7 @@ static void sm_step(chip_t *m, pio_t *p, int smi)
         return;
     }
     uint16_t ins = p->instr[sm->pc & 31];
+    p->stepped++;
     if (!sm->stalled)
         side_set(m, p, sm, ins);
     bool jumped;

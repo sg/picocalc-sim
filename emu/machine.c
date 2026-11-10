@@ -801,6 +801,8 @@ void picocalc_sim_machine_stop(void)
         }
         picocalc_sim_log("state digest %016llx", (unsigned long long)state_digest());
         for (int i = 0; i < 3; i++)
+            picocalc_sim_log("pio%d: %llu instructions stepped", i, (unsigned long long)chip.pio[i].stepped);
+        for (int i = 0; i < 3; i++)
             for (int j = 0; j < 4; j++) {
                 pio_sm_t *sm = &chip.pio[i].sm[j];
                 if (chip.pio[i].ctrl & (1u << j))
