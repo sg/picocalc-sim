@@ -449,7 +449,8 @@ the command line is written again and the card stays in the slot (unlike the men
   watchdog, POWMAN's always-on timer, clocks/PLLs/tick generators, PL022 SPI, DesignWare I2C, PL011
   UART, PIO (all three blocks, stepped instruction by instruction on whole system clock cycles, so a
   fractional divider gives uneven ones as on the chip, except that the counting loop of
-  pico-examples' PWM program, which PIO audio drivers use, skips ahead to its next edge), 16-channel
+  pico-examples' PWM program, which PIO audio drivers use, skips ahead to its next edge, as does a
+  jump to itself on X, Y or nothing, such as arduino-pico's cycle counter), 16-channel
   DMA, PWM, QMI direct mode with a W25Q flash (busy for its datasheet's typical erase and program
   times) and an APS6404 PSRAM, TRNG, SHA-256 accelerator, OTP chip ID, boot RAM and boot locks. On
   the RP2040 the same models sit behind its register layout (`emu/rp2040.c`), with its own clock
@@ -464,7 +465,7 @@ the command line is written again and the card stays in the slot (unlike the men
   device answers an edge as late as the real part would. A PIO driver that samples too early or
   too late therefore reads the same wrong bits here as on the board.
 - **Devices.** The LCD, SD card and keyboard controller answer whatever drives their pins: a
-  PL022, a PIO program, or bit-banging. A PIO program that shifts one bit out per clock (the
+  PL022 or the I2C block, a PIO program, or bit-banging. A PIO program that shifts one bit out per clock (the
   common LCD driver) is recognised and run in bulk. The mainboard's ESP-PSRAM64H is modelled at its
   pins, SPI and QPI, answering 3.8 ns (rising) or 5.5 ns (falling) after the clock edge as a
   PicoCalc's did, and it logs a warning when firmware goes past the datasheet's clock limits
@@ -554,6 +555,11 @@ Instructions that the firmware runs rarely can escape both checks, so `tests/jit
 them often enough to be compiled and checks its result in all three ways (`ci/jit-test.sh`). It
 covers REV, REV16, REVSH and CLZ, whose 32-bit encodings the JIT once compiled wrongly; an
 instruction found to misbehave belongs there too.
+
+`tests/arduino` checks two things arduino-pico firmware relies on (`ci/arduino-test.sh`): I2C to the
+keyboard controller bit-banged on its pins, as arduino-pico's probe of an address is, and the PIO
+cycle counter it runs under FreeRTOS, which picocalc-sim skips ahead instead of stepping, counted
+against the timer.
 
 ### Measuring the hardware
 

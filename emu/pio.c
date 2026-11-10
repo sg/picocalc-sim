@@ -680,6 +680,44 @@ static bool skip_count_loop(chip_t *m, pio_t *p, int smi)
     return true;
 }
 
+// A jump to itself on X, Y or nothing, such as the "jmp x-- self" of cycle counters and delays: until
+// it falls through, each pass at most counts X or Y down, which nothing else can see, so passes are
+// skipped in bulk up to the present.
+static bool skip_self_jmp(chip_t *m, pio_t *p, int smi)
+{
+    pio_sm_t *sm = &p->sm[smi];
+    unsigned pc = sm->pc & 31;
+    uint16_t ins = p->instr[pc];
+    if (sm->delay || sm->stalled || (ins & 0xe01f) != pc)
+        return false;
+    // A side-set drives its pins again on every pass, after anything else that changed them.
+    if (((sm->pinctrl >> 29) & 7) && (!(sm->execctrl & (1u << 30)) || (ins & 0x1000)))
+        return false;
+    unsigned cond = (ins >> 5) & 7;
+    uint64_t k;
+    switch (cond) {
+    case 0: k = UINT64_MAX; break;
+    case 1: k = sm->x == 0 ? UINT64_MAX : 0; break;
+    case 2: k = sm->x; break;
+    case 3: k = sm->y == 0 ? UINT64_MAX : 0; break;
+    case 4: k = sm->y; break;
+    case 5: k = sm->x != sm->y ? UINT64_MAX : 0; break;
+    default: return false;
+    }
+    uint64_t cycles = 1 + delay_bits(sm, ins);
+    uint64_t fit = ((m->now - sm->next_t) / sm_period(m, sm) + 1) / cycles;
+    if (fit < k)
+        k = fit;
+    if (!k)
+        return false;
+    if (cond == 2)
+        sm->x -= (uint32_t)k;
+    else if (cond == 4)
+        sm->y -= (uint32_t)k;
+    sm->next_t += sm_ticks(m, sm, k * cycles);
+    return true;
+}
+
 // The cyw43 driver's half-duplex bus: "out pins,1 / jmp x--" shifts the command and any data out,
 // "set pindirs,0" (and a nop or two) turns the data pin round, and "in pins,1 / jmp y--" shifts
 // the reply in, with the clock on side-set. Recognised programs trade bits with the radio model
@@ -814,7 +852,8 @@ void pio_sync(chip_t *m, pio_t *p)
         if (which < 0 || next > m->now)
             break;
         pio_sm_t *sm = &p->sm[which];
-        if (run_gspi(m, p, which) || run_spi_out(m, p, which) || skip_count_loop(m, p, which))
+        if (run_gspi(m, p, which) || run_spi_out(m, p, which) || skip_count_loop(m, p, which) ||
+            skip_self_jmp(m, p, which))
             continue;
         if (sm_blocked_on_cpu(p, which)) {
             sm_skip_past(m, sm, m->now);

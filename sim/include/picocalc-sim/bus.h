@@ -58,9 +58,16 @@ typedef struct picocalc_sim_i2c_device {
     int (*read)(void *ctx, uint8_t *dst, size_t len, bool nostop);
     void *ctx;
     struct picocalc_sim_i2c_device *next;
+    // The machine's place in a transfer clocked on the pins themselves.
+    int state, nbits;
+    uint8_t shift;
+    bool holding, reading, nak;
+    size_t len, pos;
+    uint8_t buf[256];
 } picocalc_sim_i2c_device_t;
 
-// As for SPI, the machine frees dev when it stops.
+// As for SPI, the device answers an I2C controller or bit-banging on its pins, and the machine
+// frees dev when it stops.
 void picocalc_sim_i2c_attach(picocalc_sim_i2c_device_t *dev);
 
 #ifdef __cplusplus
