@@ -3,12 +3,13 @@
 // handler does exactly what exec16 or exec32 does for its instruction, cycles included, so the
 // emulation is the same as stepping one instruction at a time.
 //
-// A block from ROM or flash is used only while the chip's code generation is unchanged, which
-// flash programming, remapping and resets advance. One from SRAM or PSRAM, which ordinary stores
-// and DMA can change, keeps a copy of its code and is used only while memory still holds those
-// bytes. Blocks run only outside IT blocks, so the 16-bit data-processing forms always set the
-// flags here. A block may end with an IT instruction and the instructions it covers, but block_run
-// stops at the IT instruction and leaves the rest to cpu_run's stepping; only native code runs them.
+// A block from ROM is used only until a reset, and one from flash only while the chip's code
+// generation is unchanged, which flash programming, remapping and resets advance. One from SRAM or
+// PSRAM, which ordinary stores and DMA can change, keeps a copy of its code and is used only while
+// memory still holds those bytes. Blocks run only outside IT blocks, so the 16-bit data-processing
+// forms always set the flags here. A block may end with an IT instruction and the instructions it
+// covers, but block_run stops at the IT instruction and leaves the rest to cpu_run's stepping; only
+// native code runs them.
 
 #define BLK_MAX 16
 #define BLK_SETS 4096
@@ -37,7 +38,7 @@ struct dop {
 typedef struct block block_t;
 struct block {
     uint32_t tag; // start address | 1, so an empty entry never matches
-    uint32_t gen; // the chip's code_gen when built, which is all a block from ROM or flash checks
+    uint32_t gen; // fixed_gen when built, which is all a block from ROM or flash checks
     uint16_t n, bytes;
     bool fixed; // from ROM or flash
     uint8_t nrun; // how many of the ops block_run may run: up to an IT instruction, if any
@@ -853,6 +854,12 @@ static bool armv6m_block_op(uint16_t hw1, uint16_t hw2, bool wide)
     return (hw1 & 0xf500) != 0xb100 && !((hw1 & 0xff00) == 0xbf00 && (hw1 & 0xf));
 }
 
+// ROM sits below the XIP windows, and only ROM and flash blocks are fixed.
+static inline uint32_t fixed_gen(const chip_t *m, uint32_t pc)
+{
+    return pc < XIP_BASE ? m->rom_gen : m->code_gen;
+}
+
 static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
 {
     bool xip = (pc >> 28) == 1;
@@ -916,13 +923,14 @@ static bool block_build(chip_t *m, block_t *b, uint32_t pc, const uint8_t *page)
     const uint8_t *src = page + (pc & 0xffff);
     bool fixed = (src >= m->rom && src < m->rom + ROM_SIZE) || (src >= m->flash && src < m->flash + m->flash_size);
     b->tag = pc | 1;
-    b->gen = m->code_gen;
+    b->gen = fixed_gen(m, pc);
     b->fixed = fixed;
     b->jit = NULL;
     b->n = (uint16_t)n;
     b->nrun = (uint8_t)(nrun ? nrun : n);
     b->link_pc[0] = b->link_pc[1] = 1;
     b->bytes = (uint16_t)(a - pc);
+    m->blocks_built++;
     memcpy(b->code, src, b->bytes);
     return true;
 }
@@ -945,7 +953,7 @@ static inline bool code_same(const uint8_t *a, const uint8_t *b, unsigned n)
 // Within one code generation an address always maps to the same ROM or flash bytes.
 static inline bool block_valid(chip_t *m, const block_t *b, const uint8_t *page, uint32_t pc)
 {
-    return b->fixed ? b->gen == m->code_gen : code_same(page + (pc & 0xffff), b->code, b->bytes);
+    return b->fixed ? b->gen == fixed_gen(m, pc) : code_same(page + (pc & 0xffff), b->code, b->bytes);
 }
 
 static inline bool block_still(chip_t *m, const block_t *b, uint32_t pc)
@@ -953,7 +961,7 @@ static inline bool block_still(chip_t *m, const block_t *b, uint32_t pc)
     if (b->tag != (pc | 1))
         return false;
     if (b->fixed)
-        return b->gen == m->code_gen;
+        return b->gen == fixed_gen(m, pc);
     const uint8_t *page = m->rpage[pc >> 16];
     return page && code_same(page + (pc & 0xffff), b->code, b->bytes);
 }

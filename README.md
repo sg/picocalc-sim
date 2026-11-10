@@ -451,8 +451,8 @@ the command line is written again and the card stays in the slot (unlike the men
   fractional divider gives uneven ones as on the chip, except that the counting loop of
   pico-examples' PWM program, which PIO audio drivers use, skips ahead to its next edge, as does a
   jump to itself on X, Y or nothing, such as arduino-pico's cycle counter), 16-channel
-  DMA, PWM, QMI direct mode with a W25Q flash (busy for its datasheet's typical erase and program
-  times) and an APS6404 PSRAM, TRNG, SHA-256 accelerator, OTP chip ID, boot RAM and boot locks. On
+  DMA, PWM, QMI direct mode with a W25Q flash (which programs a page when chip select goes high,
+  and is busy for its datasheet's typical erase and program times) and an APS6404 PSRAM, TRNG, SHA-256 accelerator, OTP chip ID, boot RAM and boot locks. On
   the RP2040 the same models sit behind its register layout (`emu/rp2040.c`), with its own clock
   tree, resets, SIO hardware divider, RTC, and the SSI and XIP cache it reaches flash through; XIP
   reads get flash data only while the SSI and the flash's continuous-read mode are set up as boot2
@@ -561,6 +561,12 @@ keyboard controller bit-banged on its pins, as arduino-pico's probe of an addres
 cycle counter it runs under FreeRTOS, which picocalc-sim skips ahead instead of stepping, counted
 against the timer. The `--trace` report says how many PIO instructions each block stepped one at a
 time, and the check fails if the counter's loops were among them.
+
+`tests/flash` erases, programs and reprograms 64 KB of flash through the boot ROM's routines, as the
+SDK, UF2 Loader and PicoShell do, and checks what reads back (`ci/flash-test.sh`). Code decoded from
+the ROM must survive that: the `--trace` report counts the blocks of code decoded, and the check
+fails if writing flash made the emulator decode the ROM's routines again, which once slowed loading
+a UF2 to a quarter of the device's speed.
 
 ### Measuring the hardware
 

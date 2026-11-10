@@ -18,6 +18,8 @@ typedef struct {
 
 static qspi_dev_t devs[2];
 static bool txn_open[2];
+// Page program data, which the flash latches and programs only when chip select goes high.
+static uint8_t page_buf[256];
 
 static void dev_begin(int cs)
 {
@@ -45,7 +47,11 @@ static void dev_end(chip_t *m, int cs)
             flash_erase(m, 0, m->flash_size);
             busy = (uint64_t)(m->flash_size >> 20) * 2500 * PS_PER_MS;
             break;
-        case 0x02: busy = 400 * PS_PER_US; break;
+        case 0x02:
+            if (d->phase == PH_DATA_IN && d->out_pos)
+                flash_program(m, d->addr & ~0xffu, page_buf, sizeof(page_buf));
+            busy = 400 * PS_PER_US;
+            break;
         default: break;
         }
         if (busy) {
@@ -97,12 +103,14 @@ static uint8_t flash_byte(chip_t *m, uint8_t mosi)
     case PH_ADDR:
         d->addr = (d->addr << 8) | mosi;
         if (--d->addr_left == 0) {
-            if (d->cmd == 0x20 || d->cmd == 0x52 || d->cmd == 0xd8)
+            if (d->cmd == 0x20 || d->cmd == 0x52 || d->cmd == 0xd8) {
                 d->phase = PH_IGNORE;
-            else if (d->cmd == 0x02)
+            } else if (d->cmd == 0x02) {
                 d->phase = PH_DATA_IN;
-            else
+                memset(page_buf, 0xff, sizeof(page_buf));
+            } else {
                 d->phase = d->dummy_left ? PH_DUMMY : PH_DATA_OUT;
+            }
             d->out_pos = 0;
         }
         return 0xff;
@@ -112,10 +120,8 @@ static uint8_t flash_byte(chip_t *m, uint8_t mosi)
         return 0xff;
     case PH_DATA_IN:
         if (d->cmd == 0x02) {
-            if (q->wel) {
-                uint32_t a = (d->addr & ~0xffu) | ((d->addr + (uint32_t)d->out_pos) & 0xff);
-                flash_program(m, a, &mosi, 1);
-            }
+            // Past the end of the page the address wraps, and later bytes replace earlier ones.
+            page_buf[(d->addr + (uint32_t)d->out_pos) & 0xff] = mosi;
             d->out_pos++;
         } else if (d->cmd == 0x01) {
             q->sr1 = mosi & 0xfc;

@@ -2113,7 +2113,7 @@ static void emit_block_entry(void)
     uint32_t pc0 = b->tag & ~1u;
     if (K.fixed) {
         // The first instruction must be at least five bytes, for patching into a jump.
-        xm_t g = xm(R15, MO(code_gen));
+        xm_t g = xm(R15, pc0 < XIP_BASE ? MO(rom_gen) : MO(code_gen));
         g.d32 = true;
         op_m(0, false, 0x81, 7, g, 4, false);
         e32(b->gen);

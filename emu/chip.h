@@ -496,9 +496,12 @@ struct chip {
     qmi_t qmi;
 
     uint32_t xip_ctrl, xip_ctr_hit, xip_ctr_acc;
-    // Changes whenever ROM or flash contents, or where they are mapped, may have changed, so
-    // predecoded blocks from them need no byte-by-byte check.
-    uint32_t code_gen;
+    // Changes whenever flash contents, or where flash is mapped, may have changed, so predecoded
+    // blocks from it need no byte-by-byte check. ROM never changes, so only resets advance rom_gen,
+    // and programming flash through the ROM's own routines leaves their blocks in place.
+    uint32_t code_gen, rom_gen;
+    // For --trace, so a check can tell that writing flash did not make code be decoded again.
+    uint64_t blocks_built;
     // Set when every translated block must go, at the next point where none is running.
     bool code_flush;
     uint32_t xip_stream_addr, xip_stream_ctr;

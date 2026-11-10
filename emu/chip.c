@@ -854,6 +854,7 @@ static void fill_noise(uint8_t *p, size_t n, uint32_t seed)
 void chip_reset(chip_t *m, bool watchdog)
 {
     m->code_gen++;
+    m->rom_gen++;
     while (m->events)
         ev_cancel(m, m->events);
     m->irq_lines = 0;
@@ -951,6 +952,7 @@ void chip_reset(chip_t *m, bool watchdog)
 void chip_power_on(chip_t *m)
 {
     m->code_gen++;
+    m->rom_gen++;
     fill_noise(m->sram, SRAM_SIZE, (uint32_t)(m->now >> 7) ^ 0x2350c0deu);
     if (m->psram)
         fill_noise(m->psram, m->psram_size, 0x5eed1234u);

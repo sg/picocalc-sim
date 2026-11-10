@@ -802,6 +802,7 @@ void picocalc_sim_machine_stop(void)
         picocalc_sim_log("state digest %016llx", (unsigned long long)state_digest());
         for (int i = 0; i < 3; i++)
             picocalc_sim_log("pio%d: %llu instructions stepped", i, (unsigned long long)chip.pio[i].stepped);
+        picocalc_sim_log("code: %llu blocks decoded", (unsigned long long)chip.blocks_built);
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 4; j++) {
                 pio_sm_t *sm = &chip.pio[i].sm[j];
