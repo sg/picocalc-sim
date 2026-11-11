@@ -1,7 +1,8 @@
 // A self-checking test of the RP2350's Arm security extension, which none of the firmware the CI
 // boots uses: Secure code configures the SAU and calls Non-secure code, which calls back through
 // secure gateways, takes exceptions in both states and provokes the SecureFaults the architecture
-// defines, with each check printed to UART0.
+// defines, with each check printed to UART0. It also checks what HFSR records of a breakpoint and
+// an SVC that become HardFaults.
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -86,6 +87,7 @@ NSDATA volatile uint32_t ns_uart_cr, ns_gpio3_ctrl, ns_gpio5_ctrl, ns_resets;
 NSDATA volatile uint32_t dma_scratch;
 
 uint32_t resume_to;
+volatile uint32_t hf_expected, hf_hfsr;
 volatile uint32_t s_irq_ipsr_after, s_irq_ns_result;
 volatile uint32_t core1_go, core1_lock_st, core1_faults, core1_done;
 static unsigned passes, fails;
@@ -165,12 +167,22 @@ void s_unexpected(uint32_t ipsr)
 }
 
 // BusFaults resume at the faulting leaf function's return address, as do Non-secure code's
-// SecureFaults; Secure code's resume where the test asked.
+// SecureFaults; Secure code's resume where the test asked. A HardFault the test provoked resumes
+// after the two-byte instruction that raised it.
 void s_on_fault(uint32_t *frame, uint32_t exc_return)
 {
     uint32_t ipsr;
     __asm volatile("mrs %0, ipsr" : "=r"(ipsr));
     bool from_secure = exc_return & 0x40;
+    if (ipsr == 3) {
+        if (!hf_expected)
+            s_unexpected(ipsr);
+        hf_expected = 0;
+        hf_hfsr = REG(HFSR);
+        REG(HFSR) = hf_hfsr;
+        frame[6] += 2;
+        return;
+    }
     if (ipsr == 5) {
         bf_count++;
         REG(CFSR) = 0xff00;
@@ -375,6 +387,20 @@ static void test_exceptions(void)
     check("IPSR after FNC_RETURN", s_irq_ipsr_after, 16 + IRQ_S_TEST);
 }
 
+// With no debugger a breakpoint is a HardFault, as the one that ends the SDK's panic is, and so is
+// an SVC that PRIMASK keeps from being taken.
+static void test_hardfault(void)
+{
+    hf_expected = 1;
+    __asm volatile("bkpt #0\n nop" ::: "memory");
+    check("a breakpoint's HardFault sets HFSR.DEBUGEVT", hf_hfsr, 1u << 31);
+    hf_expected = 1;
+    __asm volatile("cpsid i\n svc #0\n nop\n cpsie i" ::: "memory");
+    check("a masked SVC's HardFault sets HFSR.FORCED", hf_hfsr, 1u << 30);
+    check("HardFaults taken", hf_expected, 0);
+    check("HFSR clears when its bits are written", REG(HFSR), 0);
+}
+
 static void test_sio(void)
 {
     REG(SHCSR) |= 1u << 17;
@@ -535,6 +561,7 @@ void s_main(void)
     test_attribution();
     test_ns_call();
     test_exceptions();
+    test_hardfault();
     test_sio();
     test_dcp();
     test_force_core_ns();

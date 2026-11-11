@@ -822,8 +822,8 @@ bool cpu_irq_wakes(cpu_t *c)
 static void lockup(cpu_t *c, const char *why)
 {
     emu_log("core %d locked up: %s at pc=%08x", c->id, why, c->r[15]);
-    cpu_dump(c);
     c->state = CPU_LOCKUP;
+    cpu_dump(c);
 }
 
 static uint32_t xpsr_value(const cpu_t *c)
@@ -2202,6 +2202,9 @@ static void exec16(cpu_t *c, uint32_t pc, uint16_t op)
         case 0xe:
             if (c->m->trace)
                 emu_log("core %d BKPT %u at %08x", c->id, op & 0xff, pc);
+            // With no debugger to halt the core, the HardFault is recorded as a debug event.
+            if (c->v8)
+                c->hfsr |= 1u << 31;
             take_fault(c, EXC_HARDFAULT, pc, "breakpoint");
             break;
         case 0xf:
@@ -2268,8 +2271,9 @@ static void exec16(cpu_t *c, uint32_t pc, uint16_t op)
                 undefined(c, pc, op);
             }
         } else if (cond == 0xf) {
+            // An SVC that cannot be taken goes in as one, so its escalation sets HFSR.FORCED.
             if (exc_priority(c, EXC_SVC, !c->ns, true) >= exec_priority(c, true))
-                take_fault(c, EXC_HARDFAULT, pc, "SVC at too high a priority");
+                take_fault(c, EXC_SVC, pc, "SVC at too high a priority");
             else
                 exception_entry(c, EXC_SVC, !c->ns, pc + 2);
         } else if (cond_pass(c, cond)) {

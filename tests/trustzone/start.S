@@ -12,7 +12,7 @@ s_vectors:
     .word 0x20040000
     .word s_reset + 1
     .word s_default + 1         // NMI
-    .word s_default + 1         // HardFault
+    .word s_fault + 1           // HardFault
     .word s_default + 1         // MemManage
     .word s_fault + 1           // BusFault
     .word s_default + 1         // UsageFault
@@ -61,8 +61,8 @@ s_default:
     bl s_unexpected
 1:  b 1b
 
-// BusFaults and SecureFaults resume where the test asks, so they need the stacked frame, which is
-// on whichever stack EXC_RETURN names.
+// HardFaults, BusFaults and SecureFaults resume where the test asks, so they need the stacked frame,
+// which is on whichever stack EXC_RETURN names.
     .thumb_func
 s_fault:
     tst lr, #0x40

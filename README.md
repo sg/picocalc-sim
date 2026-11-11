@@ -405,8 +405,10 @@ the command line is written again and the card stays in the slot (unlike the men
 
 - **CPU.** Both Cortex-M33 cores are interpreted: ARMv8-M Mainline Thumb-2 with the DSP extension,
   the single-precision FPU, IT blocks, exclusive monitors shared between cores, and the full
-  exception model (NVIC, priorities, BASEPRI, fault escalation, lazy FP stacking done eagerly). Each
-  instruction is charged an approximate cycle count, and flash fetches go through a model of the 16
+  exception model (NVIC, priorities, BASEPRI, fault escalation, lazy FP stacking done eagerly). With
+  no debugger a breakpoint is a HardFault, so the SDK's `panic`, which ends in one and whose default
+  HardFault handler is another, locks the core up as it does on the chip; the log then names the
+  cause and gives the core's registers. Each instruction is charged an approximate cycle count, and flash fetches go through a model of the 16
   KB XIP cache, so code runs at about the speed it does on the chip. Runs of straight-line code are
   decoded once into blocks of small handlers (`emu/block.inc`) and reused while the code they came
   from is unchanged, and on x86-64 hosts each block is then translated to native code
