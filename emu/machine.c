@@ -27,7 +27,7 @@ static pthread_mutex_t lock;
 static atomic_bool stop_flag;
 static _Atomic picocalc_sim_state_t state = PICOCALC_SIM_RUNNING;
 static char state_reason[128];
-static atomic_bool power_button, bootsel_held, button_reset;
+static atomic_bool power_on, bootsel_held, button_reset;
 static double speed = 1.0;
 
 static pthread_mutex_t uf2_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -129,7 +129,11 @@ void picocalc_sim_stop(picocalc_sim_state_t s, const char *reason)
 
 void picocalc_sim_power_button(void)
 {
-    atomic_store(&power_button, true);
+    // Power comes back to every device at once, so they all start afresh as at a restart.
+    if (atomic_load(&state) == PICOCALC_SIM_POWERED_OFF) {
+        atomic_store(&power_on, true);
+        picocalc_sim_request_restart();
+    }
 }
 
 void picocalc_sim_bootsel_button(bool held)
@@ -390,14 +394,6 @@ static void handle_requests(void)
         if (button)
             chip.bootsel_until = held && chip.real_rom ? chip.now + 100 * PS_PER_MS : 0;
     }
-    if (atomic_exchange(&power_button, false)) {
-        picocalc_sim_state_t s = atomic_load(&state);
-        if (s == PICOCALC_SIM_POWERED_OFF) {
-            set_state(PICOCALC_SIM_RUNNING, "");
-            chip.boot_type = 0;
-            chip_power_on(&chip);
-        }
-    }
 }
 
 static void run_chunk(uint64_t target)
@@ -628,7 +624,12 @@ static bool start(uf2_file_t *f)
             restart_at_ps = (uint64_t)(atof(restart_ms) * PS_PER_MS);
     }
     atomic_store(&stop_flag, false);
-    atomic_store(&power_button, false);
+    // Switching back on is no new launch, so the flash keeps what it holds and no recording begins.
+    if (atomic_exchange(&power_on, false)) {
+        picocalc_sim_opts.uf2_path = NULL;
+        picocalc_sim_opts.wav_path = NULL;
+        picocalc_sim_opts.erase_flash = false;
+    }
     set_state(PICOCALC_SIM_RUNNING, "");
     speed = 1.0;
 

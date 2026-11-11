@@ -95,6 +95,10 @@ static bool map_key(SDL_Keycode sym, uint8_t *key, bool *shift)
     }
 }
 
+// Restart + F1 holds the key itself from power-on, for as long as a boot loader may take to look.
+#define BOOT_KEY_HOLD_US 3000000ull
+static bool boot_key_down;
+
 static void press(SDL_Keycode sym, uint8_t key, bool shift, bool from_char)
 {
     if (nheld == (int)(sizeof(held) / sizeof(held[0])))
@@ -366,7 +370,8 @@ int picocalc_sim_frontend_sdl_run(void)
 
         if (picocalc_sim_restart_requested()) {
             SDL_Keycode carried[sizeof(held) / sizeof(held[0])];
-            int ncarried = nheld;
+            // A key that switched the machine on stood in for the power button, so is not typed.
+            int ncarried = picocalc_sim_state() == PICOCALC_SIM_POWERED_OFF ? 0 : nheld;
             for (int i = 0; i < nheld; i++)
                 carried[i] = held[i].sym;
             // The devices are about to be freed, so nothing may hold a key or pull sound from them.
@@ -375,12 +380,23 @@ int picocalc_sim_frontend_sdl_run(void)
                 SDL_DestroyAudioStream(audio);
             audio = NULL;
             ui_restarting();
+            boot_key_down = false;
+            bool boot_key = ui_take_boot_key();
             // A machine that fails to start stays stopped, and the UI says why.
             if (picocalc_sim_machine_restart()) {
                 press_held(carried, ncarried);
+                if (boot_key) {
+                    picocalc_sim_keys_press(PC_KEY_F1);
+                    boot_key_down = true;
+                }
                 audio = open_audio();
             }
             last_lcd = last_sb = ~0u;
+        }
+        // Timed on the emulated clock, so the key is down as long for a slow machine as a fast one.
+        if (boot_key_down && picocalc_sim_machine_running() && picocalc_sim_uptime_us() >= BOOT_KEY_HOLD_US) {
+            picocalc_sim_keys_release(PC_KEY_F1);
+            boot_key_down = false;
         }
         if (picocalc_sim_opts.mute != muted) {
             muted = picocalc_sim_opts.mute;

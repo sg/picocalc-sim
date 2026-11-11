@@ -27,6 +27,8 @@ southbridge_t *southbridge_create(unsigned sda_pin, unsigned scl_pin, uint8_t ad
 // key is the unshifted code of a physical key; the model applies Shift and Caps Lock itself.
 void southbridge_key(southbridge_t *sb, uint8_t key, bool pressed);
 void southbridge_tick(southbridge_t *sb);
+// Cuts the PicoCalc's power, as the controller does when asked to or when its power button is held.
+void southbridge_power_off(southbridge_t *sb, const char *reason);
 uint8_t southbridge_lcd_backlight(southbridge_t *sb);
 uint8_t southbridge_kbd_backlight(southbridge_t *sb);
 bool southbridge_caps_lock(southbridge_t *sb);

@@ -25,6 +25,8 @@ void ui_drop_file(const char *path);
 void ui_screenshot(void);
 // Must come before every restart, so that a failed one can show what went wrong.
 void ui_restarting(void);
+// True once after Restart + F1 is chosen, for the restart it asked for to hold the key.
+bool ui_take_boot_key(void);
 // Lays out this frame's UI and returns the height of the menu bar in render pixels.
 float ui_frame(void);
 void ui_render(void);

@@ -31,7 +31,7 @@ float menu_height;
 Uint32 dialog_event;
 
 bool show_settings, show_log, show_keys, show_about, show_terminal;
-bool ask_erase;
+bool ask_erase, boot_key;
 // The terminal's character cell, and what it has to send that the host has not taken yet.
 float term_char_w, term_line_h;
 std::string term_input;
@@ -746,19 +746,30 @@ void menu_bar()
     menu_height = ImGui::GetWindowSize().y;
     bool running = picocalc_sim_machine_running();
     if (ImGui::BeginMenu("Machine")) {
-        if (ImGui::MenuItem("Restart"))
+        if (ImGui::MenuItem("Restart (power cycle)"))
             restart(false);
         tip("Switch off and on again, with any changed settings");
-        if (ImGui::MenuItem("Reset", "F12", false, running)) {
+        if (ImGui::MenuItem("Restart + F1")) {
+            boot_key = true;
+            restart(false);
+        }
+        tip("Power cycle with F1 held for the first 3 seconds, which a boot loader takes as the "
+            "request for its menu");
+        if (ImGui::MenuItem("Push RESET btn (F12)", nullptr, false, running)) {
             picocalc_sim_bootsel_button(false);
             picocalc_sim_reboot("reset button");
         }
-        if (ImGui::MenuItem("Reset into BOOTSEL", "Shift+F12", false, running)) {
+        if (ImGui::MenuItem("Push BOOTSEL btn (Shift+F12)", nullptr, false, running)) {
             picocalc_sim_bootsel_button(true);
             picocalc_sim_reboot("reset button");
         }
-        if (ImGui::MenuItem("Power button", nullptr, false, running))
-            picocalc_sim_power_button();
+        bool off = picocalc_sim_state() == PICOCALC_SIM_POWERED_OFF;
+        if (ImGui::MenuItem(off ? "Power ON###power" : "Power OFF###power", nullptr, false, running)) {
+            if (off)
+                picocalc_sim_power_button();
+            else
+                southbridge_power_off(picocalc_sim_picocalc.sb, "power button");
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Flash UF2...", nullptr, false, running))
             pick(PICK_UF2);
@@ -1562,6 +1573,13 @@ void ui_screenshot(void)
 void ui_restarting(void)
 {
     start_mark = picocalc_sim_log_count();
+}
+
+bool ui_take_boot_key(void)
+{
+    bool take = boot_key;
+    boot_key = false;
+    return take;
 }
 
 float ui_frame(void)

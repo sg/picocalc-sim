@@ -99,10 +99,11 @@ cp picocalc-app.uf2 another-app.uf2 sd_files/pico2-apps/
 
 With no app in flash the loader opens its menu; choosing a UF2 flashes it into the app partition and
 boots it. Later runs (`./picocalc-sim` with no UF2) boot the app directly. For the menu instead,
-hold F1 (or Up) while choosing Machine › Restart, as when switching the PicoCalc on with it held, or
-press F12 and hold F1 straight after; held before F12, the key reaches the running app, not the
-loader. The RP2040 build works the same way, with `BOOT2040.UF2`, a `pico1-apps` folder and `--board
-pico bootloader_pico.uf2`.
+choose Machine › Restart + F1, which holds F1 for the first 3 seconds after power-on. By hand, hold
+F1 (or Up) while choosing Machine › Restart (power cycle), as when switching the PicoCalc on with it
+held, or press F12 and hold F1 straight after; held before F12, the key reaches the running app, not
+the loader. The RP2040 build works the same way, with `BOOT2040.UF2`, a `pico1-apps` folder
+and `--board pico bootloader_pico.uf2`.
 
 BlairLeduc's [PicoCalc shell](https://github.com/BlairLeduc/picocalc-shell) takes the uf2loader menu's place
 on RP2350 boards: rename the card's `BOOT2350.UF2` to `BOOT2350.ORG`, copy the shell there as
@@ -278,7 +279,8 @@ Drop a UF2 file on the window to flash it, or a `.img` file to insert it as the 
 key currently does not auto-repeat, as on the real keyboard. Key mapping assumes a US layout. On Windows,
 characters that Remote Desktop and similar tools send as Unicode rather than as keys are typed with
 the PicoCalc keys for them. When the
-firmware powers the PicoCalc off, any key powers it back on. A key held while the machine restarts
+firmware or Machine › Power OFF powers the PicoCalc off, Power ON or any key powers it back on,
+with every device starting afresh as at a restart; that key is not typed. A key held while the machine restarts
 is still down as it powers on. Keys go to the PicoCalc except while one of picocalc-sim's own text
 fields has them.
 
@@ -287,8 +289,12 @@ fields has them.
 The window's menu bar covers what the options below set at launch, so most of them can be changed
 without quitting:
 
-- **Machine**: Restart, the reset button (F12), reset into BOOTSEL (Shift+F12), the power button,
-  Flash UF2 (as BOOTSEL's drive would), Erase flash and restart, Settings, and Quit.
+- **Machine**: Restart (power cycle), which switches the whole PicoCalc off and on; Restart + F1,
+  the same with F1 held for the first 3 emulated seconds, for a boot loader's menu; Push RESET btn
+  (F12), the Pico's own reset, which leaves the keyboard controller, LCD and card as they are; Push
+  BOOTSEL btn (Shift+F12), that reset with the Pico's BOOTSEL button held; Power OFF, which reads
+  Power ON while the PicoCalc is off; Flash UF2 (as BOOTSEL's drive would), Erase flash and restart,
+  Settings, and Quit.
 - **SD card**: insert an image, or eject the one in the slot. A card has to be ejected before
   another goes in, as the firmware may still hold the old card's tables.
 - **Sound**: mute, volume, and recording to a WAV file from now on.

@@ -86,6 +86,7 @@ const char *picocalc_sim_state_reason(void);
 // Requests the device models and the frontend make of the machine; all are thread-safe.
 void picocalc_sim_reboot(const char *reason);
 void picocalc_sim_stop(picocalc_sim_state_t state, const char *reason);
+// Switches a powered-off PicoCalc back on, which restarts the machine with its flash as it was.
 void picocalc_sim_power_button(void);
 void picocalc_sim_bootsel_button(bool held);
 // Writes a UF2 file into flash as BOOTSEL's mass-storage drive would, then reboots.

@@ -182,13 +182,17 @@ void southbridge_tick(southbridge_t *sb)
 
     if (reset)
         picocalc_sim_reboot("southbridge reset");
-    if (power_off) {
-        pthread_mutex_lock(&sb->lock);
-        sb->regs[REG_BKL] = 0;
-        sb->generation++;
-        pthread_mutex_unlock(&sb->lock);
-        picocalc_sim_stop(PICOCALC_SIM_POWERED_OFF, "powered off by the southbridge");
-    }
+    if (power_off)
+        southbridge_power_off(sb, "powered off by the southbridge");
+}
+
+void southbridge_power_off(southbridge_t *sb, const char *reason)
+{
+    pthread_mutex_lock(&sb->lock);
+    sb->regs[REG_BKL] = 0;
+    sb->generation++;
+    pthread_mutex_unlock(&sb->lock);
+    picocalc_sim_stop(PICOCALC_SIM_POWERED_OFF, reason);
 }
 
 static void prepare_reply(southbridge_t *sb, uint8_t reg)
